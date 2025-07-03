@@ -2,72 +2,145 @@ package indicators
 
 import (
 	"errors"
+	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 	"math"
 )
 
-// RSI calculates the Relative Strength Index
 type RSI struct {
-	period int
-	gains  []float64
-	losses []float64
+	period      int
+	overbought  float64
+	oversold    float64
+	lastValue   float64
+	avgGain     float64
+	avgLoss     float64
+	initialized bool
+	dataPoints  int
 }
 
-// NewRSI creates a new RSI instance with the given period
 func NewRSI(period int) *RSI {
 	return &RSI{
-		period: period,
-		gains:  make([]float64, 0),
-		losses: make([]float64, 0),
+		period:     period,
+		overbought: 70.0,
+		oversold:   30.0,
 	}
 }
 
-// Calculate computes the RSI value based on the given price slice
-func (r *RSI) Calculate(prices []float64) (float64, error) {
-	if len(prices) < r.period+1 {
-		return 0, errors.New("insufficient data for RSI calculation")
+func (r *RSI) Calculate(data []types.OHLCV) (float64, error) {
+	if len(data) < r.period+1 {
+		return 0, errors.New("insufficient data points for RSI calculation")
 	}
 
-	// Calculate price changes
-	changes := make([]float64, len(prices)-1)
-	for i := 1; i < len(prices); i++ {
-		changes[i-1] = prices[i] - prices[i-1]
+	// For the first calculation, we use SMA
+	if !r.initialized {
+		return r.initialCalculation(data)
 	}
 
-	// Separate gains and losses
-	gains := make([]float64, len(changes))
-	losses := make([]float64, len(changes))
-	for i, change := range changes {
+	// For subsequent calculations, we use EMA for optimization
+	return r.incrementalCalculation(data)
+}
+
+func (r *RSI) initialCalculation(data []types.OHLCV) (float64, error) {
+	if len(data) < r.period+1 {
+		return 0, errors.New("not enough data for initial RSI calculation")
+	}
+
+	gains := 0.0
+	losses := 0.0
+
+	// We take the last period+1 values
+	recent := data[len(data)-r.period-1:]
+
+	for i := 1; i < len(recent); i++ {
+		change := recent[i].Close - recent[i-1].Close
 		if change > 0 {
-			gains[i] = change
+			gains += change
 		} else {
-			losses[i] = math.Abs(change)
+			losses += math.Abs(change)
 		}
 	}
 
-	// Calculate average gains and losses
-	avgGain := r.sma(gains[len(gains)-r.period:])
-	avgLoss := r.sma(losses[len(losses)-r.period:])
+	r.avgGain = gains / float64(r.period)
+	r.avgLoss = losses / float64(r.period)
 
-	if avgLoss == 0 {
+	if r.avgLoss == 0 {
+		r.lastValue = 100
+		r.initialized = true
 		return 100, nil
 	}
 
-	rs := avgGain / avgLoss
-	rsi := 100 - (100 / (1 + rs))
+	rs := r.avgGain / r.avgLoss
+	r.lastValue = 100 - (100 / (1 + rs))
+	r.initialized = true
 
-	return rsi, nil
+	return r.lastValue, nil
 }
 
-// ShouldBuy returns true if the RSI indicates an oversold condition
-func (r *RSI) ShouldBuy(currentRSI float64) bool {
-	return currentRSI < 30
-}
-
-// sma computes the Simple Moving Average of the given values
-func (r *RSI) sma(values []float64) float64 {
-	sum := 0.0
-	for _, value := range values {
-		sum += value
+func (r *RSI) incrementalCalculation(data []types.OHLCV) (float64, error) {
+	if len(data) < 2 {
+		return r.lastValue, nil
 	}
-	return sum / float64(len(values))
+
+	// We take only the last change for the incremental calculation.
+	lastTwo := data[len(data)-2:]
+	change := lastTwo[1].Close - lastTwo[0].Close
+
+	gain := 0.0
+	loss := 0.0
+
+	if change > 0 {
+		gain = change
+	} else {
+		loss = math.Abs(change)
+	}
+
+	// Wilder's smoothing (Modified EMA)
+	alpha := 1.0 / float64(r.period)
+	r.avgGain = (r.avgGain * (1 - alpha)) + (gain * alpha)
+	r.avgLoss = (r.avgLoss * (1 - alpha)) + (loss * alpha)
+
+	if r.avgLoss == 0 {
+		r.lastValue = 100
+		return 100, nil
+	}
+
+	rs := r.avgGain / r.avgLoss
+	r.lastValue = 100 - (100 / (1 + rs))
+
+	return r.lastValue, nil
+}
+
+func (r *RSI) ShouldBuy(current float64, data []types.OHLCV) (bool, error) {
+	rsiValue, err := r.Calculate(data)
+	if err != nil {
+		return false, err
+	}
+
+	return rsiValue < r.oversold, nil
+}
+
+func (r *RSI) ShouldSell(current float64, data []types.OHLCV) (bool, error) {
+	rsiValue, err := r.Calculate(data)
+	if err != nil {
+		return false, err
+	}
+
+	return rsiValue > r.overbought, nil
+}
+
+func (r *RSI) GetSignalStrength() float64 {
+	if r.lastValue < r.oversold {
+		return (r.oversold - r.lastValue) / r.oversold
+	}
+	if r.lastValue > r.overbought {
+		return (r.lastValue - r.overbought) / (100 - r.overbought)
+	}
+	return 0
+}
+
+func (r *RSI) GetName() string {
+	return "RSI"
+}
+
+func (r *RSI) GetRequiredPeriods() int {
+	return r.period + 1
 }
