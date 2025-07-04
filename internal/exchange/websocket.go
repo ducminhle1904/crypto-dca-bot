@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 	"github.com/gorilla/websocket"
 )
 

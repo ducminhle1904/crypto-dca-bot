@@ -1,7 +1,7 @@
 package indicators
 
 import (
-	"github.com/Zmey56/enhanced-dca-bot/internal/types"
+	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 	"time"
 )
 
