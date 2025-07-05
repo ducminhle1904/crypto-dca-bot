@@ -86,7 +86,7 @@ func (r *AdaptiveRiskManager) calculateATR(data []types.OHLCV) float64 {
 		trueRanges = append(trueRanges, trueRange)
 	}
 
-	// Простое скользящее среднее TR
+	// Simple Moving Average TR
 	sum := 0.0
 	for _, tr := range trueRanges {
 		sum += tr
