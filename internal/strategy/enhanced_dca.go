@@ -2,9 +2,10 @@ package strategy
 
 import (
 	"errors"
+	"time"
+
 	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
 	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
-	"time"
 )
 
 type EnhancedDCAStrategy struct {
@@ -112,19 +113,8 @@ func (s *EnhancedDCAStrategy) calculatePositionSize(strength, confidence float64
 	return s.baseAmount * multiplier
 }
 
-type TradeDecision struct {
-	Action     TradeAction
-	Amount     float64
-	Confidence float64
-	Strength   float64
-	Reason     string
-	Timestamp  time.Time
+func (s *EnhancedDCAStrategy) GetName() string {
+	return "Enhanced DCA Strategy"
 }
 
-type TradeAction int
-
-const (
-	ActionHold TradeAction = iota
-	ActionBuy
-	ActionSell
-)
+// EnhancedDCAStrategy implements the Strategy interface

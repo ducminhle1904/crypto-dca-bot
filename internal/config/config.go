@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -71,12 +72,58 @@ func Load() *Config {
 			PrometheusPort: getEnvInt("PROMETHEUS_PORT", 8080),
 			HealthPort:     getEnvInt("HEALTH_PORT", 8081),
 		},
+
+		Notifications: struct {
+			TelegramToken  string
+			TelegramChatID string
+			SlackWebhook   string
+		}{
+			TelegramToken:  getEnv("TELEGRAM_TOKEN", ""),
+			TelegramChatID: getEnv("TELEGRAM_CHAT_ID", ""),
+			SlackWebhook:   getEnv("SLACK_WEBHOOK", ""),
+		},
 	}
 }
 
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
+	}
+	return defaultVal
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if intVal, err := strconv.Atoi(val); err == nil {
+			return intVal
+		}
+	}
+	return defaultVal
+}
+
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
+			return floatVal
+		}
+	}
+	return defaultVal
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		if boolVal, err := strconv.ParseBool(val); err == nil {
+			return boolVal
+		}
+	}
+	return defaultVal
+}
+
+func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
+	if val := os.Getenv(key); val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			return duration
+		}
 	}
 	return defaultVal
 }

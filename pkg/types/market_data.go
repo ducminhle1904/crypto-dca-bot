@@ -23,3 +23,13 @@ type Balance struct {
 	Free   float64
 	Locked float64
 }
+
+type Order struct {
+	ID        string
+	Symbol    string
+	Side      int
+	Quantity  float64
+	Price     float64
+	Status    string
+	Timestamp time.Time
+}

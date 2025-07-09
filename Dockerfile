@@ -1,26 +1,53 @@
-# Dockerfile
-FROM golang:1.21-alpine AS builder
+# Build stage
+FROM golang:1.24-alpine AS builder
 
+# Install git and ca-certificates
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
 WORKDIR /app
+
+# Copy go mod files
 COPY go.mod go.sum ./
+
+# Download dependencies
 RUN go mod download
 
+# Copy source code
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o dca-bot ./cmd/bot
 
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/bot
+
+# Final stage
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /root/
 
-COPY --from=builder /app/dca-bot .
-COPY --from=builder /app/configs ./configs
+# Install ca-certificates for HTTPS requests
+RUN apk --no-cache add ca-certificates
 
-# Создаем пользователя без привилегий
-RUN adduser -D -s /bin/sh botuser
-USER botuser
+# Create non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
 
-EXPOSE 8080
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/main .
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs && \
+    chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose ports
+EXPOSE 8080 8081
+
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1
 
-CMD ["./dca-bot"]
+# Run the application
+CMD ["./main"]

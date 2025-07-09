@@ -2,24 +2,14 @@ package strategy
 
 import (
 	"errors"
+	"math"
+
 	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
 	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
-	"math"
-	"time"
 )
 
-type MultiIndicatorStrategy struct {
-	indicators          []WeightedIndicator
-	marketRegime        MarketRegime
-	volatilityThreshold float64
-}
-
-type WeightedIndicator struct {
-	Indicator indicators.TechnicalIndicator
-	Weight    map[MarketRegime]float64
-	LastValue float64
-}
-
+// MarketRegime represents the detected market regime
+// (trending, sideways, volatile)
 type MarketRegime int
 
 const (
@@ -28,6 +18,20 @@ const (
 	RegimeVolatile
 )
 
+// WeightedIndicator links an indicator with weights for each regime
+type WeightedIndicator struct {
+	Indicator indicators.TechnicalIndicator
+	Weight    map[MarketRegime]float64
+}
+
+// MultiIndicatorStrategy aggregates signals from multiple indicators
+// and makes a trading decision based on weighted consensus.
+type MultiIndicatorStrategy struct {
+	indicators          []WeightedIndicator
+	volatilityThreshold float64
+}
+
+// NewMultiIndicatorStrategy creates a new multi-indicator strategy
 func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 	return &MultiIndicatorStrategy{
 		indicators: []WeightedIndicator{
@@ -64,84 +68,145 @@ func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 				},
 			},
 		},
-		volatilityThreshold: 0.05,
+		volatilityThreshold: 0.05, // 5% threshold for volatility regime
 	}
 }
 
-func (m *MultiIndicatorStrategy) CalculateSignal(data []types.OHLCV) (*AggregatedSignal, error) {
+// ShouldExecuteTrade aggregates indicator signals and returns a trade decision
+func (m *MultiIndicatorStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDecision, error) {
 	if len(data) < 50 {
 		return nil, errors.New("insufficient data for multi-indicator analysis")
 	}
 
-	// Определяем рыночный режим
 	regime := m.detectMarketRegime(data)
-	m.marketRegime = regime
 
-	// Собираем взвешенные сигналы
-	totalBuyWeight := 0.0
-	totalSellWeight := 0.0
+	buyScore := 0.0
+	sellScore := 0.0
 	totalWeight := 0.0
 
-	for i := range m.indicators {
-		indicator := &m.indicators[i]
-		weight := indicator.Weight[regime]
-
+	for _, wi := range m.indicators {
+		weight := wi.Weight[regime]
 		currentPrice := data[len(data)-1].Close
-		shouldBuy, _ := indicator.Indicator.ShouldBuy(currentPrice, data)
-		shouldSell, _ := indicator.Indicator.ShouldSell(currentPrice, data)
+
+		shouldBuy, _ := wi.Indicator.ShouldBuy(currentPrice, data)
+		shouldSell, _ := wi.Indicator.ShouldSell(currentPrice, data)
+		strength := wi.Indicator.GetSignalStrength()
 
 		if shouldBuy {
-			totalBuyWeight += weight * indicator.Indicator.GetSignalStrength()
+			buyScore += weight * strength
 		} else if shouldSell {
-			totalSellWeight += weight * indicator.Indicator.GetSignalStrength()
+			sellScore += weight * strength
 		}
-
 		totalWeight += weight
 	}
 
-	// Нормализуем сигналы
-	buyStrength := totalBuyWeight / totalWeight
-	sellStrength := totalSellWeight / totalWeight
+	// Normalize scores
+	var action TradeAction
+	confidence := 0.0
+	strength := 0.0
+	var reason string
 
-	return &AggregatedSignal{
-		BuyStrength:  buyStrength,
-		SellStrength: sellStrength,
-		Confidence:   math.Max(buyStrength, sellStrength),
-		MarketRegime: regime,
-		Timestamp:    data[len(data)-1].Timestamp,
+	if totalWeight == 0 {
+		action = ActionHold
+		reason = "No indicator weights configured for this regime"
+	} else {
+		buyScore /= totalWeight
+		sellScore /= totalWeight
+
+		if buyScore > 0.6 && buyScore > sellScore {
+			action = ActionBuy
+			confidence = buyScore
+			strength = buyScore
+			reason = "Buy consensus among indicators"
+		} else if sellScore > 0.6 && sellScore > buyScore {
+			action = ActionSell
+			confidence = sellScore
+			strength = sellScore
+			reason = "Sell consensus among indicators"
+		} else {
+			action = ActionHold
+			confidence = math.Max(buyScore, sellScore)
+			strength = confidence
+			reason = "No strong consensus"
+		}
+	}
+
+	return &TradeDecision{
+		Action:     action,
+		Amount:     0, // Amount should be set by risk manager
+		Confidence: confidence,
+		Strength:   strength,
+		Reason:     reason,
+		Timestamp:  data[len(data)-1].Timestamp,
 	}, nil
 }
 
+// detectMarketRegime determines the current market regime
 func (m *MultiIndicatorStrategy) detectMarketRegime(data []types.OHLCV) MarketRegime {
-	if len(data) < 20 {
+	if len(data) < 50 {
 		return RegimeSideways
 	}
 
-	// Вычисляем волатильность через ATR
-	atr := m.calculateATR(data, 14)
-	avgPrice := m.calculateAvgPrice(data, 20)
-
+	atr := calculateATR(data, 14)
+	avgPrice := calculateAvgPrice(data, 20)
 	volatility := atr / avgPrice
 
-	// Определяем тренд через наклон SMA
-	sma20 := m.calculateSMA(data, 20)
-	sma50 := m.calculateSMA(data, 50)
+	sma20 := calculateSMA(data, 20)
+	sma50 := calculateSMA(data, 50)
 
 	if volatility > m.volatilityThreshold {
 		return RegimeVolatile
 	}
-
 	if math.Abs(sma20-sma50)/sma50 > 0.02 {
 		return RegimeTrending
 	}
-
 	return RegimeSideways
 }
 
-type AggregatedSignal struct {
-	BuyStrength  float64
-	SellStrength float64
-	Confidence   float64
-	MarketRegime MarketRegime
-	Timestamp    time.Time
+// calculateATR computes the Average True Range for volatility estimation
+func calculateATR(data []types.OHLCV, period int) float64 {
+	if len(data) < period+1 {
+		return 0
+	}
+	atr := 0.0
+	for i := len(data) - period; i < len(data); i++ {
+		tr := math.Max(
+			data[i].High-data[i].Low,
+			math.Max(
+				math.Abs(data[i].High-data[i-1].Close),
+				math.Abs(data[i].Low-data[i-1].Close),
+			),
+		)
+		atr += tr
+	}
+	return atr / float64(period)
+}
+
+// calculateAvgPrice returns the average close price for the given period
+func calculateAvgPrice(data []types.OHLCV, period int) float64 {
+	if len(data) < period {
+		return 0
+	}
+	sum := 0.0
+	for i := len(data) - period; i < len(data); i++ {
+		sum += data[i].Close
+	}
+	return sum / float64(period)
+}
+
+// calculateSMA returns the simple moving average for the given period
+func calculateSMA(data []types.OHLCV, period int) float64 {
+	if len(data) < period {
+		return 0
+	}
+	sum := 0.0
+	for i := len(data) - period; i < len(data); i++ {
+		sum += data[i].Close
+	}
+	return sum / float64(period)
+}
+
+// GetName returns the strategy name
+func (m *MultiIndicatorStrategy) GetName() string {
+	return "Multi-Indicator Strategy"
 }

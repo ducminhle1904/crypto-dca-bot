@@ -1,48 +1,74 @@
 package indicators
 
-type MovingAverage struct {
-	period int
-	prices []float64
+import (
+	"errors"
+
+	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+)
+
+// SMA represents the Simple Moving Average technical indicator
+type SMA struct {
+	period    int
+	lastValue float64
 }
 
-// NewSMA creates a new Simple Moving Average instance with the given period
-func NewSMA(period int) *MovingAverage {
-	return &MovingAverage{
+// NewSMA creates a new SMA indicator
+func NewSMA(period int) *SMA {
+	return &SMA{
 		period: period,
-		prices: make([]float64, 0),
 	}
 }
 
-// Calculate computes the SMA over the provided price slice
-func (ma *MovingAverage) Calculate(prices []float64) float64 {
-	if len(prices) < ma.period {
-		return 0
+// Calculate calculates the SMA value
+func (s *SMA) Calculate(data []types.OHLCV) (float64, error) {
+	if len(data) < s.period {
+		return 0, errors.New("insufficient data for SMA calculation")
 	}
 
-	recent := prices[len(prices)-ma.period:]
 	sum := 0.0
-	for _, price := range recent {
-		sum += price
+	for i := len(data) - s.period; i < len(data); i++ {
+		sum += data[i].Close
 	}
 
-	return sum / float64(ma.period)
+	s.lastValue = sum / float64(s.period)
+	return s.lastValue, nil
 }
 
-// GetTrendStrength returns a multiplier representing trend strength
-func (ma *MovingAverage) GetTrendStrength(sma50, sma200, currentPrice float64) float64 {
-	if sma200 == 0 {
-		return 1.0
+// ShouldBuy determines if we should buy based on SMA
+func (s *SMA) ShouldBuy(current float64, data []types.OHLCV) (bool, error) {
+	sma, err := s.Calculate(data)
+	if err != nil {
+		return false, err
 	}
 
-	// If price is above both SMAs and SMA50 > SMA200 → strong uptrend
-	if currentPrice > sma50 && sma50 > sma200 {
-		return 1.0 + ((sma50 - sma200) / sma200) // Increase position size
+	// Buy when current price is above SMA (uptrend)
+	return current > sma, nil
+}
+
+// ShouldSell determines if we should sell based on SMA
+func (s *SMA) ShouldSell(current float64, data []types.OHLCV) (bool, error) {
+	sma, err := s.Calculate(data)
+	if err != nil {
+		return false, err
 	}
 
-	// If price is below both SMAs → reduce activity
-	if currentPrice < sma50 && currentPrice < sma200 {
-		return 0.5
-	}
+	// Sell when current price is below SMA (downtrend)
+	return current < sma, nil
+}
 
-	return 1.0 // Neutral zone
+// GetSignalStrength returns the signal strength based on distance from SMA
+func (s *SMA) GetSignalStrength() float64 {
+	// This is a simplified calculation
+	// In practice, you might want to normalize based on historical volatility
+	return 0.3 // Default moderate strength for SMA
+}
+
+// GetName returns the indicator name
+func (s *SMA) GetName() string {
+	return "SMA"
+}
+
+// GetRequiredPeriods returns the minimum number of periods needed
+func (s *SMA) GetRequiredPeriods() int {
+	return s.period
 }
