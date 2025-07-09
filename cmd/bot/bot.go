@@ -67,9 +67,6 @@ func (b *DCABot) Start(ctx context.Context) error {
 	// Start trading loop
 	go b.tradingLoop(ctx)
 
-	// Start WebSocket for real-time data
-	go b.startWebSocket(ctx)
-
 	log.Println("DCA Bot started successfully")
 	return nil
 }
@@ -179,22 +176,6 @@ func (b *DCABot) executeBuyOrder(ctx context.Context, decision *strategy.TradeDe
 
 	log.Printf("Buy order executed: %+v", orderResult)
 	return nil
-}
-
-func (b *DCABot) startWebSocket(ctx context.Context) {
-	if err := b.exchange.StartWebSocket(ctx); err != nil {
-		log.Printf("Failed to start WebSocket: %v", err)
-		log.Println("Continuing without real-time data (using REST API)")
-		return
-	}
-
-	// Subscribe to klines
-	if err := b.exchange.SubscribeToKlines(b.config.Strategy.Symbol, "1h"); err != nil {
-		log.Printf("Failed to subscribe to klines: %v", err)
-		log.Println("Continuing without real-time data (using REST API)")
-	} else {
-		log.Println("WebSocket connected successfully")
-	}
 }
 
 func (b *DCABot) Shutdown(ctx context.Context) error {

@@ -18,7 +18,6 @@ type BinanceExchange struct {
 	testnet bool
 	client  *http.Client
 	baseURL string
-	wsConn  *WebSocketConnection
 }
 
 // NewBinanceExchange creates a new Binance exchange instance
@@ -53,9 +52,6 @@ func (b *BinanceExchange) Connect(ctx context.Context) error {
 }
 
 func (b *BinanceExchange) Disconnect() error {
-	if b.wsConn != nil {
-		return b.wsConn.Close()
-	}
 	return nil
 }
 
@@ -168,36 +164,6 @@ func (b *BinanceExchange) GetBalance(asset string) (*types.Balance, error) {
 		Free:   10000.0, // Mock balance
 		Locked: 0.0,
 	}, nil
-}
-
-func (b *BinanceExchange) SubscribeToTicker(symbol string, callback func(*types.Ticker)) error {
-	// This would be implemented with WebSocket
-	return fmt.Errorf("not implemented")
-}
-
-func (b *BinanceExchange) StartWebSocket(ctx context.Context) error {
-	wsURL := "wss://stream.binance.com:9443/ws"
-	if b.testnet {
-		wsURL = "wss://testnet.binance.vision/ws"
-	}
-
-	conn, err := NewWebSocketConnection(wsURL)
-	if err != nil {
-		return fmt.Errorf("failed to connect to WebSocket: %w", err)
-	}
-
-	b.wsConn = conn
-	return nil
-}
-
-func (b *BinanceExchange) SubscribeToKlines(symbol string, interval string) error {
-	if b.wsConn == nil {
-		return fmt.Errorf("WebSocket not connected")
-	}
-
-	// Subscribe to kline stream
-	stream := fmt.Sprintf("%s@kline_%s", symbol, interval)
-	return b.wsConn.Subscribe(stream)
 }
 
 func (b *BinanceExchange) getServerTime() (int64, error) {

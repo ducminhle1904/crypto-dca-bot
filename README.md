@@ -40,13 +40,22 @@ A sophisticated cryptocurrency trading bot that implements an enhanced Dollar Co
 
 ## Architecture
 
+The bot follows a clean architecture pattern optimized for DCA strategies:
+
+- **Exchange Interface**: Abstract interface for different exchanges (Binance implementation included)
+- **Strategy Engine**: Modular strategy system with multiple indicators
+- **Risk Management**: Position sizing and order validation
+- **Monitoring**: Health checks and metrics via Prometheus
+- **Notifications**: Telegram integration for alerts
+- **REST API**: Efficient market data retrieval for DCA strategy
+
 ```
 enhanced-dca-bot/
 ├── cmd/bot/                 # Main application entry point
 ├── internal/
 │   ├── backtest/           # Backtesting engine
 │   ├── config/             # Configuration management
-│   ├── exchange/           # Exchange integrations
+│   ├── exchange/           # Exchange integrations (REST API)
 │   ├── indicators/         # Technical indicators
 │   ├── monitoring/         # Health checks and metrics
 │   ├── notifications/      # Alert systems
