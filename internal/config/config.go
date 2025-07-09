@@ -62,7 +62,7 @@ func Load() *Config {
 			Symbol:        getEnv("TRADING_SYMBOL", "BTCUSDT"),
 			BaseAmount:    getEnvFloat("BASE_AMOUNT", 100.0),
 			MaxMultiplier: getEnvFloat("MAX_MULTIPLIER", 3.0),
-			Interval:      getEnvDuration("TRADING_INTERVAL", time.Hour),
+			Interval:      getEnvDuration("TRADING_INTERVAL", 5*time.Minute),
 		},
 
 		Monitoring: struct {

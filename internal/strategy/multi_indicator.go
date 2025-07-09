@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"errors"
+	"fmt"
 	"math"
 
 	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
@@ -79,26 +80,44 @@ func (m *MultiIndicatorStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeD
 	}
 
 	regime := m.detectMarketRegime(data)
+	currentPrice := data[len(data)-1].Close
+
+	// Log market regime
+	regimeNames := map[MarketRegime]string{
+		RegimeTrending: "TRENDING",
+		RegimeSideways: "SIDEWAYS",
+		RegimeVolatile: "VOLATILE",
+	}
+	fmt.Printf("🌍 Market Regime: %s\n", regimeNames[regime])
 
 	buyScore := 0.0
 	sellScore := 0.0
 	totalWeight := 0.0
 
+	fmt.Println("📊 === Individual Indicator Analysis ===")
 	for _, wi := range m.indicators {
 		weight := wi.Weight[regime]
-		currentPrice := data[len(data)-1].Close
+		indicatorName := wi.Indicator.GetName()
 
 		shouldBuy, _ := wi.Indicator.ShouldBuy(currentPrice, data)
 		shouldSell, _ := wi.Indicator.ShouldSell(currentPrice, data)
 		strength := wi.Indicator.GetSignalStrength()
 
+		// Log individual indicator analysis
+		signal := "HOLD"
 		if shouldBuy {
+			signal = "BUY"
 			buyScore += weight * strength
 		} else if shouldSell {
+			signal = "SELL"
 			sellScore += weight * strength
 		}
 		totalWeight += weight
+
+		fmt.Printf("  %s: %s (Strength: %.2f%%, Weight: %.2f)\n",
+			indicatorName, signal, strength*100, weight)
 	}
+	fmt.Println("📋 === End Indicator Analysis ===")
 
 	// Normalize scores
 	var action TradeAction
@@ -112,6 +131,9 @@ func (m *MultiIndicatorStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeD
 	} else {
 		buyScore /= totalWeight
 		sellScore /= totalWeight
+
+		fmt.Printf("📈 Aggregated Scores - Buy: %.2f%%, Sell: %.2f%%\n",
+			buyScore*100, sellScore*100)
 
 		if buyScore > 0.6 && buyScore > sellScore {
 			action = ActionBuy

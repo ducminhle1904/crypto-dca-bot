@@ -143,10 +143,12 @@ func (b *BinanceExchange) GetKlines(symbol, interval string, limit int) ([]types
 }
 
 func (b *BinanceExchange) PlaceMarketOrder(symbol string, side OrderSide, quantity float64) (*types.Order, error) {
-	// For now, return a mock order
-	// In a real implementation, you would need to sign the request with API key
+	// Simulate a mock order for demonstration purposes
+	// In production, this would make a real API call to Binance
+	orderID := fmt.Sprintf("mock_%d", time.Now().Unix())
+
 	return &types.Order{
-		ID:        "mock_order_id",
+		ID:        orderID,
 		Symbol:    symbol,
 		Side:      int(side),
 		Quantity:  quantity,
@@ -157,11 +159,21 @@ func (b *BinanceExchange) PlaceMarketOrder(symbol string, side OrderSide, quanti
 }
 
 func (b *BinanceExchange) GetBalance(asset string) (*types.Balance, error) {
-	// For now, return a mock balance
-	// In a real implementation, you would need to sign the request with API key
+	// Simulate a mock balance for demonstration purposes
+	// In production, this would make a real API call to Binance
+	var balance float64
+	switch asset {
+	case "USDT":
+		balance = 15000.0 // Mock USDT balance
+	case "BTC":
+		balance = 0.5 // Mock BTC balance
+	default:
+		balance = 0.0
+	}
+
 	return &types.Balance{
 		Asset:  asset,
-		Free:   10000.0, // Mock balance
+		Free:   balance,
 		Locked: 0.0,
 	}, nil
 }
