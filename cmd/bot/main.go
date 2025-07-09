@@ -12,7 +12,6 @@ import (
 
 	"github.com/Zmey56/enhanced-dca-bot/internal/config"
 	"github.com/Zmey56/enhanced-dca-bot/internal/exchange"
-	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
 	"github.com/Zmey56/enhanced-dca-bot/internal/monitoring"
 	"github.com/Zmey56/enhanced-dca-bot/internal/notifications"
 	"github.com/Zmey56/enhanced-dca-bot/internal/risk"
@@ -228,18 +227,7 @@ func main() {
 	exch := exchange.NewBinanceExchange(cfg.Exchange.APIKey, cfg.Exchange.Secret, cfg.Exchange.Testnet)
 
 	// Initialize strategy
-	strat := strategy.NewEnhancedDCAStrategy(cfg.Strategy.BaseAmount)
-
-	// Add technical indicators
-	rsi := indicators.NewRSI(14)
-	macd := indicators.NewMACD(12, 26, 9)
-	bb := indicators.NewBollingerBands(20, 2.0)
-	sma := indicators.NewSMA(50)
-
-	strat.AddIndicator(rsi)
-	strat.AddIndicator(macd)
-	strat.AddIndicator(bb)
-	strat.AddIndicator(sma)
+	strat := strategy.NewMultiIndicatorStrategy()
 
 	// Initialize risk manager
 	riskManager := risk.NewRiskManager(cfg.Strategy.MaxMultiplier)
