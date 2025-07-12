@@ -17,7 +17,7 @@ func (o *ParameterOptimizer) OptimizeRSI() *OptimizationResult {
 	// Going through the RSI parameters
 	for period := 10; period <= 20; period += 2 {
 		for oversold := 20; oversold <= 35; oversold += 5 {
-			// Создаем стратегию с новыми параметрами
+			// Creating strategy with new parameters
 			rsi := indicators.NewRSI(period)
 			rsi.SetOversold(float64(oversold))
 

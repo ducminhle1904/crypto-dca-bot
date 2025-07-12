@@ -1,6 +1,6 @@
 # Enhanced DCA Bot Makefile
 
-.PHONY: help build test clean run docker-build docker-run lint fmt
+.PHONY: help build test clean run docker-build docker-run lint fmt examples
 
 # Default target
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "  test         - Run tests"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  run          - Run the application"
+	@echo "  examples     - Run interactive examples"
 	@echo "  docker-build - Build Docker image"
 	@echo "  docker-run   - Run with Docker Compose"
 	@echo "  lint         - Run linter"
@@ -100,4 +101,9 @@ security:
 update-deps:
 	@echo "Updating dependencies..."
 	go get -u ./...
-	go mod tidy 
+	go mod tidy
+
+# Run interactive examples
+examples:
+	@echo "Running interactive examples..."
+	cd examples && go run main.go data_loader.go 

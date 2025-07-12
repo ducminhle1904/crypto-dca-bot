@@ -53,8 +53,8 @@ configs/secrets.yml
 
 # Data files
 data/historical/*.csv
-data/trades/
-data/backtest_results/
+examples/data/trades/
+examples/data/backtest_results/
 
 # Coverage reports
 coverage.out

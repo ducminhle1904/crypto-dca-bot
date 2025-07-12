@@ -2,8 +2,9 @@ package indicators
 
 import (
 	"errors"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 	"math"
+
+	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 )
 
 type RSI struct {
@@ -143,4 +144,14 @@ func (r *RSI) GetName() string {
 
 func (r *RSI) GetRequiredPeriods() int {
 	return r.period + 1
+}
+
+// SetOversold sets the oversold threshold
+func (r *RSI) SetOversold(threshold float64) {
+	r.oversold = threshold
+}
+
+// SetOverbought sets the overbought threshold
+func (r *RSI) SetOverbought(threshold float64) {
+	r.overbought = threshold
 }

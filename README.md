@@ -248,12 +248,55 @@ spec:
         ports:
         - containerPort: 8080
         - containerPort: 8081
-        env:
-        - name: EXCHANGE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: dca-bot-secrets
-              key: api-key
+```
+
+## 📚 Additional Resources
+
+### 📖 Technical Article
+For a detailed explanation of how technical indicators are integrated into this DCA bot, including RSI, SMA, and other indicators, check out our comprehensive article:
+
+**[Integration of Technical Indicators into the DCA Bot: RSI, SMA, and etc.](https://medium.com/@alsgladkikh/integration-of-technical-indicators-into-the-dca-bot-rsi-sma-and-etc-4279fe229012)**
+
+This article provides in-depth analysis of the code implementation, strategy logic, and practical examples of how the bot makes trading decisions.
+
+### 🚀 Trading Platform
+Ready to start trading with advanced bots? Try **Bitsgap** - a professional trading platform that offers:
+
+- **7-day free trial** of the PRO plan
+- Advanced trading bots and strategies
+- Multi-exchange trading
+- Professional analytics and tools
+
+**[Start your free trial with Bitsgap PRO](https://bitsgap.com/?ref=a628dcc1)**
+
+*Get 7 days of PRO features completely free to explore advanced trading capabilities.*
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Disclaimer
+
+This software is for educational and research purposes only. Cryptocurrency trading involves substantial risk of loss and is not suitable for all investors. The authors are not responsible for any financial losses incurred through the use of this software.
+
+## Support
+
+For questions and support:
+- Create an issue on GitHub
+- Check the documentation
+- Review the configuration examples
+
+---
+
+**Note**: Always test thoroughly in a testnet environment before using real funds.
 ```
 
 ## Contributing
