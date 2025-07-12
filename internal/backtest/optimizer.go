@@ -12,7 +12,8 @@ type ParameterOptimizer struct {
 }
 
 func (o *ParameterOptimizer) OptimizeRSI() *OptimizationResult {
-	bestResult := &OptimizationResult{}
+	var bestResult *OptimizationResult
+	firstRun := true
 
 	// Going through the RSI parameters
 	for period := 10; period <= 20; period += 2 {
@@ -28,14 +29,24 @@ func (o *ParameterOptimizer) OptimizeRSI() *OptimizationResult {
 			o.engine.strategy = strategy
 			result := o.engine.Run(o.data, 50)
 
-			// Comparing with the best result
-			if result.TotalReturn > bestResult.Return {
+			// Initialize bestResult on first run or update if better
+			if firstRun || result.TotalReturn > bestResult.Return {
 				bestResult = &OptimizationResult{
 					Period:   period,
 					Oversold: oversold,
 					Return:   result.TotalReturn,
 				}
+				firstRun = false
 			}
+		}
+	}
+
+	// Return default result if no optimization was performed
+	if bestResult == nil {
+		bestResult = &OptimizationResult{
+			Period:   14,
+			Oversold: 30,
+			Return:   0.0,
 		}
 	}
 

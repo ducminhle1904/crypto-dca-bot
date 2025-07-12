@@ -297,31 +297,9 @@ For questions and support:
 ---
 
 **Note**: Always test thoroughly in a testnet environment before using real funds.
+
+![Go Version](https://img.shields.io/badge/Go-1.21+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Build Status](https://github.com/Zmey56/enhanced-dca-bot/workflows/CI/badge.svg)
+![Docker](https://img.shields.io/badge/docker-ready-blue)
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Disclaimer
-
-This software is for educational and research purposes only. Cryptocurrency trading involves substantial risk of loss and is not suitable for all investors. The authors are not responsible for any financial losses incurred through the use of this software.
-
-## Support
-
-For questions and support:
-- Create an issue on GitHub
-- Check the documentation
-- Review the configuration examples
-
----
-
-**Note**: Always test thoroughly in a testnet environment before using real funds.

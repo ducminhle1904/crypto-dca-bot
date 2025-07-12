@@ -159,7 +159,7 @@ func (b *DCABot) executeTradingCycle(ctx context.Context) error {
 		log.Println("⏸️  No trade executed - holding position")
 	}
 
-	log.Println("✅ === Trading Cycle Complete ===\n")
+	log.Println("✅ === Trading Cycle Complete ===")
 	return nil
 }
 

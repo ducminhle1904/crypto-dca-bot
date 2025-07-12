@@ -2,9 +2,10 @@ package backtest
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/Zmey56/enhanced-dca-bot/internal/strategy"
 	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
-	"time"
 )
 
 type BacktestEngine struct {
@@ -54,6 +55,14 @@ func NewBacktestEngine(
 }
 
 func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResults {
+	// Handle empty or insufficient data
+	if len(data) == 0 {
+		b.results.EndBalance = b.initialBalance
+		b.results.TotalReturn = 0.0
+		b.results.TotalTrades = 0
+		return b.results
+	}
+
 	balance := b.initialBalance
 	position := 0.0
 	maxBalance := balance

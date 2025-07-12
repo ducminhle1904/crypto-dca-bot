@@ -38,7 +38,7 @@ func (b *BacktestResults) CalculateSharpeRatio() float64 {
 	variance /= float64(len(returns))
 	stdDev := math.Sqrt(variance)
 
-	if stdDev == 0 {
+	if stdDev == 0 || stdDev < 1e-10 {
 		return 0
 	}
 
@@ -92,6 +92,18 @@ func (b *BacktestResults) CalculateWinRate() float64 {
 func (b *BacktestResults) UpdateMetrics() {
 	b.SharpeRatio = b.CalculateSharpeRatio()
 	b.ProfitFactor = b.CalculateProfitFactor()
-	b.WinningTrades = int(b.CalculateWinRate() * float64(b.TotalTrades) / 100)
-	b.LosingTrades = b.TotalTrades - b.WinningTrades
+
+	// Update TotalTrades to match actual trades
+	b.TotalTrades = len(b.Trades)
+
+	// Calculate winning trades directly
+	wins := 0
+	for _, trade := range b.Trades {
+		if trade.PnL > 0 {
+			wins++
+		}
+	}
+
+	b.WinningTrades = wins
+	b.LosingTrades = len(b.Trades) - wins
 }
