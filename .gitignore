@@ -52,9 +52,13 @@ configs/secrets.yaml
 configs/secrets.yml
 
 # Data files
+data/
 data/historical/*.csv
 examples/data/trades/
 examples/data/backtest_results/
+
+# Backtest and optimization outputs
+results/
 
 # Coverage reports
 coverage.out

@@ -83,6 +83,21 @@ backtest:
 	@echo "Running backtest..."
 	go run ./cmd/backtest
 
+# Download historical data
+download-data:
+	@echo "Downloading historical data..."
+	go run scripts/download_historical_data.go -symbol BTCUSDT -interval 1h
+
+# Run backtest with optimization
+backtest-optimize:
+	@echo "Running backtest optimization..."
+	go run ./cmd/backtest -optimize
+
+# Run backtest with custom config
+backtest-config:
+	@echo "Running backtest with custom config..."
+	go run ./cmd/backtest -config configs/backtest-config.json
+
 # Development setup
 dev-setup: deps fmt lint test
 	@echo "Development setup complete!"

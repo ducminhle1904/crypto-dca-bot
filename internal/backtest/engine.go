@@ -115,6 +115,15 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	finalPrice := data[len(data)-1].Close
 	finalValue := balance + (position * finalPrice)
 
+	// Compute unrealized PnL per trade at the final price so wins/losses are meaningful
+	finalTime := data[len(data)-1].Timestamp
+	for i := range b.results.Trades {
+		trade := &b.results.Trades[i]
+		trade.ExitTime = finalTime
+		trade.ExitPrice = finalPrice
+		trade.PnL = (finalPrice-trade.EntryPrice)*trade.Quantity - trade.Commission
+	}
+
 	b.results.EndBalance = finalValue
 	b.results.TotalReturn = (finalValue - b.initialBalance) / b.initialBalance
 	b.results.TotalTrades = len(b.results.Trades)
