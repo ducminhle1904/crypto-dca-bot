@@ -17,7 +17,7 @@ func TestParameterOptimizer_OptimizeRSI(t *testing.T) {
 	data := generateTestData(200)
 
 	// Create optimizer
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewEnhancedDCAStrategy(1000))
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewEnhancedDCAStrategy(1000), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   data,
@@ -44,7 +44,7 @@ func TestParameterOptimizer_OptimizeRSI(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_EmptyData tests optimization with empty data
 func TestParameterOptimizer_OptimizeRSI_EmptyData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   []types.OHLCV{},
@@ -59,7 +59,7 @@ func TestParameterOptimizer_OptimizeRSI_EmptyData(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_InsufficientData tests optimization with insufficient data
 func TestParameterOptimizer_OptimizeRSI_InsufficientData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateTestData(30), // Not enough data for meaningful optimization
@@ -75,7 +75,7 @@ func TestParameterOptimizer_OptimizeRSI_InsufficientData(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_ProfitableData tests optimization with profitable data
 func TestParameterOptimizer_OptimizeRSI_ProfitableData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateRisingData(200), // Profitable trend
@@ -91,7 +91,7 @@ func TestParameterOptimizer_OptimizeRSI_ProfitableData(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_LosingData tests optimization with losing data
 func TestParameterOptimizer_OptimizeRSI_LosingData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateFallingData(200), // Losing trend
@@ -119,7 +119,7 @@ func TestOptimizationResult_Structure(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_ParameterRanges tests that optimization explores the correct parameter ranges
 func TestParameterOptimizer_OptimizeRSI_ParameterRanges(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateTestData(200),
@@ -139,7 +139,7 @@ func TestParameterOptimizer_OptimizeRSI_ParameterRanges(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_StrategyIntegration tests that the optimized strategy is properly integrated
 func TestParameterOptimizer_OptimizeRSI_StrategyIntegration(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateTestData(200),
@@ -162,7 +162,7 @@ func TestParameterOptimizer_OptimizeRSI_StrategyIntegration(t *testing.T) {
 
 // TestParameterOptimizer_OptimizeRSI_Consistency tests that optimization produces consistent results
 func TestParameterOptimizer_OptimizeRSI_Consistency(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateTestData(200),
@@ -219,7 +219,7 @@ func TestParameterOptimizer_OptimizeRSI_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine := NewBacktestEngine(tt.initialBalance, tt.commission, strategy.NewMultiIndicatorStrategy())
+			engine := NewBacktestEngine(tt.initialBalance, tt.commission, strategy.NewMultiIndicatorStrategy(), 0)
 			optimizer := &ParameterOptimizer{
 				engine: engine,
 				data:   generateTestData(tt.dataSize),
@@ -238,7 +238,7 @@ func TestParameterOptimizer_OptimizeRSI_EdgeCases(t *testing.T) {
 
 // Benchmark tests for optimization performance
 func BenchmarkOptimizeRSI(b *testing.B) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 	optimizer := &ParameterOptimizer{
 		engine: engine,
 		data:   generateTestData(200),

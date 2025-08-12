@@ -1,111 +1,124 @@
 # DCA Bot Backtesting Guide
 
+This guide consolidates quickstart steps, optimization, configuration, and detailed outputs for the Enhanced DCA Bot.
+
 ## Overview
 
-This guide helps you run backtests, optimize parameters, and compare timeframes for the Enhanced DCA Bot. It now supports auto interval selection, trailing time windows, indicator-combo optimization, and saving the best configuration.
+- Cycles (DCA -> TP -> reset) are ON by default
+- Without `-tp` and not optimizing, TP defaults to 2% so cycles can trigger
+- With `-optimize`, we sweep TP candidates (1%..5%), base/max, indicator params, and indicator combos
+- Exports can be CSV or Excel; by default, auto-saves Excel (trades.xlsx) in optimize flows
 
-## Quick Start
+## Prerequisites
 
-### 1. Download Historical Data (per symbol/interval)
+- Go installed
+- Data directory: `data/historical/<SYMBOL>/<INTERVAL>/candles.csv`
 
-- Output structure: `data/historical/<SYMBOL>/<INTERVAL>/candles.csv`
+## 1) Download historical data
 
 ```bash
-# Single symbol/timeframe (default 1 year)
+# Single symbol/interval
 go run scripts/download_historical_data.go -symbol BTCUSDT -interval 1h
 
 # Multiple symbols/intervals
 go run scripts/download_historical_data.go -symbols BTCUSDT,ETHUSDT -intervals 1h,4h
 ```
 
-### 2. Run a Backtest (no -data needed)
+## 2) Run a backtest fast
 
 ```bash
-# Uses data/historical/BTCUSDT/1h/candles.csv automatically
+# Auto-picks data/historical/BTCUSDT/1h/candles.csv
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h
 
-# Limit to trailing period
+# Explicit TP (2%)
+go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -tp 0.02
+
+# Hold mode (no cycles, TP ignored)
+go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -cycle=false
+
+# Use only the last 30 days
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -period 30d
 ```
 
-### 3. Optimize (parameters + indicator combos)
+## 3) Optimize (parameters + indicator combos + TP)
 
 ```bash
-# Single interval: optimizes parameters and indicator combinations automatically
+# Single interval optimize
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize
 
-# Save best config (auto-named if omitted)
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize -best-config-out results/best_BTCUSDT_1h.json
-
-# Multi-interval: optimizes per interval and compares
-go run cmd/backtest/main.go -symbol BTCUSDT -all-intervals -optimize
+# Compare intervals for one symbol
+go run cmd/backtest/main.go -symbol BTCUSDT -all-intervals -optimize -period 30d
 
 # Restrict indicator universe
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize -indicators rsi,macd
 ```
 
-## Common Flags
+On success:
+
+- Best config printed and saved to `results/<SYMBOL>_<INTERVAL>/best.json`
+- Trades saved to `results/<SYMBOL>_<INTERVAL>/trades.xlsx` (Trades + Cycles tabs)
+
+## 4) Apply the best configuration
+
+```bash
+# Use exact optimized settings
+go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>/best.json
+
+# Export trades to Excel explicitly
+go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>/best.json \
+  -trades-csv-out results/<SYMBOL>_<INTERVAL>/trades.xlsx
+
+# Override just TP for this run
+go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>/best.json -tp 0.025
+
+# Force hold mode (no cycles)
+go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>/best.json -cycle=false
+```
+
+## Flags reference
 
 - Data selection
-
   - `-symbol` (e.g., BTCUSDT)
   - `-interval` (e.g., 5m, 15m, 1h, 4h, 1d)
-  - `-data` (explicit path overrides -interval)
+  - `-data` explicit file path overrides `-interval`/`-data-root`
   - `-data-root` (default: `data/historical`)
   - `-period` trailing window: `7d`, `30d`, `180d`, `365d` or any Go duration (e.g., `168h`)
-
-- Strategy/indicators
-
-  - `-indicators`: limit the indicator set (subset of `rsi,macd,bb,sma`)
-  - `-min-interval`: override minimum time between trades (e.g., `30m`, `1h`). Default: matches data interval if detectable
-
+- Strategy / indicators
+  - `-indicators` subset of `rsi,macd,bb,sma`
+- Cycles / TP
+  - `-cycle` (default: true) enable TP cycles; set `false` to hold
+  - `-tp` decimal TP (e.g., `0.02` = 2%); applied only when `-cycle=true`
 - Optimization
-
-  - `-optimize`: optimizes base/max and indicator parameters; also evaluates all non-empty indicator combos by default
-  - `-all-intervals`: run per-interval backtests/optimizations for the given `-symbol`
-  - `-best-config-out`: save the winning configuration to a JSON file; if omitted, auto-saves to `results/best_<SYMBOL>_<INTERVAL>.json`
-
+  - `-optimize` optimize base/max, indicator params, combos, and TP (1%..5%)
+  - `-all-intervals` optimize each interval and compare
+  - `-best-config-out` save winning config; auto-saves to `results/<SYMBOL>_<INTERVAL>/best.json` if omitted
+  - `-verbose` print best-so-far improvements
 - Output
   - `-output console|json|csv`
-  - `-verbose`: print best-so-far improvements during optimization
+  - `-trades-csv-out <path>` write trades export (use `.xlsx` to get Trades + Cycles tabs)
 
-## How Decisions Are Made
+## Output structure
 
-- Indicators are chosen via `-indicators` or by the optimizer. The strategy evaluates each indicator’s `ShouldBuy/ShouldSell` and aggregates:
+- Console summary: initial/final balance, total return, max drawdown, Sharpe (placeholder), trades, cycles completed
+- Excel (`trades.xlsx`):
+  - Trades sheet: Cycle, Entry/Exit price & time, Quantity (USDT), Summary
+  - Cycles sheet: Cycle number, Start/End time, Entries, Target price, Average price, PnL (USDT), Capital (USDT)
 
+## Strategy logic (concise)
+
+- Indicators elected by `-indicators` or optimizer; each candle:
   - confidence = buySignals / totalIndicators
-  - If confidence ≥ minConfidence (default 0.6) and minInterval has passed, it buys
-  - Position size = base × (1 + confidence × strength), capped at maxMultiplier
+  - If confidence ≥ minConfidence (default 0.5) -> BUY
+  - amount = BaseAmount × (1 + confidence × strength), capped by MaxMultiplier
+  - Commission deducted; quantity = netUSDT / price
+- Cycle TP (when `-cycle=true`):
+  - TP triggers at `price ≥ avgEntry × (1 + TP)`
+  - Realize PnL for all open entries (allocate sell fee proportionally), close cycle, then restart on next BUY
+- Hold mode (`-cycle=false`):
+  - No TP; unrealized PnL applied at the end
 
-- Tip to increase trades: use 3 indicators (e.g., `rsi,macd,sma`) so any two buys yield confidence ≈ 0.67 ≥ 0.6.
+## Tips
 
-## Examples
-
-### Faster trading on a short timeframe
-
-```bash
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 5m -indicators rsi,bb,sma -period 7d -optimize
-```
-
-### Compare timeframes
-
-```bash
-go run cmd/backtest/main.go -symbol BTCUSDT -all-intervals -optimize -period 30d
-```
-
-### Use custom minInterval
-
-```bash
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 15m -min-interval 15m
-```
-
-## Output and Best Config
-
-- The best configuration (for a single interval optimize or the best among `-all-intervals`) is printed in JSON and saved to file.
-- Auto filename: `results/best_<SYMBOL>_<INTERVAL>.json` if `-best-config-out` not provided.
-
-## Troubleshooting
-
-- “No data file found”: Run the downloader and/or verify `-symbol` and `-interval`
-- MinInterval not matching timeframe: pass `-min-interval 5m` to override
-- Optimization is slow: restrict `-indicators`, use shorter `-period`, or try a faster interval
+- More trades: use 3+ indicators so ≥2 confirm buys (minConfidence = 0.5)
+- Faster optimize: restrict `-indicators`, shorten `-period`, use a higher timeframe
+- Capital usage grows after profitable cycles (balance increases after TP); per-BUY sizing still respects BaseAmount and MaxMultiplier

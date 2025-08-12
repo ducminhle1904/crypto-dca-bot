@@ -16,7 +16,7 @@ func TestNewBacktestEngine(t *testing.T) {
 	commission := 0.001
 	strat := strategy.NewMultiIndicatorStrategy()
 
-	engine := NewBacktestEngine(initialBalance, commission, strat)
+	engine := NewBacktestEngine(initialBalance, commission, strat, 0)
 
 	assert.NotNil(t, engine)
 	assert.Equal(t, initialBalance, engine.initialBalance)
@@ -29,7 +29,7 @@ func TestNewBacktestEngine(t *testing.T) {
 
 // TestBacktestEngine_Run_EmptyData tests running backtest with empty data
 func TestBacktestEngine_Run_EmptyData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 
 	results := engine.Run([]types.OHLCV{}, 50)
 
@@ -42,7 +42,7 @@ func TestBacktestEngine_Run_EmptyData(t *testing.T) {
 
 // TestBacktestEngine_Run_InsufficientData tests running backtest with insufficient data
 func TestBacktestEngine_Run_InsufficientData(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy())
+	engine := NewBacktestEngine(10000.0, 0.001, strategy.NewMultiIndicatorStrategy(), 0)
 
 	data := generateTestData(30) // Less than window size
 	results := engine.Run(data, 50)
@@ -56,7 +56,7 @@ func TestBacktestEngine_Run_InsufficientData(t *testing.T) {
 
 // TestBacktestEngine_Run_ProfitableTrades tests running backtest with profitable trades
 func TestBacktestEngine_Run_ProfitableTrades(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0))
+	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 
 	data := generateRisingData(100)
 	results := engine.Run(data, 20)
@@ -69,7 +69,7 @@ func TestBacktestEngine_Run_ProfitableTrades(t *testing.T) {
 
 // TestBacktestEngine_Run_LosingTrades tests running backtest with losing trades
 func TestBacktestEngine_Run_LosingTrades(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0))
+	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 
 	data := generateFallingData(100)
 	results := engine.Run(data, 20)
@@ -83,12 +83,12 @@ func TestBacktestEngine_Run_LosingTrades(t *testing.T) {
 // TestBacktestEngine_Run_CommissionImpact tests the impact of commission on results
 func TestBacktestEngine_Run_CommissionImpact(t *testing.T) {
 	// Test with no commission
-	engineNoCommission := NewBacktestEngine(10000.0, 0.0, createMockStrategy(strategy.ActionBuy, 100.0))
+	engineNoCommission := NewBacktestEngine(10000.0, 0.0, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 	data := generateRisingData(100)
 	resultsNoCommission := engineNoCommission.Run(data, 20)
 
 	// Test with commission
-	engineWithCommission := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0))
+	engineWithCommission := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 	resultsWithCommission := engineWithCommission.Run(data, 20)
 
 	// Results with commission should be lower due to trading costs
@@ -97,7 +97,7 @@ func TestBacktestEngine_Run_CommissionImpact(t *testing.T) {
 
 // TestBacktestEngine_Run_DrawdownCalculation tests drawdown calculation
 func TestBacktestEngine_Run_DrawdownCalculation(t *testing.T) {
-	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0))
+	engine := NewBacktestEngine(10000.0, 0.001, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 
 	// Create data with a peak followed by a decline
 	data := generateVolatileData(100)
@@ -185,7 +185,7 @@ func TestBacktestEngine_Run_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine := NewBacktestEngine(tt.initialBalance, tt.commission, createMockStrategy(strategy.ActionBuy, 100.0))
+			engine := NewBacktestEngine(tt.initialBalance, tt.commission, createMockStrategy(strategy.ActionBuy, 100.0), 0)
 			data := generateTestData(tt.dataSize)
 			results := engine.Run(data, tt.windowSize)
 

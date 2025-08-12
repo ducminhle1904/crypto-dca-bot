@@ -14,7 +14,6 @@ type EnhancedDCAStrategy struct {
 	maxMultiplier float64
 	minConfidence float64
 	lastTradeTime time.Time
-	minInterval   time.Duration
 }
 
 func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
@@ -23,7 +22,6 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		baseAmount:    baseAmount,
 		maxMultiplier: 3.0,
 		minConfidence: 0.5,
-		minInterval:   time.Hour * 1, // Minimum 1 hour between transactions
 	}
 }
 
@@ -31,22 +29,9 @@ func (s *EnhancedDCAStrategy) AddIndicator(indicator indicators.TechnicalIndicat
 	s.indicators = append(s.indicators, indicator)
 }
 
-// SetMinInterval allows configuring the minimum time between trades
-func (s *EnhancedDCAStrategy) SetMinInterval(d time.Duration) {
-	s.minInterval = d
-}
-
 func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDecision, error) {
 	if len(data) == 0 {
 		return nil, errors.New("no market data provided")
-	}
-
-	// Optional spacing: only enforce if explicitly set > 0
-	if s.minInterval > 0 && time.Since(s.lastTradeTime) < s.minInterval {
-		return &TradeDecision{
-			Action: ActionHold,
-			Reason: "Too soon since last trade",
-		}, nil
 	}
 
 	// Collect signals from all indicators
@@ -91,6 +76,7 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 
 	if confidence >= s.minConfidence {
 		amount := s.calculatePositionSize(totalStrength, confidence)
+		s.lastTradeTime = data[len(data)-1].Timestamp
 		return &TradeDecision{
 			Action:     ActionBuy,
 			Amount:     amount,

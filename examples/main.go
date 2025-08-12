@@ -191,6 +191,7 @@ func runBacktestingExample() {
 		initialBalance,
 		commission,
 		strategy.NewMultiIndicatorStrategy(),
+		0, // tpPercent disabled by default in examples
 	)
 
 	fmt.Println()
@@ -312,7 +313,7 @@ func runPerformanceComparisonExample() {
 	fmt.Println()
 
 	for _, s := range strategies {
-		engine := backtest.NewBacktestEngine(initialBalance, commission, s.strategy)
+		engine := backtest.NewBacktestEngine(initialBalance, commission, s.strategy, 0)
 		results := engine.Run(data, 100)
 
 		fmt.Printf("📊 %s Results:\n", s.name)
