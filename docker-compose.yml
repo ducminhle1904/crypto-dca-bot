@@ -1,9 +1,9 @@
-version: '3.8'
+version: "3.8"
 
 services:
   dca-bot:
     build: .
-    container_name: enhanced-dca-bot
+    container_name: crypto-dca-bot
     restart: unless-stopped
     environment:
       - ENV=production

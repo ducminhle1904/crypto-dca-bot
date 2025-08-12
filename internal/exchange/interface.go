@@ -3,7 +3,7 @@ package exchange
 import (
 	"context"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 type Exchange interface {

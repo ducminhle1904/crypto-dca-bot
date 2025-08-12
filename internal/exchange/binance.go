@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 // BinanceExchange implements the Exchange interface for Binance

@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Zmey56/enhanced-dca-bot/internal/strategy"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNewBacktestEngine tests the creation of a new backtest engine

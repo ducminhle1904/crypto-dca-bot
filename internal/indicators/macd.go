@@ -4,7 +4,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 // MACD represents the MACD technical indicator

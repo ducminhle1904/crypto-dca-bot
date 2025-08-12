@@ -3,7 +3,7 @@ package strategy
 import (
 	"time"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 // Strategy defines the interface for trading strategies

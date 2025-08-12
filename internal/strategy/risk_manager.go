@@ -1,8 +1,9 @@
 package strategy
 
 import (
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
 	"math"
+
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 type AdaptiveRiskManager struct {

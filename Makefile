@@ -45,7 +45,7 @@ run:
 # Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t enhanced-dca-bot .
+	docker build -t crypto-dca-bot .
 
 # Run with Docker Compose
 docker-run:

@@ -1,9 +1,9 @@
 package backtest
 
 import (
-	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
-	"github.com/Zmey56/enhanced-dca-bot/internal/strategy"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 type ParameterOptimizer struct {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 // MarketRegime represents the detected market regime

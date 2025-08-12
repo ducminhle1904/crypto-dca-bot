@@ -3,7 +3,7 @@ package indicators
 import (
 	"errors"
 
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 // SMA represents the Simple Moving Average technical indicator

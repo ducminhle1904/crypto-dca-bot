@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Zmey56/enhanced-dca-bot/internal/config"
-	"github.com/Zmey56/enhanced-dca-bot/internal/indicators"
-	"github.com/Zmey56/enhanced-dca-bot/internal/monitoring"
-	"github.com/Zmey56/enhanced-dca-bot/internal/notifications"
-	"github.com/Zmey56/enhanced-dca-bot/internal/risk"
-	"github.com/Zmey56/enhanced-dca-bot/internal/strategy"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/config"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/monitoring"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/notifications"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/risk"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 func TestBotComponents(t *testing.T) {

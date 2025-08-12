@@ -1,7 +1,7 @@
 package risk
 
 import (
-	"github.com/Zmey56/enhanced-dca-bot/internal/exchange"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 )
 
 // Order represents a trading order

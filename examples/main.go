@@ -28,10 +28,10 @@ import (
 
 	"math"
 
-	"github.com/Zmey56/enhanced-dca-bot/internal/backtest"
-	"github.com/Zmey56/enhanced-dca-bot/internal/config"
-	"github.com/Zmey56/enhanced-dca-bot/internal/strategy"
-	"github.com/Zmey56/enhanced-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/config"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 func main() {
