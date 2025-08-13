@@ -232,3 +232,9 @@ func calculateSMA(data []types.OHLCV, period int) float64 {
 func (m *MultiIndicatorStrategy) GetName() string {
 	return "Multi-Indicator Strategy"
 }
+
+// OnCycleComplete is called when a take-profit cycle is completed
+// MultiIndicatorStrategy doesn't maintain cycle-specific state, so this is a no-op
+func (m *MultiIndicatorStrategy) OnCycleComplete() {
+	// No state to reset for multi-indicator strategy
+}

@@ -194,6 +194,9 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleEntries = 0
 					b.cycleQtySum = 0
 					b.cycleCostSum = 0
+					
+					// Notify strategy that cycle is complete so it can reset state
+					b.strategy.OnCycleComplete()
 				}
 			}
 		}

@@ -224,6 +224,10 @@ func (m *mockStrategy) GetName() string {
 	return "Mock Strategy"
 }
 
+func (m *mockStrategy) OnCycleComplete() {
+	// Mock strategy doesn't maintain state
+}
+
 // generateTestData creates test data with random price movements
 func generateTestData(count int) []types.OHLCV {
 	data := make([]types.OHLCV, count)

@@ -13,6 +13,10 @@ type Strategy interface {
 
 	// GetName returns the name of the strategy
 	GetName() string
+	
+	// OnCycleComplete is called when a take-profit cycle is completed
+	// This allows strategies to reset state for the next cycle
+	OnCycleComplete()
 }
 
 // TradeDecision represents a trading decision made by a strategy
