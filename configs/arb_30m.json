@@ -1,0 +1,22 @@
+{
+  "data_file": "data\\historical\\ARBUSDT\\30m\\candles.csv",
+  "symbol": "ARBUSDT",
+  "initial_balance": 500,
+  "commission": 0.001,
+  "window_size": 100,
+  "base_amount": 20,
+  "max_multiplier": 3.5,
+  "price_threshold": 0.01,
+  "rsi_period": 16,
+  "rsi_oversold": 40,
+  "rsi_overbought": 70,
+  "macd_fast": 18,
+  "macd_slow": 28,
+  "macd_signal": 14,
+  "bb_period": 28,
+  "bb_std_dev": 2.2,
+  "sma_period": 100,
+  "indicators": ["rsi", "macd", "bb", "sma"],
+  "tp_percent": 0.04,
+  "cycle": true
+}

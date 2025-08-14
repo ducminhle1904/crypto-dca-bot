@@ -2,7 +2,6 @@ package backtest
 
 import (
 	"testing"
-	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"

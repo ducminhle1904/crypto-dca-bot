@@ -1,0 +1,22 @@
+{
+  "data_file": "data\\historical\\ADAUSDT\\5m\\candles.csv",
+  "symbol": "ADAUSDT",
+  "initial_balance": 500,
+  "commission": 0.001,
+  "window_size": 100,
+  "base_amount": 20,
+  "max_multiplier": 1.8,
+  "price_threshold": 0.01,
+  "rsi_period": 16,
+  "rsi_oversold": 40,
+  "rsi_overbought": 70,
+  "macd_fast": 12,
+  "macd_slow": 30,
+  "macd_signal": 14,
+  "bb_period": 10,
+  "bb_std_dev": 1.8,
+  "sma_period": 75,
+  "indicators": ["rsi", "macd", "bb", "sma"],
+  "tp_percent": 0.06,
+  "cycle": true
+}

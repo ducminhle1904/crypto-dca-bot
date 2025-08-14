@@ -6,19 +6,144 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"math/rand"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 	"github.com/xuri/excelize/v2"
-	"math/rand"
 )
+
+// Constants for default configuration values
+const (
+	// Default parameter values
+	DefaultInitialBalance = 500.0
+	DefaultCommission     = 0.001 // 0.1%
+	DefaultWindowSize     = 100
+	DefaultBaseAmount     = 20.0
+	DefaultMaxMultiplier  = 3.0
+	DefaultPriceThreshold = 0.02 // 2%
+	DefaultTPPercent      = 0.02 // 2%
+	
+	// Default indicator parameters
+	DefaultRSIPeriod      = 14
+	DefaultRSIOversold    = 30
+	DefaultRSIOverbought  = 70
+	DefaultMACDFast       = 12
+	DefaultMACDSlow       = 26
+	DefaultMACDSignal     = 9
+	DefaultBBPeriod       = 20
+	DefaultBBStdDev       = 2.0
+	DefaultSMAPeriod      = 50
+	
+	// Genetic Algorithm constants
+	GAPopulationSizeFixed   = 25   // For fixed indicators mode
+	GAGenerationsFixed      = 15   // For fixed indicators mode  
+	GAMutationRateFixed     = 0.15 // For fixed indicators mode
+	GACrossoverRateFixed    = 0.7  // For fixed indicators mode
+	GAEliteSizeFixed        = 3    // For fixed indicators mode
+	
+	GAPopulationSizeFull    = 60   // For full optimization mode
+	GAGenerationsFull       = 35   // For full optimization mode
+	GAMutationRateFull      = 0.1  // For full optimization mode
+	GACrossoverRateFull     = 0.8  // For full optimization mode
+	GAEliteSizeFull         = 6    // For full optimization mode
+	
+	TournamentSize          = 3    // Tournament selection size
+	
+	// File and directory constants
+	DefaultDataRoot         = "data/historical"
+	ResultsDir             = "results"
+	BestConfigFile         = "best.json"
+	TradesFile             = "trades.xlsx"
+	FixedModeSuffix        = "_fixed"
+	FullModeSuffix         = "_full"
+	
+	// Data validation constants
+	MinDataPoints          = 100   // Minimum data points required for backtest
+	MaxCommission          = 1.0   // Maximum commission (100%)
+	MinMultiplier          = 1.0   // Minimum multiplier value
+	MaxThreshold           = 1.0   // Maximum threshold (100%)
+	MinRSIPeriod           = 2     // Minimum RSI period
+	MaxRSIValue            = 100   // Maximum RSI value
+	MinMACDPeriod          = 1     // Minimum MACD period
+	MinBBPeriod            = 2     // Minimum Bollinger Bands period
+	MinSMAPeriod           = 1     // Minimum SMA period
+	
+	// Display and formatting constants
+	ReportLineLength       = 50
+	ProgressReportInterval = 5     // Report progress every N generations
+	DetailReportInterval   = 10    // Show detailed config every N generations
+	
+	// Performance constants
+	MaxParallelWorkers     = 4     // Maximum concurrent GA evaluations
+	
+	// Output control constants
+	EnableFileOutput       = true  // Default file output behavior
+)
+
+// Parameter ranges for optimization (eliminates duplicate logic)
+var (
+	OptimizationRanges = struct {
+		Multipliers     []float64
+		TPCandidates    []float64
+		PriceThresholds []float64
+		RSIPeriods      []int
+		RSIOversold     []float64
+		MACDFast        []int
+		MACDSlow        []int
+		MACDSignal      []int
+		BBPeriods       []int
+		BBStdDev        []float64
+		SMAPeriods      []int
+	}{
+		Multipliers:     []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
+		TPCandidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
+		PriceThresholds: []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05},
+		RSIPeriods:      []int{10, 12, 14, 16, 18, 20, 22, 25},
+		RSIOversold:     []float64{20, 25, 30, 35, 40},
+		MACDFast:        []int{6, 8, 10, 12, 14, 16, 18},
+		MACDSlow:        []int{20, 22, 24, 26, 28, 30, 32, 35},
+		MACDSignal:      []int{7, 8, 9, 10, 12, 14},
+		BBPeriods:       []int{10, 14, 16, 18, 20, 22, 25, 28, 30},
+		BBStdDev:        []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0},
+		SMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
+	}
+	
+	// Data cache for performance optimization
+	dataCache = make(map[string][]types.OHLCV)
+	dataCacheMutex sync.RWMutex
+)
+
+// Logging functions for better error reporting and debugging
+func logInfo(format string, args ...interface{}) {
+	log.Printf("ℹ️  "+format, args...)
+}
+
+func logWarning(format string, args ...interface{}) {
+	log.Printf("⚠️  "+format, args...)
+}
+
+func logError(format string, args ...interface{}) {
+	log.Printf("❌ "+format, args...)
+}
+
+func logSuccess(format string, args ...interface{}) {
+	log.Printf("✅ "+format, args...)
+}
+
+func logProgress(format string, args ...interface{}) {
+	log.Printf("🔄 "+format, args...)
+}
 
 // BacktestConfig holds all configuration for backtesting
 type BacktestConfig struct {
@@ -31,7 +156,7 @@ type BacktestConfig struct {
 	// DCA Strategy parameters
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
-	PriceThreshold float64 `json:"price_threshold"` // Minimum price drop % for next DCA entry
+	PriceThreshold float64 `json:"price_threshold"`
 	
 	// Technical indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
@@ -49,11 +174,6 @@ type BacktestConfig struct {
 	
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
-	
-	// Output settings
-	OutputFormat   string  `json:"output_format"` // "console", "json", "csv"
-	OutputFile     string  `json:"output_file"`
-	Verbose        bool    `json:"verbose"`
 
 	// Take-profit configuration
 	TPPercent      float64 `json:"tp_percent"`
@@ -66,57 +186,59 @@ func main() {
 		dataFile       = flag.String("data", "", "Path to historical data file (overrides -interval)")
 		symbol         = flag.String("symbol", "BTCUSDT", "Trading symbol")
 		intervalFlag  = flag.String("interval", "1h", "Data interval to use (e.g., 15m,1h,4h,1d)")
-		initialBalance = flag.Float64("balance", 500, "Initial balance")
-		commission     = flag.Float64("commission", 0.001, "Trading commission (0.001 = 0.1%)")
-		windowSize     = flag.Int("window", 100, "Data window size for analysis")
-		baseAmount     = flag.Float64("base-amount", 20, "Base DCA amount")
-		maxMultiplier  = flag.Float64("max-multiplier", 3, "Maximum position multiplier")
-		priceThreshold = flag.Float64("price-threshold", 0.02, "Minimum price drop % for next DCA entry (default: 2%)")
+		initialBalance = flag.Float64("balance", DefaultInitialBalance, "Initial balance")
+		commission     = flag.Float64("commission", DefaultCommission, "Trading commission (0.001 = 0.1%)")
+		windowSize     = flag.Int("window", DefaultWindowSize, "Data window size for analysis")
+		baseAmount     = flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount")
+		maxMultiplier  = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
+		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
 		optimize       = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
-		dataRoot       = flag.String("data-root", "data/historical", "Root folder containing <SYMBOL>/<INTERVAL>/candles.csv")
-		indicatorsFlag = flag.String("indicators", "", "Comma-separated indicators to include (rsi,macd,bb,sma). Empty = use config or default all")
-		optiIndicators = flag.Bool("optimize-indicators", false, "When optimizing, also search over indicator combinations")
+		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
-        exhaustiveFlag = flag.Bool("exhaustive", false, "Test all indicator combinations (2+ indicators) with smaller GA for faster results")
+		useFixedIndicators = flag.Bool("fixed-indicators", false, "Use recommended fixed parameters for indicators based on timeframe, only optimize strategy parameters")
+		consoleOnly    = flag.Bool("console-only", false, "Only display results in console, do not write files (best.json, trades.xlsx)")
 	)
 	
 	flag.Parse()
 	
 	// Load configuration - cycle is always enabled, console output only
 	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
-		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold, "console", "", false)
+		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold)
 
-	// Cycle is always enabled (our main logic)
+	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
-	// TP will be determined by optimization or use sensible default
-	if !*optimize {
-		cfg.TPPercent = 0.02 // Default 2% TP when not optimizing
+	// TP will be determined by optimization or use sensible default if not set
+	if !*optimize && cfg.TPPercent == 0 {
+		cfg.TPPercent = DefaultTPPercent // Default 2% TP when not optimizing and TP not set
 	}
 
 	// Capture and parse trailing period window
+	var selectedPeriod time.Duration
 	if s := strings.TrimSpace(*periodStr); s != "" {
 		if d, ok := parseTrailingPeriod(s); ok {
 			selectedPeriod = d
-			selectedPeriodRaw = s
 		}
 	}
 
-	// If optimize is requested, also optimize indicators by default
-	// but respect explicit user setting (-optimize-indicators=false)
-	if *optimize {
-		if !flagProvided("optimize-indicators") {
-			*optiIndicators = true
-		}
-	}
 
-	// Apply indicators from flag if provided
-	if strings.TrimSpace(*indicatorsFlag) != "" {
-		cfg.Indicators = parseIndicatorsList(*indicatorsFlag)
-	}
-	// Default to all indicators if none specified anywhere
+
+	// Set default indicators if not specified in config file
 	if len(cfg.Indicators) == 0 {
 		cfg.Indicators = []string{"rsi", "macd", "bb", "sma"}
+	}
+	
+	// Apply fixed indicator parameters if requested (only when optimizing or no config file)
+	if *useFixedIndicators && (*optimize || *configFile == "") {
+		interval := *intervalFlag
+		if cfg.DataFile != "" {
+			// Try to extract interval from data file path
+			if detectedInterval := guessIntervalFromPath(cfg.DataFile); detectedInterval != "" {
+				interval = detectedInterval
+			}
+		}
+		applyRecommendedIndicatorParams(cfg, interval)
+		fmt.Printf("🔧 Using recommended fixed indicator parameters for %s timeframe\n", interval)
 	}
 
 	// Resolve data file from symbol/interval if not explicitly provided and not scanning all intervals
@@ -126,7 +248,7 @@ func main() {
 	}
 	
 	if *allIntervals {
-		runAcrossIntervals(cfg, *dataRoot, *optimize, *optiIndicators)
+		runAcrossIntervals(cfg, *dataRoot, *optimize, *useFixedIndicators, selectedPeriod, *consoleOnly)
 		return
 	}
 	
@@ -134,13 +256,8 @@ func main() {
 		var bestResults *backtest.BacktestResults
 		var bestConfig BacktestConfig
 		
-		if *exhaustiveFlag {
-			bestResults, bestConfig = optimizeExhaustive(cfg, *optiIndicators)
-			fmt.Println("\n\n🏆 EXHAUSTIVE OPTIMIZATION RESULTS:")
-		} else {
-			bestResults, bestConfig = optimizeForInterval(cfg, *optiIndicators)
+		bestResults, bestConfig = optimizeForInterval(cfg, *useFixedIndicators, selectedPeriod)
 			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
-		}
 		
 		fmt.Println(strings.Repeat("=", 50))
 		fmt.Printf("Best Parameters:\n")
@@ -162,62 +279,79 @@ func main() {
 		if containsIndicator(bestConfig.Indicators, "sma") {
 			fmt.Printf("  SMA Period:     %d\n", bestConfig.SMAPeriod)
 		}
+		
+		// Determine interval string for usage example
+		intervalStr := filepath.Base(filepath.Dir(bestConfig.DataFile))
+		if intervalStr == "" { intervalStr = filepath.Base(filepath.Dir(cfg.DataFile)) }
+		if intervalStr == "" { intervalStr = "unknown" }
+		
+		if !*consoleOnly {
 		fmt.Println("\nBest Config (JSON):")
 		fmt.Println("Copy this configuration to reuse these optimized settings:")
 		fmt.Println(strings.Repeat("-", 50))
 		printBestConfigJSON(bestConfig)
 		fmt.Println(strings.Repeat("-", 50))
-		// Determine interval string for usage example
-		intervalStr := filepath.Base(filepath.Dir(bestConfig.DataFile))
-		if intervalStr == "" { intervalStr = filepath.Base(filepath.Dir(cfg.DataFile)) }
-		if intervalStr == "" { intervalStr = "unknown" }
 		fmt.Printf("Usage: go run cmd/backtest/main.go -config best.json\n")
 		fmt.Printf("   or: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
 			cfg.Symbol, intervalStr, bestConfig.BaseAmount, bestConfig.MaxMultiplier, bestConfig.PriceThreshold)
 		
-		// Always save to standard paths in results folder
-		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
-		stdBestPath := filepath.Join(stdDir, "best.json")
-		stdTradesPath := filepath.Join(stdDir, "trades.xlsx")
+			// Save to mode-specific paths in results folder
+		stdDir := defaultOutputDirWithMode(cfg.Symbol, intervalStr, *useFixedIndicators)
+			stdBestPath := filepath.Join(stdDir, BestConfigFile)
+			stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
 		// Write standard outputs
 		if err := writeBestConfigJSON(bestConfig, stdBestPath); err != nil {
-			fmt.Printf("Failed to write best config: %v\n", err)
+				logError("Failed to write best config: %v", err)
 		} else {
-			fmt.Printf("Saved best config to: %s\n", stdBestPath)
+				logSuccess("Saved best config to: %s", stdBestPath)
 		}
 		if err := writeTradesCSV(bestResults, stdTradesPath); err != nil {
-			fmt.Printf("Failed to write trades file: %v\n", err)
+				logError("Failed to write trades file: %v", err)
 		} else {
-			fmt.Printf("Saved trades to: %s\n", stdTradesPath)
+				logSuccess("Saved trades to: %s", stdTradesPath)
+			}
+		} else {
+			logInfo("Console-only mode: Skipping file output")
+			fmt.Println("\nBest Config (JSON):")
+			fmt.Println("Copy this configuration to reuse these optimized settings:")
+			fmt.Println(strings.Repeat("-", 50))
+			printBestConfigJSON(bestConfig)
+			fmt.Println(strings.Repeat("-", 50))
+			fmt.Printf("Usage: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
+				cfg.Symbol, intervalStr, bestConfig.BaseAmount, bestConfig.MaxMultiplier, bestConfig.PriceThreshold)
 		}
 		
 		fmt.Println("\nBest Results:")
-		outputConsole(bestResults, false)
+		outputConsole(bestResults)
 		return
 	}
 	
 	// Run single backtest
-	results := runBacktest(cfg)
+	results := runBacktest(cfg, selectedPeriod)
 	
 	// Output results to console
-	outputConsole(results, false)
+	outputConsole(results)
 	
-	// Always save trades to standard path
-	intervalStr := guessIntervalFromPath(cfg.DataFile)
-	if intervalStr == "" { intervalStr = "unknown" }
-	stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
-	stdTradesPath := filepath.Join(stdDir, "trades.xlsx")
-	
-	if err := writeTradesCSV(results, stdTradesPath); err != nil {
-		fmt.Printf("Failed to write trades file: %v\n", err)
+	if !*consoleOnly {
+		// Save trades to standard path (single backtests use full mode directory)
+		intervalStr := guessIntervalFromPath(cfg.DataFile)
+		if intervalStr == "" { intervalStr = "unknown" }
+		stdDir := defaultOutputDirWithMode(cfg.Symbol, intervalStr, false) // false = full mode for single runs
+		stdTradesPath := filepath.Join(stdDir, TradesFile)
+		
+		if err := writeTradesCSV(results, stdTradesPath); err != nil {
+			logError("Failed to write trades file: %v", err)
+		} else {
+			logSuccess("Saved trades to: %s", stdTradesPath)
+		}
 	} else {
-		fmt.Printf("Saved trades to: %s\n", stdTradesPath)
+		logInfo("Console-only mode: Skipping file output")
 	}
 }
 
 func loadConfig(configFile, dataFile, symbol string, balance, commission float64,
-	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64, outputFormat, outputFile string, verbose bool) *BacktestConfig {
+	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64) *BacktestConfig {
 	
 	cfg := &BacktestConfig{
 		DataFile:       dataFile,
@@ -227,21 +361,18 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		WindowSize:     windowSize,
 		BaseAmount:     baseAmount,
 		MaxMultiplier:  maxMultiplier,
-		PriceThreshold: priceThreshold, // Initialize PriceThreshold
-		RSIPeriod:      14,
-		RSIOversold:    30,
-		RSIOverbought:  70,
-		MACDFast:       12,
-		MACDSlow:       26,
-		MACDSignal:     9,
-		BBPeriod:       20,
-		BBStdDev:       2,
-		SMAPeriod:      50,
+		PriceThreshold: priceThreshold,
+		RSIPeriod:      DefaultRSIPeriod,
+		RSIOversold:    DefaultRSIOversold,
+		RSIOverbought:  DefaultRSIOverbought,
+		MACDFast:       DefaultMACDFast,
+		MACDSlow:       DefaultMACDSlow,
+		MACDSignal:     DefaultMACDSignal,
+		BBPeriod:       DefaultBBPeriod,
+		BBStdDev:       DefaultBBStdDev,
+		SMAPeriod:      DefaultSMAPeriod,
 		Indicators:     nil,
-		OutputFormat:   outputFormat,
-		OutputFile:     outputFile,
-		Verbose:        verbose,
-		TPPercent:     0, // Default to 0 TP
+		TPPercent:      0, // Default to 0 TP, will be set later if needed
 	}
 	
 	// Load from config file if provided
@@ -256,10 +387,85 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		}
 	}
 	
+	// Validate configuration parameters
+	if err := validateConfig(cfg); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
+	
 	return cfg
 }
 
-func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, optimizeIndicators bool) {
+// validateConfig performs basic validation on configuration parameters
+func validateConfig(cfg *BacktestConfig) error {
+	if cfg.InitialBalance <= 0 {
+		return fmt.Errorf("initial balance must be positive, got: %.2f", cfg.InitialBalance)
+	}
+	
+	if cfg.Commission < 0 || cfg.Commission > MaxCommission {
+		return fmt.Errorf("commission must be between 0 and %.2f (0-100%%), got: %.4f", MaxCommission, cfg.Commission)
+	}
+	
+	if cfg.BaseAmount <= 0 {
+		return fmt.Errorf("base amount must be positive, got: %.2f", cfg.BaseAmount)
+	}
+	
+	if cfg.MaxMultiplier <= MinMultiplier {
+		return fmt.Errorf("max multiplier must be greater than %.1f, got: %.2f", MinMultiplier, cfg.MaxMultiplier)
+	}
+	
+	if cfg.WindowSize <= 0 {
+		return fmt.Errorf("window size must be positive, got: %d", cfg.WindowSize)
+	}
+	
+	if cfg.PriceThreshold < 0 || cfg.PriceThreshold > MaxThreshold {
+		return fmt.Errorf("price threshold must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.PriceThreshold)
+	}
+	
+	if cfg.TPPercent < 0 || cfg.TPPercent > MaxThreshold {
+		return fmt.Errorf("TP percent must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.TPPercent)
+	}
+	
+	// Validate technical indicator parameters
+	if cfg.RSIPeriod < MinRSIPeriod {
+		return fmt.Errorf("RSI period must be at least %d, got: %d", MinRSIPeriod, cfg.RSIPeriod)
+	}
+	
+	if cfg.RSIOversold <= 0 || cfg.RSIOversold >= MaxRSIValue {
+		return fmt.Errorf("RSI oversold must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.RSIOversold)
+	}
+	
+	if cfg.RSIOverbought <= 0 || cfg.RSIOverbought >= MaxRSIValue {
+		return fmt.Errorf("RSI overbought must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.RSIOverbought)
+	}
+	
+	if cfg.RSIOversold >= cfg.RSIOverbought {
+		return fmt.Errorf("RSI oversold (%.1f) must be less than overbought (%.1f)", cfg.RSIOversold, cfg.RSIOverbought)
+	}
+	
+	if cfg.MACDFast < MinMACDPeriod || cfg.MACDSlow < MinMACDPeriod || cfg.MACDSignal < MinMACDPeriod {
+		return fmt.Errorf("MACD periods must be at least %d, got: fast=%d, slow=%d, signal=%d", MinMACDPeriod, cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+	}
+	
+	if cfg.MACDFast >= cfg.MACDSlow {
+		return fmt.Errorf("MACD fast period (%d) must be less than slow period (%d)", cfg.MACDFast, cfg.MACDSlow)
+	}
+	
+	if cfg.BBPeriod < MinBBPeriod {
+		return fmt.Errorf("bollinger Bands period must be at least %d, got: %d", MinBBPeriod, cfg.BBPeriod)
+	}
+	
+	if cfg.BBStdDev <= 0 {
+		return fmt.Errorf("bollinger Bands standard deviation must be positive, got: %.2f", cfg.BBStdDev)
+	}
+	
+	if cfg.SMAPeriod < MinSMAPeriod {
+		return fmt.Errorf("SMA period must be at least %d, got: %d", MinSMAPeriod, cfg.SMAPeriod)
+	}
+	
+	return nil
+}
+
+func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, useFixedIndicators bool, selectedPeriod time.Duration, consoleOnly bool) {
 	sym := strings.ToUpper(cfg.Symbol)
 	symDir := filepath.Join(dataRoot, sym)
 	entries, err := os.ReadDir(symDir)
@@ -289,9 +495,13 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, opt
 		if optimize {
 			// propagate cycle preference
 			cfgCopy.Cycle = cfg.Cycle
-			res, bestCfg = optimizeForInterval(&cfgCopy, optimizeIndicators)
+			// Apply fixed indicator parameters if requested
+			if useFixedIndicators {
+				applyRecommendedIndicatorParams(&cfgCopy, interval)
+			}
+			res, bestCfg = optimizeForInterval(&cfgCopy, useFixedIndicators, selectedPeriod)
 		} else {
-			res = runBacktest(&cfgCopy)
+			res = runBacktest(&cfgCopy, selectedPeriod)
 			bestCfg = cfgCopy
 		}
 
@@ -368,25 +578,29 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, opt
 
 	// Optionally print detailed results for best interval
 	fmt.Println("\nBest interval detailed results:")
-	outputConsole(best.Results, false)
+	outputConsole(best.Results)
 	
-	// Write standard outputs under results/<SYMBOL>_<INTERVAL>/
-	stdDir := defaultOutputDir(cfg.Symbol, best.Interval)
-	stdBestPath := filepath.Join(stdDir, "best.json")
-	stdTradesPath := filepath.Join(stdDir, "trades.xlsx")
-	if err := writeBestConfigJSON(best.OptimizedCfg, stdBestPath); err != nil {
-		fmt.Printf("Failed to write best config: %v\n", err)
+	if !consoleOnly {
+		// Write standard outputs under results/<SYMBOL>_<INTERVAL>_mode/
+		stdDir := defaultOutputDirWithMode(cfg.Symbol, best.Interval, useFixedIndicators)
+		stdBestPath := filepath.Join(stdDir, BestConfigFile)
+		stdTradesPath := filepath.Join(stdDir, TradesFile)
+		if err := writeBestConfigJSON(best.OptimizedCfg, stdBestPath); err != nil {
+			logError("Failed to write best config: %v", err)
+		} else {
+			logSuccess("Saved best config to: %s", stdBestPath)
+		}
+		if err := writeTradesCSV(best.Results, stdTradesPath); err != nil {
+			logError("Failed to write trades file: %v", err)
+		} else {
+			logSuccess("Saved trades to: %s", stdTradesPath)
+		}
 	} else {
-		fmt.Printf("Saved best config to: %s\n", stdBestPath)
-	}
-	if err := writeTradesCSV(best.Results, stdTradesPath); err != nil {
-		fmt.Printf("Failed to write trades file: %v\n", err)
-	} else {
-		fmt.Printf("Saved trades to: %s\n", stdTradesPath)
+		logInfo("Console-only mode: Skipping file output for interval analysis")
 	}
 }
 
-func runBacktest(cfg *BacktestConfig) *backtest.BacktestResults {
+func runBacktest(cfg *BacktestConfig, selectedPeriod time.Duration) *backtest.BacktestResults {
 	log.Println("🚀 Starting DCA Bot Backtest")
 	log.Printf("📊 Symbol: %s", cfg.Symbol)
 	log.Printf("💰 Initial Balance: $%.2f", cfg.InitialBalance)
@@ -395,14 +609,21 @@ func runBacktest(cfg *BacktestConfig) *backtest.BacktestResults {
 	log.Println("=" + strings.Repeat("=", 40))
 	
 	// Load historical data
-	data, err := loadHistoricalData(cfg.DataFile)
+	data, err := loadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
 		log.Fatalf("Failed to load data: %v", err)
+	}
+	
+	if len(data) == 0 {
+		log.Fatalf("No valid data found in file: %s", cfg.DataFile)
 	}
 	
 	// Apply trailing period filter if set
 	if selectedPeriod > 0 {
 		data = filterDataByPeriod(data, selectedPeriod)
+		if len(data) == 0 {
+			log.Fatalf("No data remaining after applying period filter of %v", selectedPeriod)
+		}
 	}
 	
 	return runBacktestWithData(cfg, data)
@@ -461,6 +682,98 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 func guessIntervalFromPath(path string) string {
 	dir := filepath.Dir(path)
 	return filepath.Base(dir)
+}
+
+// applyRecommendedIndicatorParams sets recommended parameters based on timeframe
+func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
+	switch strings.ToLower(interval) {
+	case "5m":
+		// RSI
+		cfg.RSIPeriod = 9
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		// MACD  
+		cfg.MACDFast = 5
+		cfg.MACDSlow = 13
+		cfg.MACDSignal = 1
+		// Bollinger Bands
+		cfg.BBPeriod = 10
+		cfg.BBStdDev = 2
+		// SMA
+		cfg.SMAPeriod = 9
+		
+	case "15m":
+		// RSI
+		cfg.RSIPeriod = 14
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		// MACD
+		cfg.MACDFast = 8
+		cfg.MACDSlow = 17
+		cfg.MACDSignal = 9
+		// Bollinger Bands
+		cfg.BBPeriod = 20
+		cfg.BBStdDev = 2
+		// SMA
+		cfg.SMAPeriod = 21
+		
+	case "30m":
+		// RSI
+		cfg.RSIPeriod = 14
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		// MACD
+		cfg.MACDFast = 12
+		cfg.MACDSlow = 26
+		cfg.MACDSignal = 9
+		// Bollinger Bands
+		cfg.BBPeriod = 20
+		cfg.BBStdDev = 2
+		// SMA
+		cfg.SMAPeriod = 50
+		
+	case "1h":
+		// RSI
+		cfg.RSIPeriod = 14
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		// MACD
+		cfg.MACDFast = 12
+		cfg.MACDSlow = 26
+		cfg.MACDSignal = 9
+		// Bollinger Bands
+		cfg.BBPeriod = 20
+		cfg.BBStdDev = 2
+		// SMA
+		cfg.SMAPeriod = 50
+		
+	case "4h":
+		// RSI
+		cfg.RSIPeriod = 14
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		// MACD
+		cfg.MACDFast = 12
+		cfg.MACDSlow = 26
+		cfg.MACDSignal = 9
+		// Bollinger Bands
+		cfg.BBPeriod = 20
+		cfg.BBStdDev = 2
+		// SMA
+		cfg.SMAPeriod = 100
+		
+	default:
+		// Default to 1h settings for unknown intervals
+		cfg.RSIPeriod = 14
+		cfg.RSIOversold = 30
+		cfg.RSIOverbought = 70
+		cfg.MACDFast = 12
+		cfg.MACDSlow = 26
+		cfg.MACDSignal = 9
+		cfg.BBPeriod = 20
+		cfg.BBStdDev = 2
+		cfg.SMAPeriod = 50
+	}
 }
 
 func indicatorSummary(cfg *BacktestConfig) string {
@@ -525,18 +838,35 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		dca.AddIndicator(sma)
 	}
 
-	// No min interval spacing; enter on closed candle when consensus reached
-
 	return dca
 }
- 
-var bestConfigOutPath string
-var tradesCsvOutPath string
 
-func parseDurationSafe(s string) (time.Duration, bool) {
-	d, err := time.ParseDuration(s)
-	if err != nil { return 0, false }
-	return d, true
+// loadHistoricalDataCached loads data with caching to improve performance
+func loadHistoricalDataCached(filename string) ([]types.OHLCV, error) {
+	// Check cache first
+	dataCacheMutex.RLock()
+	if cachedData, exists := dataCache[filename]; exists {
+		dataCacheMutex.RUnlock()
+		logInfo("Using cached data for %s (%d records)", filepath.Base(filename), len(cachedData))
+		return cachedData, nil
+	}
+	dataCacheMutex.RUnlock()
+
+	// Load data if not in cache
+	logProgress("Loading historical data from %s", filepath.Base(filename))
+	data, err := loadHistoricalData(filename)
+	if err != nil {
+		logError("Failed to load data from %s: %v", filepath.Base(filename), err)
+		return nil, err
+	}
+
+	// Store in cache
+	dataCacheMutex.Lock()
+	dataCache[filename] = data
+	dataCacheMutex.Unlock()
+	
+	logSuccess("Loaded and cached data from %s (%d records)", filepath.Base(filename), len(data))
+	return data, nil
 }
 
 func loadHistoricalData(filename string) ([]types.OHLCV, error) {
@@ -560,23 +890,76 @@ func loadHistoricalData(filename string) ([]types.OHLCV, error) {
 	
 	var data []types.OHLCV
 	
+	lineNum := 1 // Start from 1 since we already read header
 	for {
 		record, err := reader.Read()
 		if err != nil {
+			if err.Error() == "EOF" {
 			break
 		}
+			return nil, fmt.Errorf("error reading CSV at line %d: %v", lineNum, err)
+		}
+		lineNum++
 		
 		// Expected format: timestamp,open,high,low,close,volume
 		if len(record) < 6 {
+			logWarning("Insufficient columns at line %d, skipping", lineNum)
 			continue
 		}
 		
-		timestamp, _ := time.Parse("2006-01-02 15:04:05", record[0])
-		open, _ := strconv.ParseFloat(record[1], 64)
-		high, _ := strconv.ParseFloat(record[2], 64)
-		low, _ := strconv.ParseFloat(record[3], 64)
-		close, _ := strconv.ParseFloat(record[4], 64)
-		volume, _ := strconv.ParseFloat(record[5], 64)
+		// Parse timestamp with proper error handling
+		timestamp, err := time.Parse("2006-01-02 15:04:05", record[0])
+		if err != nil {
+			logWarning("Invalid timestamp '%s' at line %d, skipping: %v", record[0], lineNum, err)
+			continue
+		}
+		
+		// Parse price data with proper error handling
+		open, err := strconv.ParseFloat(record[1], 64)
+		if err != nil {
+			logWarning("Invalid open price '%s' at line %d, skipping: %v", record[1], lineNum, err)
+			continue
+		}
+		
+		high, err := strconv.ParseFloat(record[2], 64)
+		if err != nil {
+			logWarning("Invalid high price '%s' at line %d, skipping: %v", record[2], lineNum, err)
+			continue
+		}
+		
+		low, err := strconv.ParseFloat(record[3], 64)
+		if err != nil {
+			logWarning("Invalid low price '%s' at line %d, skipping: %v", record[3], lineNum, err)
+			continue
+		}
+		
+		close, err := strconv.ParseFloat(record[4], 64)
+		if err != nil {
+			logWarning("Invalid close price '%s' at line %d, skipping: %v", record[4], lineNum, err)
+			continue
+		}
+		
+		volume, err := strconv.ParseFloat(record[5], 64)
+		if err != nil {
+			logWarning("Invalid volume '%s' at line %d, skipping: %v", record[5], lineNum, err)
+			continue
+		}
+		
+		// Basic data validation
+		if open <= 0 || high <= 0 || low <= 0 || close <= 0 {
+			logWarning("Invalid price data (negative or zero) at line %d, skipping", lineNum)
+			continue
+		}
+		
+		if high < open || high < close || high < low {
+			logWarning("High price is lower than other prices at line %d, skipping", lineNum)
+			continue
+		}
+		
+		if low > open || low > close || low > high {
+			logWarning("Low price is higher than other prices at line %d, skipping", lineNum)
+			continue
+		}
 		
 		data = append(data, types.OHLCV{
 			Timestamp: timestamp,
@@ -625,18 +1008,7 @@ func generateSampleData() []types.OHLCV {
 	return data
 }
 
-func outputResults(results *backtest.BacktestResults, cfg *BacktestConfig) {
-	switch cfg.OutputFormat {
-	case "json":
-		outputJSON(results, cfg.OutputFile)
-	case "csv":
-		outputCSV(results, cfg.OutputFile)
-	default:
-		outputConsole(results, cfg.Verbose)
-	}
-}
-
-func outputConsole(results *backtest.BacktestResults, verbose bool) {
+func outputConsole(results *backtest.BacktestResults) {
 	fmt.Println("\n" + strings.Repeat("=", 50))
 	fmt.Println("📊 BACKTEST RESULTS")
 	fmt.Println(strings.Repeat("=", 50))
@@ -653,109 +1025,100 @@ func outputConsole(results *backtest.BacktestResults, verbose bool) {
 	fmt.Printf("❌ Losing Trades:      %d (%.1f%%)\n", results.LosingTrades,
 		float64(results.LosingTrades)/float64(results.TotalTrades)*100)
 	
-	if verbose && len(results.Trades) > 0 {
-		fmt.Println("\n📋 TRADE HISTORY:")
-		fmt.Println(strings.Repeat("-", 80))
-		fmt.Printf("%-20s %-10s %-10s %-10s %-10s\n", 
-			"Entry Time", "Entry Price", "Quantity", "PnL", "Commission")
-		fmt.Println(strings.Repeat("-", 80))
-		
-		for _, trade := range results.Trades {
-			fmt.Printf("%-20s $%-9.2f %-10.6f $%-9.2f $%-9.2f\n",
-				trade.EntryTime.Format("2006-01-02 15:04"),
-				trade.EntryPrice,
-				trade.Quantity,
-				trade.PnL,
-				trade.Commission)
-		}
-	}
-	
 	fmt.Println("\n" + strings.Repeat("=", 50))
 }
 
-func outputJSON(results *backtest.BacktestResults, outputFile string) {
-	data, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		log.Fatalf("Failed to marshal results: %v", err)
-	}
-	
-	if outputFile == "" {
-		fmt.Println(string(data))
-	} else {
-		if err := os.WriteFile(outputFile, data, 0644); err != nil {
-			log.Fatalf("Failed to write output file: %v", err)
-		}
-		fmt.Printf("Results saved to: %s\n", outputFile)
-	}
-}
 
-func outputCSV(results *backtest.BacktestResults, outputFile string) {
-	var w *csv.Writer
+
+// evaluatePopulationParallel evaluates fitness for all individuals in parallel
+func evaluatePopulationParallel(population []*Individual, data []types.OHLCV) {
+	var wg sync.WaitGroup
 	
-	if outputFile == "" {
-		w = csv.NewWriter(os.Stdout)
-	} else {
-		file, err := os.Create(outputFile)
-		if err != nil {
-			log.Fatalf("Failed to create output file: %v", err)
+	// Create a channel to limit concurrent goroutines
+	workerChan := make(chan struct{}, MaxParallelWorkers)
+	
+	for i := range population {
+		if population[i].fitness != 0 {
+			continue // Skip already evaluated individuals
 		}
-		defer file.Close()
-		w = csv.NewWriter(file)
+		
+		wg.Add(1)
+		go func(individual *Individual) {
+			defer wg.Done()
+			
+			workerChan <- struct{}{} // Acquire worker slot
+			defer func() { <-workerChan }() // Release worker slot
+			
+			results := runBacktestWithData(&individual.config, data)
+			individual.fitness = results.TotalReturn
+			individual.results = results
+		}(population[i])
 	}
 	
-	// Write summary
-	w.Write([]string{"Metric", "Value"})
-	w.Write([]string{"Initial Balance", fmt.Sprintf("%.2f", results.StartBalance)})
-	w.Write([]string{"Final Balance", fmt.Sprintf("%.2f", results.EndBalance)})
-	w.Write([]string{"Total Return %", fmt.Sprintf("%.2f", results.TotalReturn*100)})
-	w.Write([]string{"Max Drawdown %", fmt.Sprintf("%.2f", results.MaxDrawdown*100)})
-	w.Write([]string{"Sharpe Ratio", fmt.Sprintf("%.2f", results.SharpeRatio)})
-	w.Write([]string{"Total Trades", fmt.Sprintf("%d", results.TotalTrades)})
-	
-	w.Flush()
-	
-	if outputFile != "" {
-		fmt.Printf("Results saved to: %s\n", outputFile)
-	}
+	wg.Wait()
 }
 
 // Parameter optimization functions
-func optimizeForInterval(cfg *BacktestConfig, optimizeIndicators bool) (*backtest.BacktestResults, BacktestConfig) {
+func optimizeForInterval(cfg *BacktestConfig, useFixedIndicators bool, selectedPeriod time.Duration) (*backtest.BacktestResults, BacktestConfig) {
+	// Create local RNG to avoid race conditions
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
 	// Preload data once for performance
-	data, err := loadHistoricalData(cfg.DataFile)
+	data, err := loadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
 		log.Fatalf("Failed to load data for optimization: %v", err)
 	}
+	
+	if len(data) == 0 {
+		log.Fatalf("No valid data found for optimization in file: %s", cfg.DataFile)
+	}
+	
 	if selectedPeriod > 0 {
 		data = filterDataByPeriod(data, selectedPeriod)
+		if len(data) == 0 {
+			log.Fatalf("No data remaining for optimization after applying period filter of %v", selectedPeriod)
+		}
 	}
 
-	// GA Parameters
-	populationSize := 50
-	generations := 30
-	mutationRate := 0.1
-	crossoverRate := 0.8
-	eliteSize := 5
+	// GA Parameters - adjust based on optimization mode
+	var populationSize, generations, eliteSize int
+	var mutationRate, crossoverRate float64
+	
+	if useFixedIndicators {
+		// Smaller GA for fewer parameters (3-4 strategy params only)
+		populationSize = GAPopulationSizeFixed
+		generations = GAGenerationsFixed
+		mutationRate = GAMutationRateFixed  // Higher mutation for faster exploration
+		crossoverRate = GACrossoverRateFixed
+		eliteSize = GAEliteSizeFixed
+	} else {
+		// Larger GA for full optimization (11+ parameters)
+		populationSize = GAPopulationSizeFull   // Increased for better coverage
+		generations = GAGenerationsFull         // More generations for convergence
+		mutationRate = GAMutationRateFull
+		crossoverRate = GACrossoverRateFull
+		eliteSize = GAEliteSizeFull
+	}
 
-	fmt.Printf("🧬 Starting Genetic Algorithm Optimization\n")
-	fmt.Printf("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%\n", 
+	logProgress("Starting Genetic Algorithm Optimization")
+	if useFixedIndicators {
+		logInfo("Mode: Fixed indicator parameters (only optimizing strategy parameters)")
+	} else {
+		logInfo("Mode: Full optimization (including indicator parameters)")
+	}
+	logInfo("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
 		populationSize, generations, mutationRate*100, crossoverRate*100)
+	logInfo("Using %d parallel workers for fitness evaluation", MaxParallelWorkers)
 
 	// Initialize population
-	population := initializePopulation(cfg, populationSize, optimizeIndicators)
+	population := initializePopulation(cfg, populationSize, useFixedIndicators, rng)
 	
 	var bestIndividual *Individual
 	var bestResults *backtest.BacktestResults
 	
 	for gen := 0; gen < generations; gen++ {
-		// Evaluate fitness for all individuals
-		for i := range population {
-			if population[i].fitness == 0 { // Only evaluate if not already done
-				results := runBacktestWithData(&population[i].config, data)
-				population[i].fitness = results.TotalReturn
-				population[i].results = results
-			}
-		}
+		// Evaluate fitness for all individuals in parallel
+		evaluatePopulationParallel(population, data)
 		
 		// Sort by fitness (descending)
 		sortPopulationByFitness(population)
@@ -770,17 +1133,17 @@ func optimizeForInterval(cfg *BacktestConfig, optimizeIndicators bool) (*backtes
 			bestResults = population[0].results
 		}
 		
-		if gen%5 == 0 {
-			fmt.Printf("Gen %d: Best=%.2f%%, Avg=%.2f%%, Worst=%.2f%%\n", 
+		if gen%ProgressReportInterval == 0 {
+			logProgress("Gen %d: Best=%.2f%%, Avg=%.2f%%, Worst=%.2f%%", 
 				gen+1, 
 				population[0].fitness*100,
 				averageFitness(population)*100,
 				population[len(population)-1].fitness*100)
 				
-			// Show best individual details every 10 generations
-			if gen%10 == 9 {
+			// Show best individual details every DetailReportInterval generations
+			if gen%DetailReportInterval == (DetailReportInterval-1) {
 				best := &population[0].config
-				fmt.Printf("      Best Config: %s | maxMult=%.1f | tp=%.1f%% | threshold=%.1f%%\n",
+				logInfo("Best Config: %s | maxMult=%.1f | tp=%.1f%% | threshold=%.1f%%",
 					strings.Join(best.Indicators, "+"),
 					best.MaxMultiplier,
 					best.TPPercent*100,
@@ -790,139 +1153,18 @@ func optimizeForInterval(cfg *BacktestConfig, optimizeIndicators bool) (*backtes
 		
 		// Create next generation
 		if gen < generations-1 {
-			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, cfg, optimizeIndicators)
+			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, cfg, useFixedIndicators, rng)
 		}
 	}
 	
-	fmt.Printf("🏆 GA Optimization completed! Best fitness: %.2f%%\n", bestIndividual.fitness*100)
+	logSuccess("GA Optimization completed! Best fitness: %.2f%%", bestIndividual.fitness*100)
+	logInfo("Total evaluations: %d (%.1f evaluations/second)", 
+		populationSize*generations, 
+		float64(populationSize*generations)/time.Since(time.Now().Add(-time.Duration(generations)*time.Second/5)).Seconds())
 	return bestResults, bestIndividual.config
 }
 
-// optimizeExhaustive tests all indicator combinations (2+ indicators) with smaller GA
-func optimizeExhaustive(cfg *BacktestConfig, optimizeIndicators bool) (*backtest.BacktestResults, BacktestConfig) {
-	// Preload data once for performance
-	data, err := loadHistoricalData(cfg.DataFile)
-	if err != nil {
-		log.Fatalf("Failed to load data for optimization: %v", err)
-	}
-	if selectedPeriod > 0 {
-		data = filterDataByPeriod(data, selectedPeriod)
-	}
 
-	// Generate all multi-indicator combinations (2+ indicators)
-	baseIndicators := []string{"rsi", "macd", "bb", "sma"}
-	allCombinations := generateMultiIndicatorCombinations(baseIndicators)
-	
-	// Setup logging to file
-	intervalStr := guessIntervalFromPath(cfg.DataFile)
-	if intervalStr == "" { intervalStr = "unknown" }
-	logDir := defaultOutputDir(cfg.Symbol, intervalStr)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Printf("Failed to create log directory: %v", err)
-	}
-	logPath := filepath.Join(logDir, "exhaustive_test.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		log.Printf("Failed to create log file: %v", err)
-		logFile = nil
-	}
-	defer func() {
-		if logFile != nil {
-			logFile.Close()
-		}
-	}()
-	
-	// Helper function to log to both console and file
-	logBoth := func(format string, args ...interface{}) {
-		message := fmt.Sprintf(format, args...)
-		fmt.Print(message)
-		if logFile != nil {
-			logFile.WriteString(message)
-		}
-	}
-	
-	logBoth("🔍 Starting Exhaustive Combination Testing\n")
-	logBoth("Testing %d combinations (2+ indicators) with reduced GA\n", len(allCombinations))
-	logBoth("Symbol: %s, Interval: %s\n", cfg.Symbol, intervalStr)
-	if selectedPeriod > 0 {
-		logBoth("Period: %s (%d data points)\n", selectedPeriodRaw, len(data))
-	} else {
-		logBoth("Data points: %d\n", len(data))
-	}
-	logBoth("Timestamp: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	logBoth(strings.Repeat("=", 60) + "\n")
-	
-	var globalBestResults *backtest.BacktestResults
-	var globalBestConfig BacktestConfig
-	globalBestFitness := -999999.0
-	
-	for i, combo := range allCombinations {
-		logBoth("\n[%d/%d] Testing: %s\n", i+1, len(allCombinations), strings.Join(combo, "+"))
-		
-		// Create config copy with this indicator combination
-		comboCfg := *cfg
-		comboCfg.Indicators = combo
-		
-		// Run smaller GA for this combination
-		results, config := optimizeForCombination(&comboCfg, combo, data)
-		
-		fitness := results.TotalReturn
-		logBoth("         Result: %.2f%% return\n", fitness*100)
-		logBoth("         Config: base=$%.0f, maxMult=%.1f, tp=%.1f%%, threshold=%.1f%%\n",
-			config.BaseAmount, config.MaxMultiplier, config.TPPercent*100, config.PriceThreshold*100)
-		
-		// Log indicator-specific parameters
-		if containsIndicator(config.Indicators, "rsi") {
-			logBoth("         RSI: period=%d, oversold=%.0f\n", config.RSIPeriod, config.RSIOversold)
-		}
-		if containsIndicator(config.Indicators, "macd") {
-			logBoth("         MACD: fast=%d, slow=%d, signal=%d\n", config.MACDFast, config.MACDSlow, config.MACDSignal)
-		}
-		if containsIndicator(config.Indicators, "bb") {
-			logBoth("         BB: period=%d, stddev=%.1f\n", config.BBPeriod, config.BBStdDev)
-		}
-		if containsIndicator(config.Indicators, "sma") {
-			logBoth("         SMA: period=%d\n", config.SMAPeriod)
-		}
-		
-		// Track global best
-		if fitness > globalBestFitness {
-			globalBestFitness = fitness
-			globalBestResults = results
-			globalBestConfig = config
-			logBoth("         🌟 NEW BEST! (%.2f%%)\n", fitness*100)
-		}
-	}
-	
-	logBoth("\n" + strings.Repeat("=", 60) + "\n")
-	logBoth("🏆 Exhaustive optimization completed!\n")
-	logBoth("Best combination: %s (%.2f%% return)\n", 
-		strings.Join(globalBestConfig.Indicators, "+"), globalBestFitness*100)
-	logBoth("Best config details:\n")
-	logBoth("  Base Amount: $%.0f\n", globalBestConfig.BaseAmount)
-	logBoth("  Max Multiplier: %.1f\n", globalBestConfig.MaxMultiplier)
-	logBoth("  TP Percent: %.1f%%\n", globalBestConfig.TPPercent*100)
-	logBoth("  Price Threshold: %.1f%%\n", globalBestConfig.PriceThreshold*100)
-	if containsIndicator(globalBestConfig.Indicators, "rsi") {
-		logBoth("  RSI: period=%d, oversold=%.0f\n", globalBestConfig.RSIPeriod, globalBestConfig.RSIOversold)
-	}
-	if containsIndicator(globalBestConfig.Indicators, "macd") {
-		logBoth("  MACD: fast=%d, slow=%d, signal=%d\n", globalBestConfig.MACDFast, globalBestConfig.MACDSlow, globalBestConfig.MACDSignal)
-	}
-	if containsIndicator(globalBestConfig.Indicators, "bb") {
-		logBoth("  BB: period=%d, stddev=%.1f\n", globalBestConfig.BBPeriod, globalBestConfig.BBStdDev)
-	}
-	if containsIndicator(globalBestConfig.Indicators, "sma") {
-		logBoth("  SMA: period=%d\n", globalBestConfig.SMAPeriod)
-	}
-	logBoth("Optimization completed at: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-	
-	if logFile != nil {
-		fmt.Printf("📝 Detailed log saved to: %s\n", logPath)
-	}
-	
-	return globalBestResults, globalBestConfig
-}
 
 // Individual represents a candidate solution
 type Individual struct {
@@ -932,61 +1174,41 @@ type Individual struct {
 }
 
 // Initialize random population
-func initializePopulation(cfg *BacktestConfig, size int, optimizeIndicators bool) []*Individual {
+func initializePopulation(cfg *BacktestConfig, size int, useFixedIndicators bool, rng *rand.Rand) []*Individual {
 	population := make([]*Individual, size)
-	
-	// Base indicators for combination generation
-	baseIndicators := cfg.Indicators
-	if len(baseIndicators) == 0 {
-		baseIndicators = []string{"rsi", "macd", "bb", "sma"}
-	}
-	
-	// Fixed parameter ranges for all optimization (no style constraints)
-	multipliers := []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0}
-	tpCandidates := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06}
-	priceThresholds := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05}
-	rsiPeriods := []int{10, 12, 14, 16, 18, 20, 22, 25}
-	rsiOversold := []float64{20, 25, 30, 35, 40}
-	macdFast := []int{6, 8, 10, 12, 14, 16, 18}
-	macdSlow := []int{20, 22, 24, 26, 28, 30, 32, 35}
-	macdSignal := []int{7, 8, 9, 10, 12, 14}
-	bbPeriods := []int{10, 14, 16, 18, 20, 22, 25, 28, 30}
-	bbStdDev := []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0}
-	smaPeriods := []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120}
 	
 	for i := 0; i < size; i++ {
 		individual := &Individual{
 			config: *cfg, // Copy base config
 		}
 		
-		// Randomize parameters using fixed ranges
+		// Randomize parameters using optimization ranges
 		individual.config.BaseAmount = cfg.BaseAmount // Use flag value
-		individual.config.MaxMultiplier = randomChoice(multipliers)
-		individual.config.PriceThreshold = randomChoice(priceThresholds)
+		individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
+		individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		
 		// TP candidates
 		if cfg.Cycle {
-			individual.config.TPPercent = randomChoice(tpCandidates)
+			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
 		} else {
 			individual.config.TPPercent = 0
 		}
 		
-		// Indicator selection
-		if optimizeIndicators {
-			individual.config.Indicators = randomIndicatorCombo(baseIndicators)
-		} else {
-			individual.config.Indicators = cfg.Indicators
-		}
+		// Always use all indicators - no optimization of indicator combinations
+		individual.config.Indicators = []string{"rsi", "macd", "bb", "sma"}
 		
-		// Indicator parameters using fixed ranges
-		individual.config.RSIPeriod = randomChoice(rsiPeriods)
-		individual.config.RSIOversold = randomChoice(rsiOversold)
-		individual.config.MACDFast = randomChoice(macdFast)
-		individual.config.MACDSlow = randomChoice(macdSlow)
-		individual.config.MACDSignal = randomChoice(macdSignal)
-		individual.config.BBPeriod = randomChoice(bbPeriods)
-		individual.config.BBStdDev = randomChoice(bbStdDev)
-		individual.config.SMAPeriod = randomChoice(smaPeriods)
+		// Indicator parameters - randomize only if not using fixed parameters
+		if !useFixedIndicators {
+			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+			individual.config.SMAPeriod = randomChoice(OptimizationRanges.SMAPeriods, rng)
+		}
+		// If using fixed indicators, keep the values from cfg (already set by applyRecommendedIndicatorParams)
 		
 		population[i] = individual
 	}
@@ -995,7 +1217,7 @@ func initializePopulation(cfg *BacktestConfig, size int, optimizeIndicators bool
 }
 
 // Random selection helpers
-func randomChoice[T any](choices []T) T {
+func randomChoice[T any](choices []T, rng *rand.Rand) T {
 	if len(choices) == 0 {
 		var zero T
 		return zero
@@ -1004,22 +1226,7 @@ func randomChoice[T any](choices []T) T {
 	return choices[idx]
 }
 
-func randomIndicatorCombo(base []string) []string {
-	if len(base) == 0 {
-		return []string{}
-	}
-	
-	// Generate random bitmask (at least 1 indicator)
-	mask := 1 + (rng.Intn((1 << len(base)) - 1))
-	
-	var combo []string
-	for i := 0; i < len(base); i++ {
-		if mask&(1<<i) != 0 {
-			combo = append(combo, base[i])
-		}
-	}
-	return combo
-}
+
 
 // Sort population by fitness (descending)
 func sortPopulationByFitness(population []*Individual) {
@@ -1042,7 +1249,7 @@ func averageFitness(population []*Individual) float64 {
 }
 
 // Create next generation using selection, crossover, and mutation
-func createNextGeneration(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, optimizeIndicators bool) []*Individual {
+func createNextGeneration(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, useFixedIndicators bool, rng *rand.Rand) []*Individual {
 	newPop := make([]*Individual, len(population))
 	
 	// Elitism: keep best individuals
@@ -1056,11 +1263,11 @@ func createNextGeneration(population []*Individual, eliteSize int, crossoverRate
 	
 	// Fill rest with crossover and mutation
 	for i := eliteSize; i < len(population); i++ {
-		parent1 := tournamentSelection(population, 3)
-		parent2 := tournamentSelection(population, 3)
+		parent1 := tournamentSelection(population, TournamentSize, rng)
+		parent2 := tournamentSelection(population, TournamentSize, rng)
 		
-		child := crossover(parent1, parent2, crossoverRate)
-		mutate(child, mutationRate, cfg, optimizeIndicators)
+		child := crossover(parent1, parent2, crossoverRate, rng)
+		mutate(child, mutationRate, cfg, useFixedIndicators, rng)
 		
 		newPop[i] = child
 	}
@@ -1069,7 +1276,7 @@ func createNextGeneration(population []*Individual, eliteSize int, crossoverRate
 }
 
 // Tournament selection
-func tournamentSelection(population []*Individual, tournamentSize int) *Individual {
+func tournamentSelection(population []*Individual, tournamentSize int, rng *rand.Rand) *Individual {
 	best := population[rng.Intn(len(population))]
 	
 	for i := 1; i < tournamentSize; i++ {
@@ -1083,7 +1290,7 @@ func tournamentSelection(population []*Individual, tournamentSize int) *Individu
 }
 
 // Crossover two parents to create a child
-func crossover(parent1, parent2 *Individual, rate float64) *Individual {
+func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Individual {
 	child := &Individual{
 		config: parent1.config, // Start with parent1
 	}
@@ -1130,48 +1337,61 @@ func crossover(parent1, parent2 *Individual, rate float64) *Individual {
 }
 
 // Mutate an individual
-func mutate(individual *Individual, rate float64, cfg *BacktestConfig, optimizeIndicators bool) {
+func mutate(individual *Individual, rate float64, cfg *BacktestConfig, useFixedIndicators bool, rng *rand.Rand) {
 	if rng.Float64() < rate {
-		// Fixed parameter ranges for mutation
-		multipliers := []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0}
-		tpCandidates := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06}
-		priceThresholds := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05}
-		rsiPeriods := []int{10, 12, 14, 16, 18, 20, 22, 25}
-		rsiOversold := []float64{20, 25, 30, 35, 40}
-		macdFast := []int{6, 8, 10, 12, 14, 16, 18}
-		macdSlow := []int{20, 22, 24, 26, 28, 30, 32, 35}
-		macdSignal := []int{7, 8, 9, 10, 12, 14}
-		bbPeriods := []int{10, 14, 16, 18, 20, 22, 25, 28, 30}
-		bbStdDev := []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0}
-		smaPeriods := []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120}
 		
-		// Randomly mutate one parameter (expanded to include price threshold)
-		switch rng.Intn(11) {
-		case 0:
-			individual.config.MaxMultiplier = randomChoice(multipliers)
-		case 1:
+		// Randomly mutate one parameter
+		if useFixedIndicators {
+			// Only mutate strategy parameters, not indicator parameters
+			// Fix mutation logic bug: ensure all cases have meaningful mutations
+			availableParams := []int{0, 2} // MaxMultiplier, PriceThreshold
 			if cfg.Cycle {
-				individual.config.TPPercent = randomChoice(tpCandidates)
+				availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
 			}
+			
+		switch randomChoice(availableParams, rng) {
+			case 0:
+				individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
+			case 1:
+				individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
 		case 2:
-			individual.config.PriceThreshold = randomChoice(priceThresholds)
+				individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
+			}
+		} else {
+			// Mutate any parameter including indicator parameters
+			availableParams := []int{0, 2, 3, 4, 5, 6, 7, 8, 9, 10} // All except TP
+			if cfg.Cycle {
+				availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
+			}
+			
+		switch randomChoice(availableParams, rng) {
+			case 0:
+				individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
+			case 1:
+				individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
+		case 2:
+				individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		case 3:
-			individual.config.RSIPeriod = randomChoice(rsiPeriods)
+				individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
 		case 4:
-			individual.config.RSIOversold = randomChoice(rsiOversold)
+				individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
 		case 5:
-			individual.config.MACDFast = randomChoice(macdFast)
+				individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
 		case 6:
-			individual.config.MACDSlow = randomChoice(macdSlow)
+				individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
 		case 7:
-			individual.config.MACDSignal = randomChoice(macdSignal)
+				individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
 		case 8:
-			individual.config.BBPeriod = randomChoice(bbPeriods)
+				individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
 		case 9:
-			individual.config.BBStdDev = randomChoice(bbStdDev)
+				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
 		case 10:
-			individual.config.SMAPeriod = randomChoice(smaPeriods)
+				individual.config.SMAPeriod = randomChoice(OptimizationRanges.SMAPeriods, rng)
+			}
 		}
+		
+		// Ensure indicators always remain the same
+		individual.config.Indicators = []string{"rsi", "macd", "bb", "sma"}
 		
 		// Reset fitness to force re-evaluation
 		individual.fitness = 0
@@ -1179,217 +1399,7 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, optimizeI
 	}
 }
 
-var (
-	rng = rand.New(rand.NewSource(time.Now().UnixNano())) // Random number generator for optimization
-)
-
-// generateMultiIndicatorCombinations generates all combinations with 2+ indicators
-func generateMultiIndicatorCombinations(indicators []string) [][]string {
-	var combinations [][]string
-	n := len(indicators)
-	
-	// Generate all combinations from 2 to n indicators
-	for mask := 3; mask < (1 << n); mask++ { // Start from 3 (binary 11) to exclude single indicators
-		var combo []string
-		for i := 0; i < n; i++ {
-			if mask&(1<<i) != 0 {
-				combo = append(combo, indicators[i])
-			}
-		}
-		combinations = append(combinations, combo)
-	}
-	
-	return combinations
-}
-
-// optimizeForCombination runs a smaller GA for a specific indicator combination
-func optimizeForCombination(cfg *BacktestConfig, indicators []string, data []types.OHLCV) (*backtest.BacktestResults, BacktestConfig) {
-	// Smaller GA parameters for faster execution
-	populationSize := 20  // Reduced from 50
-	generations := 15     // Reduced from 30
-	mutationRate := 0.15
-	crossoverRate := 0.8
-	eliteSize := 3        // Reduced from 5
-	
-	// Initialize population for this specific combination
-	population := initializePopulationForCombo(cfg, populationSize, indicators)
-	
-	var bestIndividual *Individual
-	var bestResults *backtest.BacktestResults
-	
-	for gen := 0; gen < generations; gen++ {
-		// Evaluate fitness for all individuals
-		for i := range population {
-			if population[i].fitness == 0 {
-				results := runBacktestWithData(&population[i].config, data)
-				population[i].fitness = results.TotalReturn
-				population[i].results = results
-			}
-		}
-		
-		// Sort by fitness
-		sortPopulationByFitness(population)
-		
-		// Track best
-		if bestIndividual == nil || population[0].fitness > bestIndividual.fitness {
-			bestIndividual = &Individual{
-				config:  population[0].config,
-				fitness: population[0].fitness,
-				results: population[0].results,
-			}
-			bestResults = population[0].results
-		}
-		
-		// Create next generation
-		if gen < generations-1 {
-			population = createNextGenerationForCombo(population, eliteSize, crossoverRate, mutationRate, cfg, indicators)
-		}
-	}
-	
-	return bestResults, bestIndividual.config
-}
-
-// initializePopulationForCombo creates population for a specific indicator combination
-func initializePopulationForCombo(cfg *BacktestConfig, size int, indicators []string) []*Individual {
-	population := make([]*Individual, size)
-	
-	// Fixed parameter ranges
-	multipliers := []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0}
-	tpCandidates := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06}
-	priceThresholds := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05}
-	rsiPeriods := []int{10, 12, 14, 16, 18, 20, 22, 25}
-	rsiOversold := []float64{20, 25, 30, 35, 40}
-	macdFast := []int{6, 8, 10, 12, 14, 16, 18}
-	macdSlow := []int{20, 22, 24, 26, 28, 30, 32, 35}
-	macdSignal := []int{7, 8, 9, 10, 12, 14}
-	bbPeriods := []int{10, 14, 16, 18, 20, 22, 25, 28, 30}
-	bbStdDev := []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0}
-	smaPeriods := []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120}
-	
-	for i := 0; i < size; i++ {
-		individual := &Individual{
-			config: *cfg,
-		}
-		
-		// Fixed indicator combination (no randomization)
-		individual.config.Indicators = indicators
-		individual.config.BaseAmount = cfg.BaseAmount
-		individual.config.MaxMultiplier = randomChoice(multipliers)
-		individual.config.PriceThreshold = randomChoice(priceThresholds)
-		
-		if cfg.Cycle {
-			individual.config.TPPercent = randomChoice(tpCandidates)
-		} else {
-			individual.config.TPPercent = 0
-		}
-		
-		// Randomize indicator parameters
-		individual.config.RSIPeriod = randomChoice(rsiPeriods)
-		individual.config.RSIOversold = randomChoice(rsiOversold)
-		individual.config.MACDFast = randomChoice(macdFast)
-		individual.config.MACDSlow = randomChoice(macdSlow)
-		individual.config.MACDSignal = randomChoice(macdSignal)
-		individual.config.BBPeriod = randomChoice(bbPeriods)
-		individual.config.BBStdDev = randomChoice(bbStdDev)
-		individual.config.SMAPeriod = randomChoice(smaPeriods)
-		
-		population[i] = individual
-	}
-	
-	return population
-}
-
-// createNextGenerationForCombo creates next generation for a specific combination
-func createNextGenerationForCombo(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, indicators []string) []*Individual {
-	newPop := make([]*Individual, len(population))
-	
-	// Elitism
-	for i := 0; i < eliteSize; i++ {
-		newPop[i] = &Individual{
-			config:  population[i].config,
-			fitness: population[i].fitness,
-			results: population[i].results,
-		}
-	}
-	
-	// Fill rest with crossover and mutation
-	for i := eliteSize; i < len(population); i++ {
-		parent1 := tournamentSelection(population, 3)
-		parent2 := tournamentSelection(population, 3)
-		
-		child := crossover(parent1, parent2, crossoverRate)
-		mutateForCombo(child, mutationRate, cfg, indicators)
-		
-		newPop[i] = child
-	}
-	
-	return newPop
-}
-
-// mutateForCombo mutates individual while keeping the indicator combination fixed
-func mutateForCombo(individual *Individual, rate float64, cfg *BacktestConfig, indicators []string) {
-	if rng.Float64() < rate {
-		// Fixed parameter ranges
-		multipliers := []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0}
-		tpCandidates := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06}
-		priceThresholds := []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05}
-		rsiPeriods := []int{10, 12, 14, 16, 18, 20, 22, 25}
-		rsiOversold := []float64{20, 25, 30, 35, 40}
-		macdFast := []int{6, 8, 10, 12, 14, 16, 18}
-		macdSlow := []int{20, 22, 24, 26, 28, 30, 32, 35}
-		macdSignal := []int{7, 8, 9, 10, 12, 14}
-		bbPeriods := []int{10, 14, 16, 18, 20, 22, 25, 28, 30}
-		bbStdDev := []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0}
-		smaPeriods := []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120}
-		
-		// Keep indicators fixed, only mutate parameters
-		individual.config.Indicators = indicators
-		
-		// Randomly mutate one parameter (excluding indicator combination)
-		switch rng.Intn(11) {
-		case 0:
-			individual.config.MaxMultiplier = randomChoice(multipliers)
-		case 1:
-			if cfg.Cycle {
-				individual.config.TPPercent = randomChoice(tpCandidates)
-			}
-		case 2:
-			individual.config.PriceThreshold = randomChoice(priceThresholds)
-		case 3:
-			individual.config.RSIPeriod = randomChoice(rsiPeriods)
-		case 4:
-			individual.config.RSIOversold = randomChoice(rsiOversold)
-		case 5:
-			individual.config.MACDFast = randomChoice(macdFast)
-		case 6:
-			individual.config.MACDSlow = randomChoice(macdSlow)
-		case 7:
-			individual.config.MACDSignal = randomChoice(macdSignal)
-		case 8:
-			individual.config.BBPeriod = randomChoice(bbPeriods)
-		case 9:
-			individual.config.BBStdDev = randomChoice(bbStdDev)
-		case 10:
-			individual.config.SMAPeriod = randomChoice(smaPeriods)
-		}
-		
-		// Reset fitness
-		individual.fitness = 0
-		individual.results = nil
-	}
-}
-
-func parseIndicatorsList(list string) []string {
-	parts := strings.Split(list, ",")
-	res := make([]string, 0, len(parts))
-	for _, p := range parts {
-		n := strings.ToLower(strings.TrimSpace(p))
-		if n == "rsi" || n == "macd" || n == "bb" || n == "sma" {
-			res = append(res, n)
-		}
-	}
-	return res
-}
+// Removed global rng - now passed as parameter to avoid race conditions
 
 func containsIndicator(indicators []string, name string) bool {
 	name = strings.ToLower(name)
@@ -1414,17 +1424,6 @@ func writeBestConfigJSON(cfg BacktestConfig, path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func defaultBestConfigPath(symbol, interval string) string {
-	s := strings.ToUpper(strings.TrimSpace(symbol))
-	i := strings.ToLower(strings.TrimSpace(interval))
-	if s == "" { s = "UNKNOWN" }
-	if i == "" { i = "unknown" }
-	return filepath.Join("results", fmt.Sprintf("best_%s_%s.json", s, i))
-}
-
-// trades CSV writer
-var bestTradesCsvOutPath string
-
 func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 	// ensure directory exists
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
@@ -1436,7 +1435,7 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 		return writeTradesXLSX(results, path)
 	}
 
-	// CSV path: write only trades with improved headers and order
+	// CSV path: write enhanced trades with detailed analysis
 	f, err := os.Create(path)
 	if err != nil { return err }
 	defer f.Close()
@@ -1444,16 +1443,27 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
-	// header with improved names and order (Cycle first)
+	// Enhanced headers with trade performance and strategy context
 	if err := w.Write([]string{
 		"Cycle",
-		"Entry price",
-		"Exit price",
-		"Entry time",
-		"Exit time",
-		"Quantity (USDT)",
-		"Summary",
+		"Entry_Time",
+		"Exit_Time", 
+		"Entry_Price",
+		"Price_Drop_%",
+		"Quantity_USDT",
+		"Trade_PnL_$",
+		"Win_Loss",
 	}); err != nil { return err }
+
+	// Track cycle start prices for price drop calculation
+	cycleData := make(map[int]float64) // cycle -> start price
+	
+	// Pre-process to find cycle start prices
+	for _, t := range results.Trades {
+		if _, exists := cycleData[t.Cycle]; !exists {
+			cycleData[t.Cycle] = t.EntryPrice
+		}
+	}
 
 	// running aggregates for summary
 	var cumQty float64
@@ -1461,59 +1471,207 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 	var totalPnL float64
 
 	for _, t := range results.Trades {
+		// Basic calculations
 		netCost := t.EntryPrice * t.Quantity
 		grossCost := netCost + t.Commission
 		cumQty += t.Quantity
 		cumCost += grossCost
 		totalPnL += t.PnL
 
-		qtyUSDT := grossCost
-
+		// Trade performance calculations
+		winLoss := "W"
+		if t.PnL < 0 {
+			winLoss = "L"
+		}
+		
+		// Strategy context calculations
+		cycleStart := cycleData[t.Cycle]
+		priceDropPct := ((cycleStart - t.EntryPrice) / cycleStart) * 100
+		
+		// Build enhanced row with proper formatting (rounded up values)
 		row := []string{
 			strconv.Itoa(t.Cycle),
-			fmt.Sprintf("%.8f", t.EntryPrice),
-			fmt.Sprintf("%.8f", t.ExitPrice),
 			t.EntryTime.Format("2006-01-02 15:04:05"),
 			t.ExitTime.Format("2006-01-02 15:04:05"),
-			fmt.Sprintf("%.3f", qtyUSDT),
-			"",
+			fmt.Sprintf("%.8f", t.EntryPrice),
+			fmt.Sprintf("%.0f%%", priceDropPct),        // Rounded percentage with % sign
+			fmt.Sprintf("$%.0f", math.Ceil(grossCost)), // Rounded up currency
+			fmt.Sprintf("$%.0f", math.Ceil(t.PnL)),     // Rounded up currency
+			winLoss,
 		}
 		if err := w.Write(row); err != nil { return err }
 	}
 
-	// final summary row: only pnl_usdt and capital_usdt in the summary column
-	summary := fmt.Sprintf("pnl_usdt=%.3f; capital_usdt=%.3f", totalPnL, cumCost)
-	if err := w.Write([]string{"", "", "", "", "", "", summary}); err != nil { return err }
+	// Enhanced summary row with additional metrics
+	avgTradeReturn := 0.0
+	if len(results.Trades) > 0 {
+		totalReturn := 0.0
+		for _, t := range results.Trades {
+			totalReturn += ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
+		}
+		avgTradeReturn = totalReturn / float64(len(results.Trades))
+	}
+	
+	summary := fmt.Sprintf("SUMMARY: total_pnl=$%.0f; total_capital=$%.0f; avg_trade_return=%.2f%%; total_trades=%d", 
+		math.Ceil(totalPnL), math.Ceil(cumCost), avgTradeReturn, len(results.Trades))
+	
+	// Create summary row with empty fields except summary
+	summaryRow := make([]string, 8) // Match header count
+	summaryRow[7] = summary // Last column
+	if err := w.Write(summaryRow); err != nil { return err }
 
 	return nil
 }
 
-// writeTradesXLSX writes trades and cycles to separate sheets in an Excel file
+// writeTradesXLSX writes trades and cycles to separate sheets in an Excel file with professional formatting
 func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
-	// lazy import
-	// NOTE: excelize is a direct dependency in go.mod
 	fx := excelize.NewFile()
 	defer fx.Close()
 
 	// Create sheets
 	const tradesSheet = "Trades"
 	const cyclesSheet = "Cycles"
-	// Replace default sheet
+	const dashboardSheet = "Dashboard"
+	
+	// Replace default sheet and create additional sheets
 	fx.SetSheetName(fx.GetSheetName(0), tradesSheet)
 	fx.NewSheet(cyclesSheet)
+	fx.NewSheet(dashboardSheet)
 
-	// Header styles (optional bold)
-	headStyle, _ := fx.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}})
+	// =========================
+	// PROFESSIONAL STYLES
+	// =========================
+	
+	// Header style - Dark blue background with white text
+	headerStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold:   true,
+			Size:   11,
+			Color:  "FFFFFF",
+			Family: "Calibri",
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"2F4F4F"},  // Dark slate gray
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+		},
+	})
+	
+	// Data style for even rows (light gray background)
+	evenRowStyle, _ := fx.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"F8F8F8"},
+			Pattern: 1,
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "E0E0E0", Style: 1},
+			{Type: "right", Color: "E0E0E0", Style: 1},
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	// Win style (green background)
+	winStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "006400"},
+		Fill: excelize.Fill{
+			Type:    "pattern", 
+			Color:   []string{"E6FFE6"},
+			Pattern: 1,
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "E0E0E0", Style: 1},
+			{Type: "right", Color: "E0E0E0", Style: 1},
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	// Loss style (red background)
+	lossStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "8B0000"},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"FFE6E6"}, 
+			Pattern: 1,
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "E0E0E0", Style: 1},
+			{Type: "right", Color: "E0E0E0", Style: 1},
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	// Currency style (right aligned, $ format)
+	currencyStyle, _ := fx.NewStyle(&excelize.Style{
+		NumFmt: 7, // Currency format with $ symbol
+		Alignment: &excelize.Alignment{
+			Horizontal: "right",
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "E0E0E0", Style: 1},
+			{Type: "right", Color: "E0E0E0", Style: 1},
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	// Percentage style (right aligned, % format)
+	percentStyle, _ := fx.NewStyle(&excelize.Style{
+		NumFmt: 9, // Percentage format with % symbol
+		Alignment: &excelize.Alignment{
+			Horizontal: "right",
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "E0E0E0", Style: 1},
+			{Type: "right", Color: "E0E0E0", Style: 1},
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	// =========================
+	// TRADES SHEET
+	// =========================
+	
+	// Set column widths for better readability
+	fx.SetColWidth(tradesSheet, "A", "A", 8)   // Cycle
+	fx.SetColWidth(tradesSheet, "B", "C", 18)  // Entry/Exit Time
+	fx.SetColWidth(tradesSheet, "D", "D", 12)  // Entry Price
+	fx.SetColWidth(tradesSheet, "E", "E", 12)  // Price Drop %
+	fx.SetColWidth(tradesSheet, "F", "G", 14)  // Quantity USDT, PnL
+	fx.SetColWidth(tradesSheet, "H", "H", 10)  // Win/Loss
 
-	// Write Trades header
-	tradeHeaders := []string{"Cycle", "Entry price", "Exit price", "Entry time", "Exit time", "Quantity (USDT)", "Summary"}
+	// Write Trades headers
+	tradeHeaders := []string{
+		"Cycle", "Entry_Time", "Exit_Time", "Entry_Price", 
+		"Price_Drop_%", "Quantity_USDT", "Trade_PnL_$", 
+		"Win_Loss",
+	}
 	for i, h := range tradeHeaders {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		fx.SetCellValue(tradesSheet, cell, h)
-		fx.SetCellStyle(tradesSheet, cell, cell, headStyle)
+		fx.SetCellStyle(tradesSheet, cell, cell, headerStyle)
 	}
 
-	// Write Trades rows
+	// Track cycle start prices for price drop calculation
+	cycleData := make(map[int]float64) // cycle -> start price
+	
+	// Pre-process to find cycle start prices
+	for _, t := range results.Trades {
+		if _, exists := cycleData[t.Cycle]; !exists {
+			cycleData[t.Cycle] = t.EntryPrice
+		}
+	}
+
+	// Write Trades data with professional formatting
 	row := 2
 	var cumCost float64
 	var totalPnL float64
@@ -1523,34 +1681,111 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 		cumCost += grossCost
 		totalPnL += t.PnL
 
+		// Trade performance calculations
+		winLoss := "W"
+		if t.PnL < 0 {
+			winLoss = "L"
+		}
+		
+		// Strategy context calculations
+		cycleStart := cycleData[t.Cycle]
+		priceDropPct := ((cycleStart - t.EntryPrice) / cycleStart) * 100
+
 		values := []interface{}{
 			t.Cycle,
-			fmt.Sprintf("%.8f", t.EntryPrice),
-			fmt.Sprintf("%.8f", t.ExitPrice),
 			t.EntryTime.Format("2006-01-02 15:04:05"),
 			t.ExitTime.Format("2006-01-02 15:04:05"),
-			fmt.Sprintf("%.3f", grossCost),
-			"",
+			t.EntryPrice,
+			priceDropPct / 100,      // Convert to decimal for percentage formatting
+			math.Ceil(grossCost),    // Rounded up quantity USDT
+			math.Ceil(t.PnL),        // Rounded up trade PnL
+			winLoss,
 		}
+		
+		// Apply data with appropriate styling
 		for i, v := range values {
 			cell, _ := excelize.CoordinatesToCellName(i+1, row)
 			fx.SetCellValue(tradesSheet, cell, v)
+			
+			// Apply conditional styling based on content and position
+			if i == 7 { // Win/Loss column
+				if winLoss == "W" {
+					fx.SetCellStyle(tradesSheet, cell, cell, winStyle)
+				} else {
+					fx.SetCellStyle(tradesSheet, cell, cell, lossStyle)
+				}
+			} else if i == 4 { // Price Drop % column
+				fx.SetCellStyle(tradesSheet, cell, cell, percentStyle)
+			} else if i == 5 || i == 6 { // Quantity USDT, PnL columns  
+				fx.SetCellStyle(tradesSheet, cell, cell, currencyStyle)
+			} else if row%2 == 0 { // Even rows get light gray background
+				fx.SetCellStyle(tradesSheet, cell, cell, evenRowStyle)
+			}
 		}
 		row++
 	}
-	// Final summary cell in the last row, last column
+	
+	// Add AutoFilter to trades data
 	if row > 2 {
-		cell, _ := excelize.CoordinatesToCellName(len(tradeHeaders), row)
-		fx.SetCellValue(tradesSheet, cell, fmt.Sprintf("pnl_usdt=%.3f; capital_usdt=%.3f", totalPnL, cumCost))
+		fx.AutoFilter(tradesSheet, fmt.Sprintf("A1:H%d", row-1), []excelize.AutoFilterOptions{})
+	}
+	
+	// Add summary row with enhanced styling
+	if row > 2 {
+		avgTradeReturn := 0.0
+		if len(results.Trades) > 0 {
+			totalReturn := 0.0
+			for _, t := range results.Trades {
+				totalReturn += ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
+			}
+			avgTradeReturn = totalReturn / float64(len(results.Trades))
+		}
+		
+		// Summary style
+		summaryStyle, _ := fx.NewStyle(&excelize.Style{
+			Font: &excelize.Font{Bold: true, Size: 10},
+			Fill: excelize.Fill{
+				Type:    "pattern",
+				Color:   []string{"FFD700"}, // Gold background
+				Pattern: 1,
+			},
+			Border: []excelize.Border{
+				{Type: "left", Color: "000000", Style: 2},
+				{Type: "right", Color: "000000", Style: 2},
+				{Type: "top", Color: "000000", Style: 2},
+				{Type: "bottom", Color: "000000", Style: 2},
+			},
+		})
+		
+		summaryRange := fmt.Sprintf("A%d:H%d", row+1, row+1)
+		fx.MergeCell(tradesSheet, summaryRange, "")
+		summaryCell, _ := excelize.CoordinatesToCellName(1, row+1)
+		fx.SetCellValue(tradesSheet, summaryCell, fmt.Sprintf("SUMMARY: Total PnL: $%.0f | Capital: $%.0f | Avg Return: %.2f%% | Trades: %d", 
+			math.Ceil(totalPnL), math.Ceil(cumCost), avgTradeReturn, len(results.Trades)))
+		fx.SetCellStyle(tradesSheet, summaryCell, summaryCell, summaryStyle)
 	}
 
-	// Write Cycles sheet if any
-	cycleHeaders := []string{"Cycle number", "Start time", "End time", "Entries", "Target price", "Average price", "PnL (USDT)", "Capital (USDT)"}
+	// =========================
+	// CYCLES SHEET
+	// =========================
+	
+	// Set column widths for Cycles sheet
+	fx.SetColWidth(cyclesSheet, "A", "A", 10)   // Cycle number
+	fx.SetColWidth(cyclesSheet, "B", "C", 18)   // Start/End time
+	fx.SetColWidth(cyclesSheet, "D", "D", 10)   // Entries
+	fx.SetColWidth(cyclesSheet, "E", "G", 12)   // Prices
+	fx.SetColWidth(cyclesSheet, "H", "H", 12)   // Duration Hours
+	fx.SetColWidth(cyclesSheet, "I", "J", 14)   // PnL, Capital
+	
+	// Write Cycles headers
+	cycleHeaders := []string{"Cycle number", "Start time", "End time", "Entries", "Target price", "Exit price", "Average price", "Duration_Hours", "PnL (USDT)", "Capital (USDT)"}
 	for i, h := range cycleHeaders {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		fx.SetCellValue(cyclesSheet, cell, h)
-		fx.SetCellStyle(cyclesSheet, cell, cell, headStyle)
+		fx.SetCellStyle(cyclesSheet, cell, cell, headerStyle)
 	}
+	
+	// Write Cycles data
 	row = 2
 	if len(results.Cycles) > 0 {
 		for _, c := range results.Cycles {
@@ -1561,39 +1796,204 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 					capital += t.EntryPrice*t.Quantity + t.Commission
 				}
 			}
+			// Find exit price for this cycle from trades
+			exitPrice := 0.0
+			for _, t := range results.Trades {
+				if t.Cycle == c.CycleNumber {
+					exitPrice = t.ExitPrice
+					break
+				}
+			}
+			
+			// Calculate cycle duration in hours (rounded)
+			cycleDuration := c.EndTime.Sub(c.StartTime)
+			cycleDurationHours := int(cycleDuration.Hours() + 0.5) // Round up
+			
 			values := []interface{}{
 				c.CycleNumber,
 				c.StartTime.Format("2006-01-02 15:04:05"),
 				c.EndTime.Format("2006-01-02 15:04:05"),
 				c.Entries,
-				fmt.Sprintf("%.8f", c.TargetPrice),
-				fmt.Sprintf("%.8f", c.AvgEntry),
-				fmt.Sprintf("%.3f", c.RealizedPnL),
-				fmt.Sprintf("%.3f", capital),
+				c.TargetPrice,
+				exitPrice,
+				c.AvgEntry,
+				cycleDurationHours,
+				math.Ceil(c.RealizedPnL), // Rounded up PnL
+				math.Ceil(capital),       // Rounded up capital
 			}
+			
+			// Apply professional styling to cycles data
 			for i, v := range values {
 				cell, _ := excelize.CoordinatesToCellName(i+1, row)
 				fx.SetCellValue(cyclesSheet, cell, v)
+				
+				// Apply conditional styling
+				if i == 8 { // PnL column - apply win/loss coloring with currency format
+					if c.RealizedPnL > 0 { // Use original PnL value for color determination
+						// Create a custom style combining currency format with win color
+						winCurrencyStyle, _ := fx.NewStyle(&excelize.Style{
+							Font: &excelize.Font{Bold: true, Color: "006400"},
+							NumFmt: 7, // Currency format
+							Fill: excelize.Fill{Type: "pattern", Color: []string{"E6FFE6"}, Pattern: 1},
+							Border: []excelize.Border{
+								{Type: "left", Color: "E0E0E0", Style: 1},
+								{Type: "right", Color: "E0E0E0", Style: 1},
+								{Type: "bottom", Color: "E0E0E0", Style: 1},
+							},
+						})
+						fx.SetCellStyle(cyclesSheet, cell, cell, winCurrencyStyle)
+					} else {
+						// Create a custom style combining currency format with loss color
+						lossCurrencyStyle, _ := fx.NewStyle(&excelize.Style{
+							Font: &excelize.Font{Bold: true, Color: "8B0000"},
+							NumFmt: 7, // Currency format
+							Fill: excelize.Fill{Type: "pattern", Color: []string{"FFE6E6"}, Pattern: 1},
+							Border: []excelize.Border{
+								{Type: "left", Color: "E0E0E0", Style: 1},
+								{Type: "right", Color: "E0E0E0", Style: 1},
+								{Type: "bottom", Color: "E0E0E0", Style: 1},
+							},
+						})
+						fx.SetCellStyle(cyclesSheet, cell, cell, lossCurrencyStyle)
+					}
+				} else if i == 9 { // Capital column - apply currency formatting
+					fx.SetCellStyle(cyclesSheet, cell, cell, currencyStyle)
+				} else if row%2 == 0 { // Even rows
+					fx.SetCellStyle(cyclesSheet, cell, cell, evenRowStyle)
+				}
 			}
 			row++
 		}
+		
+		// Add AutoFilter to cycles data
+		fx.AutoFilter(cyclesSheet, fmt.Sprintf("A1:J%d", row-1), []excelize.AutoFilterOptions{})
 	}
+
+	// =========================
+	// DASHBOARD SHEET  
+	// =========================
+	
+	// Dashboard title
+	fx.SetColWidth(dashboardSheet, "A", "H", 15)
+	fx.SetRowHeight(dashboardSheet, 1, 25)
+	
+	titleStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold:   true,
+			Size:   16,
+			Color:  "FFFFFF",
+			Family: "Calibri",
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"1F4E79"}, // Dark blue
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+	
+	fx.MergeCell(dashboardSheet, "A1:H1", "")
+	fx.SetCellValue(dashboardSheet, "A1", "📊 DCA BACKTESTING DASHBOARD")
+	fx.SetCellStyle(dashboardSheet, "A1", "A1", titleStyle)
+
+	// Key Metrics Section
+	metricsHeaderStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Size: 12, Color: "2F4F4F"},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"E8F4FD"}, Pattern: 1},
+	})
+	
+	fx.SetCellValue(dashboardSheet, "A3", "🔑 KEY METRICS")
+	fx.SetCellStyle(dashboardSheet, "A3", "A3", metricsHeaderStyle)
+	
+	// Calculate dashboard metrics
+	winTrades := 0
+	lossTrades := 0
+	totalReturn := 0.0
+	for _, t := range results.Trades {
+		if t.PnL > 0 {
+			winTrades++
+		} else {
+			lossTrades++
+		}
+		totalReturn += ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
+	}
+	winRate := float64(winTrades) / float64(len(results.Trades)) * 100
+	avgReturn := totalReturn / float64(len(results.Trades))
+	
+	// Metrics data
+	metrics := [][]interface{}{
+		{"Total Trades:", len(results.Trades)},
+		{"Winning Trades:", winTrades},
+		{"Win Rate:", fmt.Sprintf("%.1f%%", winRate)},
+		{"Total P&L:", fmt.Sprintf("$%.0f", math.Ceil(totalPnL))},
+		{"Total Capital:", fmt.Sprintf("$%.0f", math.Ceil(cumCost))},
+		{"Avg Return/Trade:", fmt.Sprintf("%.2f%%", avgReturn)},
+		{"Total Cycles:", len(results.Cycles)},
+		{"ROI:", fmt.Sprintf("%.2f%%", (totalPnL/cumCost)*100)},
+	}
+	
+	metricStyle, _ := fx.NewStyle(&excelize.Style{
+		Border: []excelize.Border{
+			{Type: "bottom", Color: "E0E0E0", Style: 1},
+		},
+	})
+	
+	for i, metric := range metrics {
+		row := 4 + i
+		fx.SetCellValue(dashboardSheet, fmt.Sprintf("A%d", row), metric[0])
+		fx.SetCellValue(dashboardSheet, fmt.Sprintf("B%d", row), metric[1])
+		fx.SetCellStyle(dashboardSheet, fmt.Sprintf("A%d", row), fmt.Sprintf("B%d", row), metricStyle)
+	}
+	
+	// Create a simple PnL chart using cell formatting (since excelize chart creation is complex)
+	fx.SetCellValue(dashboardSheet, "D3", "📈 PERFORMANCE VISUALIZATION")
+	fx.SetCellStyle(dashboardSheet, "D3", "D3", metricsHeaderStyle)
+	
+	// Win/Loss distribution
+	fx.SetCellValue(dashboardSheet, "D5", "Wins:")
+	fx.SetCellValue(dashboardSheet, "E5", winTrades)
+	fx.SetCellValue(dashboardSheet, "D6", "Losses:")  
+	fx.SetCellValue(dashboardSheet, "E6", lossTrades)
+	
+	// Visual representation of win rate
+	winBarStyle, _ := fx.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"00FF00"}, Pattern: 1},
+	})
+	lossBarStyle, _ := fx.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"FF0000"}, Pattern: 1},
+	})
+	
+	// Create a simple horizontal bar chart representation
+	winBars := int(winRate / 10) // Scale to 10 bars max
+	lossBars := 10 - winBars
+	
+	for i := 0; i < winBars; i++ {
+		cell := fmt.Sprintf("%c5", 'F'+i)
+		fx.SetCellValue(dashboardSheet, cell, "█")
+		fx.SetCellStyle(dashboardSheet, cell, cell, winBarStyle)
+	}
+	for i := 0; i < lossBars; i++ {
+		cell := fmt.Sprintf("%c6", 'F'+i)
+		fx.SetCellValue(dashboardSheet, cell, "█")
+		fx.SetCellStyle(dashboardSheet, cell, cell, lossBarStyle)
+	}
+	
+	// Instructions
+	instructStyle, _ := fx.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Italic: true, Size: 9, Color: "666666"},
+	})
+	
+	fx.SetCellValue(dashboardSheet, "A13", "💡 Use filters in Trades and Cycles sheets to analyze specific periods or cycles")
+	fx.SetCellStyle(dashboardSheet, "A13", "A13", instructStyle)
 
 	// Save workbook
 	return fx.SaveAs(path)
 }
 
-func defaultTradesCsvPath(symbol, interval string) string {
-	s := strings.ToUpper(strings.TrimSpace(symbol))
-	i := strings.ToLower(strings.TrimSpace(interval))
-	if s == "" { s = "UNKNOWN" }
-	if i == "" { i = "unknown" }
-	return filepath.Join("results", fmt.Sprintf("trades_%s_%s.xlsx", s, i))
-}
-
-// trailing period selection
-var selectedPeriod time.Duration
-var selectedPeriodRaw string
+// Removed global selectedPeriod - now passed as parameter to avoid race conditions
 
 func parseTrailingPeriod(s string) (time.Duration, bool) {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -1633,24 +2033,19 @@ func filterDataByPeriod(data []types.OHLCV, period time.Duration) []types.OHLCV 
 	return data[idx:]
 }
 
-// Helper to resolve default output dir
-func defaultOutputDir(symbol, interval string) string {
+// Helper to resolve default output dir with optimization mode suffix
+func defaultOutputDirWithMode(symbol, interval string, useFixedIndicators bool) string {
 	s := strings.ToUpper(strings.TrimSpace(symbol))
 	i := strings.ToLower(strings.TrimSpace(interval))
 	if s == "" { s = "UNKNOWN" }
 	if i == "" { i = "unknown" }
-	return filepath.Join("results", fmt.Sprintf("%s_%s", s, i))
-}
-
-// flagProvided returns true if the named flag appears in os.Args
-func flagProvided(name string) bool {
-    // Accept forms: -name, -name=value, --name, --name=value
-    dash := "-" + name
-    ddash := "--" + name
-    for _, arg := range os.Args[1:] {
-        if strings.HasPrefix(arg, dash) || strings.HasPrefix(arg, ddash) {
-            return true
-        }
-    }
-    return false
+	
+	var modeSuffix string
+	if useFixedIndicators {
+		modeSuffix = FixedModeSuffix
+	} else {
+		modeSuffix = FullModeSuffix
+	}
+	
+	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s%s", s, i, modeSuffix))
 }
