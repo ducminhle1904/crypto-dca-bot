@@ -43,7 +43,7 @@ const (
 	DefaultMACDSignal     = 9
 	DefaultBBPeriod       = 20
 	DefaultBBStdDev       = 2.0
-	DefaultSMAPeriod      = 50
+	DefaultEMAPeriod      = 50
 	
 	// Genetic Algorithm constants
 	GAPopulationSizeFixed   = 25   // For fixed indicators mode
@@ -77,7 +77,7 @@ const (
 	MaxRSIValue            = 100   // Maximum RSI value
 	MinMACDPeriod          = 1     // Minimum MACD period
 	MinBBPeriod            = 2     // Minimum Bollinger Bands period
-	MinSMAPeriod           = 1     // Minimum SMA period
+	MinEMAPeriod           = 1     // Minimum EMA period
 	
 	// Display and formatting constants
 	ReportLineLength       = 50
@@ -104,7 +104,7 @@ var (
 		MACDSignal      []int
 		BBPeriods       []int
 		BBStdDev        []float64
-		SMAPeriods      []int
+		EMAPeriods      []int
 	}{
 		Multipliers:     []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
 		TPCandidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
@@ -116,7 +116,7 @@ var (
 		MACDSignal:      []int{7, 8, 9, 10, 12, 14},
 		BBPeriods:       []int{10, 14, 16, 18, 20, 22, 25, 28, 30},
 		BBStdDev:        []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0},
-		SMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
+		EMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
 	}
 	
 	// Data cache for performance optimization
@@ -170,7 +170,7 @@ type BacktestConfig struct {
 	BBPeriod       int     `json:"bb_period"`
 	BBStdDev       float64 `json:"bb_std_dev"`
 	
-	SMAPeriod      int     `json:"sma_period"`
+	EMAPeriod      int     `json:"ema_period"`
 	
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
@@ -225,7 +225,7 @@ func main() {
 
 	// Set default indicators if not specified in config file
 	if len(cfg.Indicators) == 0 {
-		cfg.Indicators = []string{"rsi", "macd", "bb", "sma"}
+		cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
 	}
 	
 	// Apply fixed indicator parameters if requested (only when optimizing or no config file)
@@ -276,8 +276,8 @@ func main() {
 		if containsIndicator(bestConfig.Indicators, "bb") {
 			fmt.Printf("  BB: period=%d std=%.2f\n", bestConfig.BBPeriod, bestConfig.BBStdDev)
 		}
-		if containsIndicator(bestConfig.Indicators, "sma") {
-			fmt.Printf("  SMA Period:     %d\n", bestConfig.SMAPeriod)
+		if containsIndicator(bestConfig.Indicators, "ema") {
+			fmt.Printf("  EMA Period:     %d\n", bestConfig.EMAPeriod)
 		}
 		
 		// Determine interval string for usage example
@@ -370,7 +370,7 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		MACDSignal:     DefaultMACDSignal,
 		BBPeriod:       DefaultBBPeriod,
 		BBStdDev:       DefaultBBStdDev,
-		SMAPeriod:      DefaultSMAPeriod,
+		EMAPeriod:      DefaultEMAPeriod,
 		Indicators:     nil,
 		TPPercent:      0, // Default to 0 TP, will be set later if needed
 	}
@@ -458,8 +458,8 @@ func validateConfig(cfg *BacktestConfig) error {
 		return fmt.Errorf("bollinger Bands standard deviation must be positive, got: %.2f", cfg.BBStdDev)
 	}
 	
-	if cfg.SMAPeriod < MinSMAPeriod {
-		return fmt.Errorf("SMA period must be at least %d, got: %d", MinSMAPeriod, cfg.SMAPeriod)
+	if cfg.EMAPeriod < MinEMAPeriod {
+		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
 	}
 	
 	return nil
@@ -562,8 +562,8 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, use
 	if containsIndicator(best.OptimizedCfg.Indicators, "bb") {
 		fmt.Printf(", BB: p=%d sd=%.2f", best.OptimizedCfg.BBPeriod, best.OptimizedCfg.BBStdDev)
 	}
-	if containsIndicator(best.OptimizedCfg.Indicators, "sma") {
-		fmt.Printf(", SMA: %d", best.OptimizedCfg.SMAPeriod)
+	if containsIndicator(best.OptimizedCfg.Indicators, "ema") {
+		fmt.Printf(", EMA: %d", best.OptimizedCfg.EMAPeriod)
 	}
 	fmt.Printf("\n")
 
@@ -626,6 +626,12 @@ func runBacktest(cfg *BacktestConfig, selectedPeriod time.Duration) *backtest.Ba
 		}
 	}
 	
+	// Apply reverse order only when analyzing a specific period
+	if selectedPeriod > 0 {
+		data = reverseDataOrder(data)
+		logInfo("Running backtest in reverse chronological order (latest to earliest) for period analysis")
+	}
+	
 	return runBacktestWithData(cfg, data)
 }
 
@@ -658,6 +664,14 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 	} else {
 		fmt.Printf("DCA Strategy: Hold mode (no TP), PriceThreshold=%.2f%%\n", 
 			cfg.PriceThreshold*100)
+	}
+	
+	// Show processing order - reverse only when period is specified
+	isReversed := len(data) > 1 && data[0].Timestamp.After(data[1].Timestamp)
+	if isReversed {
+		fmt.Printf("🔄 Processing Order: Reverse chronological (latest → earliest) - PERIOD ANALYSIS\n")
+	} else {
+		fmt.Printf("⏩ Processing Order: Forward chronological (earliest → latest) - HISTORICAL ANALYSIS\n")
 	}
 	
 	fmt.Println(strings.Repeat("-", 60))
@@ -699,8 +713,8 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		// Bollinger Bands
 		cfg.BBPeriod = 10
 		cfg.BBStdDev = 2
-		// SMA
-		cfg.SMAPeriod = 9
+		// EMA
+		cfg.EMAPeriod = 9
 		
 	case "15m":
 		// RSI
@@ -714,8 +728,8 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		// Bollinger Bands
 		cfg.BBPeriod = 20
 		cfg.BBStdDev = 2
-		// SMA
-		cfg.SMAPeriod = 21
+		// EMA
+		cfg.EMAPeriod = 21
 		
 	case "30m":
 		// RSI
@@ -729,8 +743,8 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		// Bollinger Bands
 		cfg.BBPeriod = 20
 		cfg.BBStdDev = 2
-		// SMA
-		cfg.SMAPeriod = 50
+		// EMA
+		cfg.EMAPeriod = 50
 		
 	case "1h":
 		// RSI
@@ -744,8 +758,8 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		// Bollinger Bands
 		cfg.BBPeriod = 20
 		cfg.BBStdDev = 2
-		// SMA
-		cfg.SMAPeriod = 50
+		// EMA
+		cfg.EMAPeriod = 50
 		
 	case "4h":
 		// RSI
@@ -759,8 +773,8 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		// Bollinger Bands
 		cfg.BBPeriod = 20
 		cfg.BBStdDev = 2
-		// SMA
-		cfg.SMAPeriod = 100
+		// EMA
+		cfg.EMAPeriod = 100
 		
 	default:
 		// Default to 1h settings for unknown intervals
@@ -772,7 +786,7 @@ func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
 		cfg.MACDSignal = 9
 		cfg.BBPeriod = 20
 		cfg.BBStdDev = 2
-		cfg.SMAPeriod = 50
+		cfg.EMAPeriod = 50
 	}
 }
 
@@ -789,8 +803,8 @@ func indicatorSummary(cfg *BacktestConfig) string {
 	if set["bb"] {
 		parts = append(parts, fmt.Sprintf("bb(p=%d,sd=%.2f)", cfg.BBPeriod, cfg.BBStdDev))
 	}
-	if set["sma"] {
-		parts = append(parts, fmt.Sprintf("sma(p=%d)", cfg.SMAPeriod))
+	if set["ema"] {
+		parts = append(parts, fmt.Sprintf("ema(p=%d)", cfg.EMAPeriod))
 	}
 	
 	// Add price threshold info
@@ -833,9 +847,9 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		bb := indicators.NewBollingerBands(cfg.BBPeriod, cfg.BBStdDev)
 		dca.AddIndicator(bb)
 	}
-	if include["sma"] {
-		sma := indicators.NewSMA(cfg.SMAPeriod)
-		dca.AddIndicator(sma)
+	if include["ema"] {
+		ema := indicators.NewEMA(cfg.EMAPeriod)
+		dca.AddIndicator(ema)
 	}
 
 	return dca
@@ -1028,8 +1042,6 @@ func outputConsole(results *backtest.BacktestResults) {
 	fmt.Println("\n" + strings.Repeat("=", 50))
 }
 
-
-
 // evaluatePopulationParallel evaluates fitness for all individuals in parallel
 func evaluatePopulationParallel(population []*Individual, data []types.OHLCV) {
 	var wg sync.WaitGroup
@@ -1078,6 +1090,12 @@ func optimizeForInterval(cfg *BacktestConfig, useFixedIndicators bool, selectedP
 		if len(data) == 0 {
 			log.Fatalf("No data remaining for optimization after applying period filter of %v", selectedPeriod)
 		}
+	}
+	
+	// Apply reverse order only when analyzing a specific period
+	if selectedPeriod > 0 {
+		data = reverseDataOrder(data)
+		logInfo("Optimizing with reverse chronological order (latest to earliest) for period analysis")
 	}
 
 	// GA Parameters - adjust based on optimization mode
@@ -1195,7 +1213,7 @@ func initializePopulation(cfg *BacktestConfig, size int, useFixedIndicators bool
 		}
 		
 		// Always use all indicators - no optimization of indicator combinations
-		individual.config.Indicators = []string{"rsi", "macd", "bb", "sma"}
+		individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
 		
 		// Indicator parameters - randomize only if not using fixed parameters
 		if !useFixedIndicators {
@@ -1206,7 +1224,7 @@ func initializePopulation(cfg *BacktestConfig, size int, useFixedIndicators bool
 			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
 			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
 			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
-			individual.config.SMAPeriod = randomChoice(OptimizationRanges.SMAPeriods, rng)
+			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
 		}
 		// If using fixed indicators, keep the values from cfg (already set by applyRecommendedIndicatorParams)
 		
@@ -1225,8 +1243,6 @@ func randomChoice[T any](choices []T, rng *rand.Rand) T {
 	idx := rng.Intn(len(choices))
 	return choices[idx]
 }
-
-
 
 // Sort population by fitness (descending)
 func sortPopulationByFitness(population []*Individual) {
@@ -1326,7 +1342,7 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 			child.config.BBStdDev = parent2.config.BBStdDev
 		}
 		if rng.Intn(2) == 0 {
-			child.config.SMAPeriod = parent2.config.SMAPeriod
+			child.config.EMAPeriod = parent2.config.EMAPeriod
 		}
 		if rng.Intn(2) == 0 {
 			child.config.Indicators = parent2.config.Indicators
@@ -1386,12 +1402,12 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, useFixedI
 		case 9:
 				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
 		case 10:
-				individual.config.SMAPeriod = randomChoice(OptimizationRanges.SMAPeriods, rng)
+				individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
 			}
 		}
 		
 		// Ensure indicators always remain the same
-		individual.config.Indicators = []string{"rsi", "macd", "bb", "sma"}
+		individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
 		
 		// Reset fitness to force re-evaluation
 		individual.fitness = 0
@@ -2031,6 +2047,19 @@ func filterDataByPeriod(data []types.OHLCV, period time.Duration) []types.OHLCV 
 	if idx < 0 { idx = 0 }
 	if idx >= len(data) { return []types.OHLCV{} }
 	return data[idx:]
+}
+
+// reverseDataOrder reverses the order of OHLCV data for reverse chronological backtesting
+func reverseDataOrder(data []types.OHLCV) []types.OHLCV {
+	if len(data) <= 1 {
+		return data
+	}
+	
+	reversed := make([]types.OHLCV, len(data))
+	for i, j := 0, len(data)-1; i < len(data); i, j = i+1, j-1 {
+		reversed[i] = data[j]
+	}
+	return reversed
 }
 
 // Helper to resolve default output dir with optimization mode suffix
