@@ -27,9 +27,9 @@ import (
 const (
 	// Default parameter values
 	DefaultInitialBalance = 500.0
-	DefaultCommission     = 0.001 // 0.1%
+	DefaultCommission     = 0.0005 // 0.1%
 	DefaultWindowSize     = 100
-	DefaultBaseAmount     = 20.0
+	DefaultBaseAmount     = 40.0
 	DefaultMaxMultiplier  = 3.0
 	DefaultPriceThreshold = 0.02 // 2%
 	DefaultTPPercent      = 0.02 // 2%
