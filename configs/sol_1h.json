@@ -1,0 +1,22 @@
+{
+  "data_file": "data\\historical\\SOLUSDT\\1h\\candles.csv",
+  "symbol": "SOLUSDT",
+  "initial_balance": 500,
+  "commission": 0.0005,
+  "window_size": 100,
+  "base_amount": 50,
+  "max_multiplier": 1.8,
+  "price_threshold": 0.01,
+  "rsi_period": 16,
+  "rsi_oversold": 30,
+  "rsi_overbought": 70,
+  "macd_fast": 14,
+  "macd_slow": 24,
+  "macd_signal": 7,
+  "bb_period": 18,
+  "bb_std_dev": 2.8,
+  "ema_period": 25,
+  "indicators": ["rsi", "macd", "bb", "ema"],
+  "tp_percent": 0.01,
+  "cycle": true
+}

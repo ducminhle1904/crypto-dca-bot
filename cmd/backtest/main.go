@@ -46,17 +46,11 @@ const (
 	DefaultEMAPeriod      = 50
 	
 	// Genetic Algorithm constants
-	GAPopulationSizeFixed   = 25   // For fixed indicators mode
-	GAGenerationsFixed      = 15   // For fixed indicators mode  
-	GAMutationRateFixed     = 0.15 // For fixed indicators mode
-	GACrossoverRateFixed    = 0.7  // For fixed indicators mode
-	GAEliteSizeFixed        = 3    // For fixed indicators mode
-	
-	GAPopulationSizeFull    = 60   // For full optimization mode
-	GAGenerationsFull       = 35   // For full optimization mode
-	GAMutationRateFull      = 0.1  // For full optimization mode
-	GACrossoverRateFull     = 0.8  // For full optimization mode
-	GAEliteSizeFull         = 6    // For full optimization mode
+	GAPopulationSize = 60   // Population size for optimization
+	GAGenerations    = 35   // Number of generations
+	GAMutationRate   = 0.1  // Mutation rate
+	GACrossoverRate  = 0.8  // Crossover rate
+	GAEliteSize      = 6    // Elite size
 	
 	TournamentSize          = 3    // Tournament selection size
 	
@@ -65,8 +59,6 @@ const (
 	ResultsDir             = "results"
 	BestConfigFile         = "best.json"
 	TradesFile             = "trades.xlsx"
-	FixedModeSuffix        = "_fixed"
-	FullModeSuffix         = "_full"
 	
 	// Data validation constants
 	MinDataPoints          = 100   // Minimum data points required for backtest
@@ -196,11 +188,15 @@ func main() {
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
-		useFixedIndicators = flag.Bool("fixed-indicators", false, "Use recommended fixed parameters for indicators based on timeframe, only optimize strategy parameters")
 		consoleOnly    = flag.Bool("console-only", false, "Only display results in console, do not write files (best.json, trades.xlsx)")
 	)
 	
 	flag.Parse()
+
+	// If configFile is set and does not contain a path, prepend "configs/"
+    if *configFile != "" && !strings.ContainsAny(*configFile, "/\\") {
+        *configFile = filepath.Join("configs", *configFile + ".json")
+    }
 	
 	// Load configuration - cycle is always enabled, console output only
 	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
@@ -221,24 +217,9 @@ func main() {
 		}
 	}
 
-
-
 	// Set default indicators if not specified in config file
 	if len(cfg.Indicators) == 0 {
 		cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
-	}
-	
-	// Apply fixed indicator parameters if requested (only when optimizing or no config file)
-	if *useFixedIndicators && (*optimize || *configFile == "") {
-		interval := *intervalFlag
-		if cfg.DataFile != "" {
-			// Try to extract interval from data file path
-			if detectedInterval := guessIntervalFromPath(cfg.DataFile); detectedInterval != "" {
-				interval = detectedInterval
-			}
-		}
-		applyRecommendedIndicatorParams(cfg, interval)
-		fmt.Printf("🔧 Using recommended fixed indicator parameters for %s timeframe\n", interval)
 	}
 
 	// Resolve data file from symbol/interval if not explicitly provided and not scanning all intervals
@@ -248,7 +229,7 @@ func main() {
 	}
 	
 	if *allIntervals {
-		runAcrossIntervals(cfg, *dataRoot, *optimize, *useFixedIndicators, selectedPeriod, *consoleOnly)
+		runAcrossIntervals(cfg, *dataRoot, *optimize, selectedPeriod, *consoleOnly)
 		return
 	}
 	
@@ -256,7 +237,7 @@ func main() {
 		var bestResults *backtest.BacktestResults
 		var bestConfig BacktestConfig
 		
-		bestResults, bestConfig = optimizeForInterval(cfg, *useFixedIndicators, selectedPeriod)
+		bestResults, bestConfig = optimizeForInterval(cfg, selectedPeriod)
 			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
 		
 		fmt.Println(strings.Repeat("=", 50))
@@ -295,8 +276,8 @@ func main() {
 		fmt.Printf("   or: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
 			cfg.Symbol, intervalStr, bestConfig.BaseAmount, bestConfig.MaxMultiplier, bestConfig.PriceThreshold)
 		
-			// Save to mode-specific paths in results folder
-		stdDir := defaultOutputDirWithMode(cfg.Symbol, intervalStr, *useFixedIndicators)
+			// Save to results folder
+		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
 			stdBestPath := filepath.Join(stdDir, BestConfigFile)
 			stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
@@ -334,10 +315,10 @@ func main() {
 	outputConsole(results)
 	
 	if !*consoleOnly {
-		// Save trades to standard path (single backtests use full mode directory)
+		// Save trades to standard path
 		intervalStr := guessIntervalFromPath(cfg.DataFile)
 		if intervalStr == "" { intervalStr = "unknown" }
-		stdDir := defaultOutputDirWithMode(cfg.Symbol, intervalStr, false) // false = full mode for single runs
+		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
 		stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
 		if err := writeTradesCSV(results, stdTradesPath); err != nil {
@@ -465,7 +446,7 @@ func validateConfig(cfg *BacktestConfig) error {
 	return nil
 }
 
-func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, useFixedIndicators bool, selectedPeriod time.Duration, consoleOnly bool) {
+func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, selectedPeriod time.Duration, consoleOnly bool) {
 	sym := strings.ToUpper(cfg.Symbol)
 	symDir := filepath.Join(dataRoot, sym)
 	entries, err := os.ReadDir(symDir)
@@ -495,11 +476,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, use
 		if optimize {
 			// propagate cycle preference
 			cfgCopy.Cycle = cfg.Cycle
-			// Apply fixed indicator parameters if requested
-			if useFixedIndicators {
-				applyRecommendedIndicatorParams(&cfgCopy, interval)
-			}
-			res, bestCfg = optimizeForInterval(&cfgCopy, useFixedIndicators, selectedPeriod)
+			res, bestCfg = optimizeForInterval(&cfgCopy, selectedPeriod)
 		} else {
 			res = runBacktest(&cfgCopy, selectedPeriod)
 			bestCfg = cfgCopy
@@ -582,7 +559,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, use
 	
 	if !consoleOnly {
 		// Write standard outputs under results/<SYMBOL>_<INTERVAL>_mode/
-		stdDir := defaultOutputDirWithMode(cfg.Symbol, best.Interval, useFixedIndicators)
+		stdDir := defaultOutputDir(cfg.Symbol, best.Interval)
 		stdBestPath := filepath.Join(stdDir, BestConfigFile)
 		stdTradesPath := filepath.Join(stdDir, TradesFile)
 		if err := writeBestConfigJSON(best.OptimizedCfg, stdBestPath); err != nil {
@@ -624,12 +601,10 @@ func runBacktest(cfg *BacktestConfig, selectedPeriod time.Duration) *backtest.Ba
 		if len(data) == 0 {
 			log.Fatalf("No data remaining after applying period filter of %v", selectedPeriod)
 		}
-	}
-	
-	// Apply reverse order only when analyzing a specific period
-	if selectedPeriod > 0 {
-		data = reverseDataOrder(data)
-		logInfo("Running backtest in reverse chronological order (latest to earliest) for period analysis")
+		logInfo("Filtered to last %v of data (%s → %s)",
+            selectedPeriod,
+            data[0].Timestamp.Format("2006-01-02"),
+            data[len(data)-1].Timestamp.Format("2006-01-02"))
 	}
 	
 	return runBacktestWithData(cfg, data)
@@ -666,14 +641,6 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 			cfg.PriceThreshold*100)
 	}
 	
-	// Show processing order - reverse only when period is specified
-	isReversed := len(data) > 1 && data[0].Timestamp.After(data[1].Timestamp)
-	if isReversed {
-		fmt.Printf("🔄 Processing Order: Reverse chronological (latest → earliest) - PERIOD ANALYSIS\n")
-	} else {
-		fmt.Printf("⏩ Processing Order: Forward chronological (earliest → latest) - HISTORICAL ANALYSIS\n")
-	}
-	
 	fmt.Println(strings.Repeat("-", 60))
 
 	// Create strategy with configured indicators
@@ -698,97 +665,7 @@ func guessIntervalFromPath(path string) string {
 	return filepath.Base(dir)
 }
 
-// applyRecommendedIndicatorParams sets recommended parameters based on timeframe
-func applyRecommendedIndicatorParams(cfg *BacktestConfig, interval string) {
-	switch strings.ToLower(interval) {
-	case "5m":
-		// RSI
-		cfg.RSIPeriod = 9
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		// MACD  
-		cfg.MACDFast = 5
-		cfg.MACDSlow = 13
-		cfg.MACDSignal = 1
-		// Bollinger Bands
-		cfg.BBPeriod = 10
-		cfg.BBStdDev = 2
-		// EMA
-		cfg.EMAPeriod = 9
-		
-	case "15m":
-		// RSI
-		cfg.RSIPeriod = 14
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		// MACD
-		cfg.MACDFast = 8
-		cfg.MACDSlow = 17
-		cfg.MACDSignal = 9
-		// Bollinger Bands
-		cfg.BBPeriod = 20
-		cfg.BBStdDev = 2
-		// EMA
-		cfg.EMAPeriod = 21
-		
-	case "30m":
-		// RSI
-		cfg.RSIPeriod = 14
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		// MACD
-		cfg.MACDFast = 12
-		cfg.MACDSlow = 26
-		cfg.MACDSignal = 9
-		// Bollinger Bands
-		cfg.BBPeriod = 20
-		cfg.BBStdDev = 2
-		// EMA
-		cfg.EMAPeriod = 50
-		
-	case "1h":
-		// RSI
-		cfg.RSIPeriod = 14
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		// MACD
-		cfg.MACDFast = 12
-		cfg.MACDSlow = 26
-		cfg.MACDSignal = 9
-		// Bollinger Bands
-		cfg.BBPeriod = 20
-		cfg.BBStdDev = 2
-		// EMA
-		cfg.EMAPeriod = 50
-		
-	case "4h":
-		// RSI
-		cfg.RSIPeriod = 14
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		// MACD
-		cfg.MACDFast = 12
-		cfg.MACDSlow = 26
-		cfg.MACDSignal = 9
-		// Bollinger Bands
-		cfg.BBPeriod = 20
-		cfg.BBStdDev = 2
-		// EMA
-		cfg.EMAPeriod = 100
-		
-	default:
-		// Default to 1h settings for unknown intervals
-		cfg.RSIPeriod = 14
-		cfg.RSIOversold = 30
-		cfg.RSIOverbought = 70
-		cfg.MACDFast = 12
-		cfg.MACDSlow = 26
-		cfg.MACDSignal = 9
-		cfg.BBPeriod = 20
-		cfg.BBStdDev = 2
-		cfg.EMAPeriod = 50
-	}
-}
+
 
 func indicatorSummary(cfg *BacktestConfig) string {
 	parts := []string{}
@@ -844,7 +721,7 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		dca.AddIndicator(macd)
 	}
 	if include["bb"] {
-		bb := indicators.NewBollingerBands(cfg.BBPeriod, cfg.BBStdDev)
+		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 		dca.AddIndicator(bb)
 	}
 	if include["ema"] {
@@ -1071,7 +948,7 @@ func evaluatePopulationParallel(population []*Individual, data []types.OHLCV) {
 }
 
 // Parameter optimization functions
-func optimizeForInterval(cfg *BacktestConfig, useFixedIndicators bool, selectedPeriod time.Duration) (*backtest.BacktestResults, BacktestConfig) {
+func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, BacktestConfig) {
 	// Create local RNG to avoid race conditions
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
@@ -1090,46 +967,27 @@ func optimizeForInterval(cfg *BacktestConfig, useFixedIndicators bool, selectedP
 		if len(data) == 0 {
 			log.Fatalf("No data remaining for optimization after applying period filter of %v", selectedPeriod)
 		}
-	}
-	
-	// Apply reverse order only when analyzing a specific period
-	if selectedPeriod > 0 {
-		data = reverseDataOrder(data)
-		logInfo("Optimizing with reverse chronological order (latest to earliest) for period analysis")
+		logInfo("Filtered to last %v of data (%s → %s)",
+            selectedPeriod,
+            data[0].Timestamp.Format("2006-01-02"),
+            data[len(data)-1].Timestamp.Format("2006-01-02"))
 	}
 
-	// GA Parameters - adjust based on optimization mode
-	var populationSize, generations, eliteSize int
-	var mutationRate, crossoverRate float64
-	
-	if useFixedIndicators {
-		// Smaller GA for fewer parameters (3-4 strategy params only)
-		populationSize = GAPopulationSizeFixed
-		generations = GAGenerationsFixed
-		mutationRate = GAMutationRateFixed  // Higher mutation for faster exploration
-		crossoverRate = GACrossoverRateFixed
-		eliteSize = GAEliteSizeFixed
-	} else {
-		// Larger GA for full optimization (11+ parameters)
-		populationSize = GAPopulationSizeFull   // Increased for better coverage
-		generations = GAGenerationsFull         // More generations for convergence
-		mutationRate = GAMutationRateFull
-		crossoverRate = GACrossoverRateFull
-		eliteSize = GAEliteSizeFull
-	}
+	// GA Parameters
+	populationSize := GAPopulationSize
+	generations := GAGenerations
+	mutationRate := GAMutationRate
+	crossoverRate := GACrossoverRate
+	eliteSize := GAEliteSize
 
 	logProgress("Starting Genetic Algorithm Optimization")
-	if useFixedIndicators {
-		logInfo("Mode: Fixed indicator parameters (only optimizing strategy parameters)")
-	} else {
-		logInfo("Mode: Full optimization (including indicator parameters)")
-	}
+	logInfo("Mode: Full optimization (including indicator parameters)")
 	logInfo("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
 		populationSize, generations, mutationRate*100, crossoverRate*100)
 	logInfo("Using %d parallel workers for fitness evaluation", MaxParallelWorkers)
 
 	// Initialize population
-	population := initializePopulation(cfg, populationSize, useFixedIndicators, rng)
+			population := initializePopulation(cfg, populationSize, rng)
 	
 	var bestIndividual *Individual
 	var bestResults *backtest.BacktestResults
@@ -1171,7 +1029,7 @@ func optimizeForInterval(cfg *BacktestConfig, useFixedIndicators bool, selectedP
 		
 		// Create next generation
 		if gen < generations-1 {
-			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, cfg, useFixedIndicators, rng)
+			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, cfg, rng)
 		}
 	}
 	
@@ -1192,7 +1050,7 @@ type Individual struct {
 }
 
 // Initialize random population
-func initializePopulation(cfg *BacktestConfig, size int, useFixedIndicators bool, rng *rand.Rand) []*Individual {
+func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Individual {
 	population := make([]*Individual, size)
 	
 	for i := 0; i < size; i++ {
@@ -1215,18 +1073,15 @@ func initializePopulation(cfg *BacktestConfig, size int, useFixedIndicators bool
 		// Always use all indicators - no optimization of indicator combinations
 		individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
 		
-		// Indicator parameters - randomize only if not using fixed parameters
-		if !useFixedIndicators {
-			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
-			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
-			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
-			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
-			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
-			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
-			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
-			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
-		}
-		// If using fixed indicators, keep the values from cfg (already set by applyRecommendedIndicatorParams)
+		// Always randomize indicator parameters
+		individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+		individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+		individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+		individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+		individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+		individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+		individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+		individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
 		
 		population[i] = individual
 	}
@@ -1265,7 +1120,7 @@ func averageFitness(population []*Individual) float64 {
 }
 
 // Create next generation using selection, crossover, and mutation
-func createNextGeneration(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, useFixedIndicators bool, rng *rand.Rand) []*Individual {
+func createNextGeneration(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, rng *rand.Rand) []*Individual {
 	newPop := make([]*Individual, len(population))
 	
 	// Elitism: keep best individuals
@@ -1283,7 +1138,7 @@ func createNextGeneration(population []*Individual, eliteSize int, crossoverRate
 		parent2 := tournamentSelection(population, TournamentSize, rng)
 		
 		child := crossover(parent1, parent2, crossoverRate, rng)
-		mutate(child, mutationRate, cfg, useFixedIndicators, rng)
+		mutate(child, mutationRate, cfg, rng)
 		
 		newPop[i] = child
 	}
@@ -1353,57 +1208,37 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 }
 
 // Mutate an individual
-func mutate(individual *Individual, rate float64, cfg *BacktestConfig, useFixedIndicators bool, rng *rand.Rand) {
+func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand.Rand) {
 	if rng.Float64() < rate {
+		// Mutate any parameter including indicator parameters
+		availableParams := []int{0, 2, 3, 4, 5, 6, 7, 8, 9, 10} // All except TP
+		if cfg.Cycle {
+			availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
+		}
 		
-		// Randomly mutate one parameter
-		if useFixedIndicators {
-			// Only mutate strategy parameters, not indicator parameters
-			// Fix mutation logic bug: ensure all cases have meaningful mutations
-			availableParams := []int{0, 2} // MaxMultiplier, PriceThreshold
-			if cfg.Cycle {
-				availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
-			}
-			
 		switch randomChoice(availableParams, rng) {
-			case 0:
-				individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
-			case 1:
-				individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
+		case 0:
+			individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
+		case 1:
+			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
 		case 2:
-				individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
-			}
-		} else {
-			// Mutate any parameter including indicator parameters
-			availableParams := []int{0, 2, 3, 4, 5, 6, 7, 8, 9, 10} // All except TP
-			if cfg.Cycle {
-				availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
-			}
-			
-		switch randomChoice(availableParams, rng) {
-			case 0:
-				individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
-			case 1:
-				individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
-		case 2:
-				individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
+			individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		case 3:
-				individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
 		case 4:
-				individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
 		case 5:
-				individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
 		case 6:
-				individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
 		case 7:
-				individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
 		case 8:
-				individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
 		case 9:
-				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
 		case 10:
-				individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
-			}
+			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
 		}
 		
 		// Ensure indicators always remain the same
@@ -2029,52 +1864,33 @@ func parseTrailingPeriod(s string) (time.Duration, bool) {
 }
 
 func filterDataByPeriod(data []types.OHLCV, period time.Duration) []types.OHLCV {
-	if period <= 0 || len(data) == 0 { return data }
-	end := data[len(data)-1].Timestamp
-	cut := end.Add(-period)
-	// find first index >= cut
-	lo, hi := 0, len(data)-1
-	idx := 0
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		if data[mid].Timestamp.Before(cut) {
-			lo = mid + 1
-		} else {
-			hi = mid - 1
-		}
-	}
-	idx = lo
-	if idx < 0 { idx = 0 }
-	if idx >= len(data) { return []types.OHLCV{} }
-	return data[idx:]
+	if period <= 0 || len(data) == 0 {
+        return data
+    }
+
+    // Find the cutoff timestamp (latest timestamp - period)
+    latestTime := data[len(data)-1].Timestamp
+    cutoffTime := latestTime.Add(-period)
+
+    // Find the starting index where data is within the period
+    startIdx := 0
+    for i, candle := range data {
+        if candle.Timestamp.After(cutoffTime) || candle.Timestamp.Equal(cutoffTime) {
+            startIdx = i
+            break
+        }
+    }
+
+    // Return the filtered data in chronological order
+    return data[startIdx:]
 }
 
-// reverseDataOrder reverses the order of OHLCV data for reverse chronological backtesting
-func reverseDataOrder(data []types.OHLCV) []types.OHLCV {
-	if len(data) <= 1 {
-		return data
-	}
-	
-	reversed := make([]types.OHLCV, len(data))
-	for i, j := 0, len(data)-1; i < len(data); i, j = i+1, j-1 {
-		reversed[i] = data[j]
-	}
-	return reversed
-}
-
-// Helper to resolve default output dir with optimization mode suffix
-func defaultOutputDirWithMode(symbol, interval string, useFixedIndicators bool) string {
+// Helper to resolve default output dir
+func defaultOutputDir(symbol, interval string) string {
 	s := strings.ToUpper(strings.TrimSpace(symbol))
 	i := strings.ToLower(strings.TrimSpace(interval))
 	if s == "" { s = "UNKNOWN" }
 	if i == "" { i = "unknown" }
 	
-	var modeSuffix string
-	if useFixedIndicators {
-		modeSuffix = FixedModeSuffix
-	} else {
-		modeSuffix = FullModeSuffix
-	}
-	
-	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s%s", s, i, modeSuffix))
+	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s", s, i))
 }

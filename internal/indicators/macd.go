@@ -12,6 +12,11 @@ type MACD struct {
 	fastPeriod    int
 	slowPeriod    int
 	signalPeriod  int
+	
+	// Use stateful EMA instances for efficiency
+	fastEMA       *EMA
+	slowEMA       *EMA
+	
 	lastMACD      float64
 	lastSignal    float64
 	lastHistogram float64
@@ -24,69 +29,47 @@ func NewMACD(fastPeriod, slowPeriod, signalPeriod int) *MACD {
 		fastPeriod:   fastPeriod,
 		slowPeriod:   slowPeriod,
 		signalPeriod: signalPeriod,
+		fastEMA:      NewEMA(fastPeriod),
+		slowEMA:      NewEMA(slowPeriod),
 	}
 }
 
-// Calculate calculates the MACD value
+// Calculate calculates the MACD value efficiently using stateful EMAs
 func (m *MACD) Calculate(data []types.OHLCV) (float64, error) {
 	if len(data) < m.slowPeriod {
 		return 0, errors.New("insufficient data for MACD calculation")
 	}
 
-	// Calculate fast EMA
-	fastEMA, err := m.calculateEMA(data, m.fastPeriod)
+	// Calculate fast and slow EMAs using stateful instances
+	fastValue, err := m.fastEMA.Calculate(data)
 	if err != nil {
 		return 0, err
 	}
 
-	// Calculate slow EMA
-	slowEMA, err := m.calculateEMA(data, m.slowPeriod)
+	slowValue, err := m.slowEMA.Calculate(data)
 	if err != nil {
 		return 0, err
 	}
 
-	// Calculate MACD line
-	macdLine := fastEMA - slowEMA
+	// Calculate MACD line (fast EMA - slow EMA)
+	macdLine := fastValue - slowValue
 	m.lastMACD = macdLine
 
-	// Calculate signal line (EMA of MACD)
+	// Calculate signal line (EMA of MACD values) using direct EMA formula
 	if !m.initialized {
+		// Initialize signal line with first MACD value
 		m.lastSignal = macdLine
 		m.initialized = true
 	} else {
+		// Update signal line using EMA formula: Signal = (MACD * alpha) + (Previous Signal * (1 - alpha))
 		alpha := 2.0 / float64(m.signalPeriod+1)
 		m.lastSignal = (macdLine * alpha) + (m.lastSignal * (1 - alpha))
 	}
 
-	// Calculate histogram
+	// Calculate histogram (MACD - Signal)
 	m.lastHistogram = macdLine - m.lastSignal
 
 	return macdLine, nil
-}
-
-// calculateEMA calculates the Exponential Moving Average
-func (m *MACD) calculateEMA(data []types.OHLCV, period int) (float64, error) {
-	if len(data) < period {
-		return 0, errors.New("insufficient data for EMA calculation")
-	}
-
-	// Use SMA for the first period values
-	sma := 0.0
-	for i := len(data) - period; i < len(data); i++ {
-		sma += data[i].Close
-	}
-	sma /= float64(period)
-
-	// Calculate EMA
-	alpha := 2.0 / float64(period+1)
-	ema := sma
-
-	// Apply EMA formula to recent data
-	for i := len(data) - period; i < len(data); i++ {
-		ema = (data[i].Close * alpha) + (ema * (1 - alpha))
-	}
-
-	return ema, nil
 }
 
 // ShouldBuy determines if we should buy based on MACD
@@ -123,10 +106,15 @@ func (m *MACD) GetSignalStrength() float64 {
 
 // GetName returns the indicator name
 func (m *MACD) GetName() string {
-	return "MACD"
+	return "MACD (Optimized)"
 }
 
 // GetRequiredPeriods returns the minimum number of periods needed
 func (m *MACD) GetRequiredPeriods() int {
 	return m.slowPeriod + m.signalPeriod
+}
+
+// GetLastValues returns MACD, Signal, and Histogram values for debugging
+func (m *MACD) GetLastValues() (macd, signal, histogram float64) {
+	return m.lastMACD, m.lastSignal, m.lastHistogram
 }

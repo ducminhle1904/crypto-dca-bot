@@ -186,7 +186,7 @@ func downloadKlines(symbol, interval string, start, end time.Time, limit int) ([
 
 	for startMs < endMs {
 		// Build URL
-		url := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=%s&interval=%s&startTime=%d&limit=%d",
+		url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&startTime=%d&limit=%d",
 			symbol, interval, startMs, limit)
 
 		// Make request

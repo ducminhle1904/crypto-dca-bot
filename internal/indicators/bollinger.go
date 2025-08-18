@@ -7,51 +7,163 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
+// MovingAverageType represents the type of moving average to use
+type MovingAverageType int
+
+const (
+	MA_SMA MovingAverageType = iota // Simple Moving Average (traditional)
+	MA_EMA                          // Exponential Moving Average (more responsive)
+)
+
 // BollingerBands represents the Bollinger Bands technical indicator
 type BollingerBands struct {
 	period     int
 	stdDev     float64
+	maType     MovingAverageType
+	
+	// Stateful components for non-repainting behavior
+	ema        *EMA      // For EMA-based middle band
+	values     []float64 // Rolling window for variance calculation
+	sum        float64   // Running sum for SMA calculation
+	initialized bool
+	
 	lastUpper  float64
 	lastMiddle float64
 	lastLower  float64
 }
 
-// NewBollingerBands creates a new Bollinger Bands indicator
+// NewBollingerBands creates a new Bollinger Bands indicator using SMA (traditional)
 func NewBollingerBands(period int, stdDev float64) *BollingerBands {
-	return &BollingerBands{
-		period: period,
-		stdDev: stdDev,
-	}
+	return NewBollingerBandsWithType(period, stdDev, MA_SMA)
 }
 
-// Calculate calculates the Bollinger Bands values
+// NewBollingerBandsEMA creates a new Bollinger Bands indicator using EMA (more responsive)
+func NewBollingerBandsEMA(period int, stdDev float64) *BollingerBands {
+	return NewBollingerBandsWithType(period, stdDev, MA_EMA)
+}
+
+// NewBollingerBandsWithType creates a new Bollinger Bands indicator with specified MA type
+func NewBollingerBandsWithType(period int, stdDev float64, maType MovingAverageType) *BollingerBands {
+	bb := &BollingerBands{
+		period: period,
+		stdDev: stdDev,
+		maType: maType,
+		values: make([]float64, 0, period), // Pre-allocate for efficiency
+	}
+	
+	// Initialize EMA if using EMA mode
+	if maType == MA_EMA {
+		bb.ema = NewEMA(period)
+	}
+	
+	return bb
+}
+
+// Calculate calculates the Bollinger Bands values using stateful rolling window
 func (bb *BollingerBands) Calculate(data []types.OHLCV) (float64, error) {
+	if len(data) == 0 {
+		return 0, errors.New("no data provided")
+	}
+
+	currentPrice := data[len(data)-1].Close
+
+	if !bb.initialized {
+		return bb.initialCalculation(data)
+	}
+
+	return bb.incrementalCalculation(currentPrice)
+}
+
+// initialCalculation sets up the initial rolling window
+func (bb *BollingerBands) initialCalculation(data []types.OHLCV) (float64, error) {
 	if len(data) < bb.period {
-		return 0, errors.New("insufficient data for Bollinger Bands calculation")
+		return 0, errors.New("insufficient data for Bollinger Bands initialization")
 	}
 
-	// Calculate SMA (middle band)
-	sma := 0.0
-	for i := len(data) - bb.period; i < len(data); i++ {
-		sma += data[i].Close
+	// Initialize EMA if using EMA mode
+	if bb.maType == MA_EMA {
+		_, err := bb.ema.Calculate(data)
+		if err != nil {
+			return 0, err
+		}
 	}
-	sma /= float64(bb.period)
-	bb.lastMiddle = sma
 
-	// Calculate standard deviation
+	// Initialize rolling window with the last 'period' values for standard deviation
+	bb.values = make([]float64, bb.period)
+	bb.sum = 0.0
+	
+	startIdx := len(data) - bb.period
+	for i := 0; i < bb.period; i++ {
+		bb.values[i] = data[startIdx+i].Close
+		if bb.maType == MA_SMA {
+			bb.sum += bb.values[i]
+		}
+	}
+
+	bb.initialized = true
+	return bb.calculateBands()
+}
+
+// incrementalCalculation updates with new price using rolling window
+func (bb *BollingerBands) incrementalCalculation(newPrice float64) (float64, error) {
+	// Update EMA if using EMA mode
+	if bb.maType == MA_EMA {
+		// Create single data point for EMA update
+		singlePoint := []types.OHLCV{{Close: newPrice}}
+		_, err := bb.ema.Calculate(singlePoint)
+		if err != nil {
+			return 0, err
+		}
+	}
+	
+	// Update rolling window for standard deviation calculation
+	oldestValue := bb.values[0]
+	
+	// Shift all values left and add new value at end
+	copy(bb.values[:bb.period-1], bb.values[1:])
+	bb.values[bb.period-1] = newPrice
+	
+	// Update running sum efficiently (needed for SMA mode)
+	if bb.maType == MA_SMA {
+		bb.sum = bb.sum - oldestValue + newPrice
+	}
+
+	return bb.calculateBands()
+}
+
+// calculateBands computes the actual band values from current window
+func (bb *BollingerBands) calculateBands() (float64, error) {
+	var middleBand float64
+	
+	// Calculate middle band based on MA type
+	switch bb.maType {
+	case MA_SMA:
+		// Use SMA from rolling window
+		middleBand = bb.sum / float64(bb.period)
+	case MA_EMA:
+		// Use stateful EMA (already calculated)
+		middleBand = bb.ema.GetLastValue()
+	default:
+		return 0, errors.New("unsupported moving average type")
+	}
+	
+	bb.lastMiddle = middleBand
+
+	// Calculate variance from rolling window (same for both SMA and EMA)
+	// Note: We use the price window for standard deviation, not the MA values
 	variance := 0.0
-	for i := len(data) - bb.period; i < len(data); i++ {
-		diff := data[i].Close - sma
+	for _, value := range bb.values {
+		diff := value - middleBand
 		variance += diff * diff
 	}
 	variance /= float64(bb.period)
-	stdDev := math.Sqrt(variance)
+	standardDev := math.Sqrt(variance)
 
 	// Calculate upper and lower bands
-	bb.lastUpper = sma + (bb.stdDev * stdDev)
-	bb.lastLower = sma - (bb.stdDev * stdDev)
+	bb.lastUpper = middleBand + (bb.stdDev * standardDev)
+	bb.lastLower = middleBand - (bb.stdDev * standardDev)
 
-	return sma, nil
+	return middleBand, nil
 }
 
 // ShouldBuy determines if we should buy based on Bollinger Bands
@@ -97,7 +209,12 @@ func (bb *BollingerBands) GetSignalStrength() float64 {
 
 // GetName returns the indicator name
 func (bb *BollingerBands) GetName() string {
-	return "Bollinger Bands"
+	switch bb.maType {
+	case MA_EMA:
+		return "Bollinger Bands (EMA-based)"
+	default:
+		return "Bollinger Bands (SMA-based)"
+	}
 }
 
 // GetRequiredPeriods returns the minimum number of periods needed
@@ -108,4 +225,14 @@ func (bb *BollingerBands) GetRequiredPeriods() int {
 // GetBands returns the current band values
 func (bb *BollingerBands) GetBands() (upper, middle, lower float64) {
 	return bb.lastUpper, bb.lastMiddle, bb.lastLower
+}
+
+// GetMovingAverageType returns the type of moving average used
+func (bb *BollingerBands) GetMovingAverageType() MovingAverageType {
+	return bb.maType
+}
+
+// IsEMABased returns true if using EMA for middle band
+func (bb *BollingerBands) IsEMABased() bool {
+	return bb.maType == MA_EMA
 }

@@ -45,44 +45,35 @@ go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -period 30d
 ## 3) Optimize parameters
 
 ```bash
-# Fast optimization - uses recommended indicator parameters for the timeframe
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize -fixed-indicators
-
-# Full optimization - optimizes all indicator parameters too (slower but thorough)
+# Full optimization - optimizes all indicator parameters
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize
 
 # Compare intervals for one symbol
 go run cmd/backtest/main.go -symbol BTCUSDT -all-intervals -optimize -period 30d
 
-# Use fixed indicators with interval comparison (much faster)
-go run cmd/backtest/main.go -symbol BTCUSDT -all-intervals -optimize -fixed-indicators -period 30d
+
 ```
 
 **What gets optimized:**
 
-- **Fixed indicators mode**: Base amount, Max multiplier, Price threshold, TP percent (3-4 parameters)
-- **Full optimization mode**: Above + RSI period/oversold, MACD fast/slow/signal, BB period/stddev, SMA period (11+ parameters)
+- **All parameters**: Base amount, Max multiplier, Price threshold, TP percent, RSI period/oversold, MACD fast/slow/signal, BB period/stddev, SMA period (11+ parameters)
 
 On success:
 
-- **Fixed indicators mode**: Results saved to `results/<SYMBOL>_<INTERVAL>_fixed/`
-- **Full optimization mode**: Results saved to `results/<SYMBOL>_<INTERVAL>_full/`
+- **Results saved to**: `results/<SYMBOL>_<INTERVAL>/`
 - Each directory contains: `best.json` and `trades.xlsx` (Trades + Cycles tabs)
 
 ## 4) Apply the best configuration
 
 ```bash
-# Use exact optimized settings from fixed indicators mode
-go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>_fixed/best.json
-
-# Use exact optimized settings from full optimization mode
-go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>_full/best.json
+# Use exact optimized settings
+go run cmd/backtest/main.go -config results/<SYMBOL>_<INTERVAL>/best.json
 
 # Override just TP for this run
-go run cmd/backtest/main.go -config results/BTCUSDT_1h_full/best.json -tp 0.025
+go run cmd/backtest/main.go -config results/BTCUSDT_1h/best.json -tp 0.025
 
 # Force hold mode (no cycles)
-go run cmd/backtest/main.go -config results/BTCUSDT_1h_fixed/best.json -cycle=false
+go run cmd/backtest/main.go -config results/BTCUSDT_1h/best.json -cycle=false
 ```
 
 ## Flags reference
@@ -99,24 +90,19 @@ go run cmd/backtest/main.go -config results/BTCUSDT_1h_fixed/best.json -cycle=fa
   - `-cycle` (default: true) enable TP cycles; set `false` to hold
   - `-tp` decimal TP (e.g., `0.02` = 2%); applied only when `-cycle=true`
 - **Optimization**
+
   - `-optimize` enable parameter optimization
-  - `-fixed-indicators` use recommended indicator parameters for timeframe (faster), only optimize strategy parameters
+
   - `-all-intervals` optimize each interval and compare
 
 ### Optimization Modes
 
-- **Fixed indicators mode** (`-fixed-indicators`):
-  - Uses timeframe-optimized indicator parameters (RSI 14/30, MACD 12/26/9, etc.)
-  - Only optimizes: Base amount, Max multiplier, Price threshold, TP percent
-  - ~75% faster optimization (25 population × 15 generations)
-- **Full optimization mode** (default):
+- **Full optimization mode**:
   - Optimizes all parameters including indicator settings
   - Optimizes: Strategy parameters + RSI period/oversold + MACD fast/slow/signal + BB period/stddev + SMA period
-  - More thorough but slower (60 population × 35 generations)
+  - Population: 60, Generations: 35
 
-### Fixed Indicator Parameters by Timeframe
-
-When using `-fixed-indicators`, these community-recommended values are applied:
+### Recommended Indicator Parameters by Timeframe
 
 | Timeframe | RSI (Period/Oversold/Overbought) | MACD (Fast/Slow/Signal) | BB (Period/Std Dev) | SMA (Period) |
 | --------- | -------------------------------- | ----------------------- | ------------------- | ------------ |
@@ -126,7 +112,7 @@ When using `-fixed-indicators`, these community-recommended values are applied:
 | **1h**    | 14 / 30 / 70                     | 12/26/9                 | 20 / 2              | 50           |
 | **4h**    | 14 / 30 / 70                     | 12/26/9                 | 20 / 2              | 100          |
 
-_These values are based on trading community recommendations and work well for crypto volatility._
+_These values are based on trading community recommendations and work well for crypto volatility. They can be used as starting points for manual configuration._
 
 ## Output structure
 
@@ -151,16 +137,15 @@ _These values are based on trading community recommendations and work well for c
 ## Tips
 
 - **All 4 indicators active** ensures good signal quality (≥2 must agree for buys with minConfidence = 0.5)
-- **Fast optimization:** Use `-fixed-indicators` for ~75% speed boost when you trust standard parameters
-- **Thorough optimization:** Skip `-fixed-indicators` to optimize all indicator parameters (slower but more comprehensive)
+- **Thorough optimization:** Optimize all indicator parameters for maximum performance
 - **Faster testing:** Shorten `-period` (e.g., `-period 30d`), use higher timeframe (4h vs 15m)
 - **Capital growth:** Balance increases after profitable cycles; per-BUY sizing still respects BaseAmount and MaxMultiplier
 
 ### Recommended Workflow
 
-1. **Quick test:** `-fixed-indicators` to get fast results with proven indicator settings
-2. **Full optimization:** Remove `-fixed-indicators` if you want to squeeze out maximum performance
-3. **Interval comparison:** Use `-all-intervals -fixed-indicators` to quickly find best timeframe
+1. **Quick test:** Use shorter periods (e.g., `-period 30d`) to get fast results
+2. **Full optimization:** Optimize all parameters for maximum performance
+3. **Interval comparison:** Use `-all-intervals` to find the best timeframe
 4. **Final tune:** Run full optimization on your chosen best interval
 
 ### Comparing Fixed vs Full Optimization
@@ -169,7 +154,7 @@ Results are saved to separate directories so you can easily compare both modes:
 
 ```bash
 # Run both optimizations on the same timeframe
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize -fixed-indicators
+go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize
 go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize
 
 # Results are saved separately:
