@@ -3,7 +3,10 @@ module github.com/ducminhle1904/crypto-dca-bot
 go 1.24.2
 
 require (
+	github.com/bybit-exchange/bybit.go.api v0.0.0-20250727214011-c9347d6804d6
 	github.com/cinar/indicator/v2 v2.1.15
+	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/prometheus/client_golang v1.22.0
 	github.com/stretchr/testify v1.10.0
 	github.com/xuri/excelize/v2 v2.9.1
@@ -12,13 +15,11 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bitly/go-simplejson v0.5.1 // indirect
-	github.com/bybit-exchange/bybit.go.api v0.0.0-20250727214011-c9347d6804d6 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hirokisan/bybit/v2 v2.38.1 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

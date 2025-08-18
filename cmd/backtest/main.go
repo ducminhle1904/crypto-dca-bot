@@ -55,7 +55,8 @@ const (
 	TournamentSize          = 3    // Tournament selection size
 	
 	// File and directory constants
-	DefaultDataRoot         = "data/historical"
+	DefaultDataRoot         = "data"
+	DefaultExchange         = "bybit"          // Default exchange for data
 	ResultsDir             = "results"
 	BestConfigFile         = "best.json"
 	TradesFile             = "trades.xlsx"
@@ -172,12 +173,41 @@ type BacktestConfig struct {
     Cycle         bool    `json:"cycle"`
 }
 
+// findDataFile attempts to locate data files for a specific exchange
+// Structure: data/{exchange}/{category}/{symbol}/{interval}/candles.csv
+func findDataFile(dataRoot, exchange, symbol, interval string) string {
+	symbol = strings.ToUpper(symbol)
+	
+	// Define categories by exchange
+	var categories []string
+	switch strings.ToLower(exchange) {
+	case "bybit":
+		categories = []string{"spot", "linear", "inverse"}
+	case "binance":
+		categories = []string{"spot", "futures"}
+	default:
+		categories = []string{"spot", "futures", "linear", "inverse"}
+	}
+	
+	// Check each category for the exchange
+	for _, category := range categories {
+		path := filepath.Join(dataRoot, exchange, category, symbol, interval, "candles.csv")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	
+	// If no existing file found, return the preferred structure (first category for the exchange)
+	return filepath.Join(dataRoot, exchange, categories[0], symbol, interval, "candles.csv")
+}
+
 func main() {
 	var (
 		configFile     = flag.String("config", "", "Path to configuration file")
 		dataFile       = flag.String("data", "", "Path to historical data file (overrides -interval)")
 		symbol         = flag.String("symbol", "BTCUSDT", "Trading symbol")
 		intervalFlag  = flag.String("interval", "1h", "Data interval to use (e.g., 15m,1h,4h,1d)")
+		exchange       = flag.String("exchange", DefaultExchange, "Exchange to use for data (bybit, binance, etc.)")
 		initialBalance = flag.Float64("balance", DefaultInitialBalance, "Initial balance")
 		commission     = flag.Float64("commission", DefaultCommission, "Trading commission (0.001 = 0.1%)")
 		windowSize     = flag.Int("window", DefaultWindowSize, "Data window size for analysis")
@@ -186,7 +216,7 @@ func main() {
 		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
 		optimize       = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
-		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <SYMBOL>/<INTERVAL>/candles.csv")
+		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
 		consoleOnly    = flag.Bool("console-only", false, "Only display results in console, do not write files (best.json, trades.xlsx)")
 	)
@@ -225,11 +255,11 @@ func main() {
 	// Resolve data file from symbol/interval if not explicitly provided and not scanning all intervals
 	if !*allIntervals && strings.TrimSpace(cfg.DataFile) == "" {
 		sym := strings.ToUpper(cfg.Symbol)
-		cfg.DataFile = filepath.Join(*dataRoot, sym, *intervalFlag, "candles.csv")
+		cfg.DataFile = findDataFile(*dataRoot, *exchange, sym, *intervalFlag)
 	}
 	
 	if *allIntervals {
-		runAcrossIntervals(cfg, *dataRoot, *optimize, selectedPeriod, *consoleOnly)
+		runAcrossIntervals(cfg, *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly)
 		return
 	}
 	
@@ -446,12 +476,50 @@ func validateConfig(cfg *BacktestConfig) error {
 	return nil
 }
 
-func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, selectedPeriod time.Duration, consoleOnly bool) {
+func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool) {
 	sym := strings.ToUpper(cfg.Symbol)
-	symDir := filepath.Join(dataRoot, sym)
-	entries, err := os.ReadDir(symDir)
-	if err != nil {
-		log.Fatalf("Failed to read symbol directory %s: %v", symDir, err)
+	
+	// Find all available intervals for this symbol in the exchange
+	var availableIntervals []string
+	
+	// Define categories by exchange
+	var categories []string
+	switch strings.ToLower(exchange) {
+	case "bybit":
+		categories = []string{"spot", "linear", "inverse"}
+	case "binance":
+		categories = []string{"spot", "futures"}
+	default:
+		categories = []string{"spot", "futures", "linear", "inverse"}
+	}
+	
+	// Check each category for available intervals
+	for _, category := range categories {
+		categoryDir := filepath.Join(dataRoot, exchange, category, sym)
+		if entries, err := os.ReadDir(categoryDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() { continue }
+				interval := e.Name()
+				candlesPath := filepath.Join(categoryDir, interval, "candles.csv")
+				if _, err := os.Stat(candlesPath); err == nil {
+					// Only add if not already found
+					found := false
+					for _, existing := range availableIntervals {
+						if existing == interval {
+							found = true
+							break
+						}
+					}
+					if !found {
+						availableIntervals = append(availableIntervals, interval)
+					}
+				}
+			}
+		}
+	}
+	
+	if len(availableIntervals) == 0 {
+		log.Fatalf("No data found for symbol %s in exchange %s at %s", sym, exchange, dataRoot)
 	}
 
 	type intervalResult struct {
@@ -462,10 +530,9 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, sel
 
 	var resultsByInterval []intervalResult
 
-	for _, e := range entries {
-		if !e.IsDir() { continue }
-		interval := e.Name()
-		candlesPath := filepath.Join(symDir, interval, "candles.csv")
+	for _, interval := range availableIntervals {
+		// Use findDataFile to get the correct path for this interval
+		candlesPath := findDataFile(dataRoot, exchange, sym, interval)
 		if _, err := os.Stat(candlesPath); err != nil { continue }
 
 		cfgCopy := *cfg
@@ -490,7 +557,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot string, optimize bool, sel
 	}
 
 	if len(resultsByInterval) == 0 {
-		log.Fatalf("No interval data found under %s", symDir)
+		log.Fatalf("No interval data found for symbol %s in exchange %s", sym, exchange)
 	}
 
 	// Find best by TotalReturn

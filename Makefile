@@ -14,6 +14,9 @@ help:
 	@echo "  docker-run   - Run with Docker Compose"
 	@echo "  lint         - Run linter"
 	@echo "  fmt          - Format code"
+	@echo "  download-bybit-data - Build Bybit data downloader"
+	@echo "  download-bybit-quick - Download popular pairs (30 days)"
+	@echo "  download-bybit-backtest - Download full dataset (1 year)"
 
 # Build the application
 build:
@@ -66,6 +69,44 @@ lint:
 fmt:
 	@echo "Formatting code..."
 	go fmt ./...
+
+# Download Bybit historical data
+download-bybit-data:
+	@echo "Building Bybit data downloader..."
+	go build -o bin/bybit-downloader ./scripts/download_bybit_historical_data.go
+	@echo "Bybit downloader built successfully!"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  # Download 1 year of hourly BTCUSDT spot data:"
+	@echo "  ./bin/bybit-downloader -symbol BTCUSDT -interval 60 -category spot"
+	@echo ""
+	@echo "  # Download multiple symbols and intervals:"
+	@echo "  ./bin/bybit-downloader -symbols \"BTCUSDT,ETHUSDT\" -intervals \"60,240\" -categories \"spot,linear\""
+	@echo ""
+	@echo "  # Custom date range:"
+	@echo "  ./bin/bybit-downloader -symbol BTCUSDT -interval 60 -category spot -start 2024-01-01 -end 2024-12-31"
+	@echo ""
+	@echo "See scripts/README_BYBIT_DOWNLOADER.md for full documentation"
+
+# Quick Bybit data download for common pairs
+download-bybit-quick:
+	@echo "Downloading popular trading pairs (last 30 days)..."
+	go run ./scripts/download_bybit_historical_data.go \
+		-symbols "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT" \
+		-intervals "60,240" \
+		-categories "spot,linear" \
+		-start $(shell date -d '30 days ago' +%Y-%m-%d 2>/dev/null || date -v-30d +%Y-%m-%d 2>/dev/null || echo "2024-07-19") \
+		-outdir data/bybit
+
+# Download Bybit data for backtesting
+download-bybit-backtest:
+	@echo "Downloading comprehensive dataset for backtesting (last 1 year)..."
+	go run ./scripts/download_bybit_historical_data.go \
+		-symbols "BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,SOLUSDT,AVAXUSDT,DOTUSDT,MATICUSDT" \
+		-intervals "60,240,D" \
+		-categories "spot,linear" \
+		-start $(shell date -d '1 year ago' +%Y-%m-%d 2>/dev/null || date -v-1y +%Y-%m-%d 2>/dev/null || echo "2024-01-01") \
+		-outdir data/bybit/backtest
 
 # Install dependencies
 deps:
