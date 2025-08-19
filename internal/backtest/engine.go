@@ -2,6 +2,7 @@ package backtest
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
@@ -16,6 +17,9 @@ type BacktestEngine struct {
 	// take-profit as a decimal (e.g., 0.01 for 1%). 0 disables TP and behaves like before
 	tpPercent      float64
 
+	// Minimum lot size constraints for realistic simulation
+	minOrderQty    float64 // Minimum order quantity (e.g., 0.01 for BTCUSDT)
+	
 	// cycle tracking (only meaningful when tpPercent > 0)
 	cycleOpen          bool
 	currentCycleNumber int
@@ -69,6 +73,8 @@ func NewBacktestEngine(
 	strat strategy.Strategy,
 	// tpPercent: 0 disables take-profit. Example: 0.02 = 2% above avg entry
 	tpPercent float64,
+	// minOrderQty: minimum order quantity (e.g., 0.01 for BTCUSDT). 0 disables lot size constraints
+	minOrderQty float64,
 ) *BacktestEngine {
 	return &BacktestEngine{
 		initialBalance: initialBalance,
@@ -79,7 +85,8 @@ func NewBacktestEngine(
 			Trades:       make([]Trade, 0),
 			Cycles:       make([]CycleSummary, 0),
 		},
-		tpPercent: tpPercent,
+		tpPercent:   tpPercent,
+		minOrderQty: minOrderQty,
 	}
 }
 
@@ -103,40 +110,66 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 
 		// get a signal from the strategy
 		decision, err := b.strategy.ShouldExecuteTrade(window)
-		if err == nil && decision.Action == strategy.ActionBuy && balance > decision.Amount {
-			// Buy
-			commission := decision.Amount * b.commission
-			netAmount := decision.Amount - commission
-			quantity := netAmount / currentPrice
+		if err == nil && decision.Action == strategy.ActionBuy {
+			// Calculate initial quantity and amount
+			targetAmount := decision.Amount
+			quantity := targetAmount / currentPrice
+			actualAmount := targetAmount
 
-			position += quantity
-			balance -= decision.Amount
-
-			// begin a new cycle if needed (only when TP enabled)
-			if b.tpPercent > 0 && !b.cycleOpen {
-				b.currentCycleNumber++
-				b.cycleOpen = true
-				b.cycleEntries = 0
-				b.cycleStartTime = data[i].Timestamp
-				b.cycleQtySum = 0
-				b.cycleCostSum = 0
+			// Apply minimum lot size constraint and step size (simulate real exchange behavior)
+			if b.minOrderQty > 0 {
+				// Round to nearest multiple of minOrderQty (step size)
+				multiplier := math.Round(quantity / b.minOrderQty)
+				
+				// Ensure at least 1 step (minimum quantity)
+				if multiplier < 1 {
+					multiplier = 1
+				}
+				
+				adjustedQuantity := multiplier * b.minOrderQty
+				
+				if adjustedQuantity != quantity {
+					quantity = adjustedQuantity
+					actualAmount = quantity * currentPrice
+				}
 			}
 
-			//Recording the transaction (input)
-			trade := Trade{
-				EntryTime:  data[i].Timestamp,
-				EntryPrice: currentPrice,
-				Quantity:   quantity,
-				Commission: commission,
-			}
-			if b.cycleOpen {
-				b.cycleEntries++
-				b.cycleQtySum += quantity
-				b.cycleCostSum += currentPrice * quantity
-				trade.Cycle = b.currentCycleNumber
-			}
+			// Check if we have enough balance for the actual amount (after lot size adjustment)
+			if balance > actualAmount {
+				// Execute buy with actual amount (may be adjusted for lot size)
+				commission := actualAmount * b.commission
+				netAmount := actualAmount - commission
+				actualQuantity := netAmount / currentPrice
 
-			b.results.Trades = append(b.results.Trades, trade)
+				position += actualQuantity
+				balance -= actualAmount
+
+				// begin a new cycle if needed (only when TP enabled)
+				if b.tpPercent > 0 && !b.cycleOpen {
+					b.currentCycleNumber++
+					b.cycleOpen = true
+					b.cycleEntries = 0
+					b.cycleStartTime = data[i].Timestamp
+					b.cycleQtySum = 0
+					b.cycleCostSum = 0
+				}
+
+				//Recording the transaction (input) - use actual executed values
+				trade := Trade{
+					EntryTime:  data[i].Timestamp,
+					EntryPrice: currentPrice,
+					Quantity:   actualQuantity, // Use actual quantity after commission
+					Commission: commission,
+				}
+				if b.cycleOpen {
+					b.cycleEntries++
+					b.cycleQtySum += actualQuantity
+					b.cycleCostSum += currentPrice * actualQuantity
+					trade.Cycle = b.currentCycleNumber
+				}
+
+				b.results.Trades = append(b.results.Trades, trade)
+			}
 		}
 
 		// Optional take-profit: if enabled and we have a position, check if price >= avg entry * (1 + tp)

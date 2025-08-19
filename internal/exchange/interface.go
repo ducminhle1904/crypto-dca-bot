@@ -19,10 +19,3 @@ type Exchange interface {
 	PlaceMarketOrder(symbol string, side OrderSide, quantity float64) (*types.Order, error)
 	GetBalance(asset string) (*types.Balance, error)
 }
-
-type OrderSide int
-
-const (
-	OrderBuy OrderSide = iota
-	OrderSell
-)

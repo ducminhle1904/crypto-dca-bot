@@ -18,11 +18,13 @@ The DCA (Dollar Cost Averaging) Backtesting Suggestion System is a comprehensive
 ### Core Components
 
 1. **Timeframe Categories**
+
    - Short-term (minutes to days)
-   - Mid-term (days to weeks) 
+   - Mid-term (days to weeks)
    - Long-term (months to years)
 
 2. **Market Cycle Analysis**
+
    - Bear Market Bottom
    - Bull Market Rise
    - Bull Market Peak
@@ -37,17 +39,19 @@ The DCA (Dollar Cost Averaging) Backtesting Suggestion System is a comprehensive
 ## 📊 Timeframe Definitions
 
 ### Short-Term Trading
+
 - **Position Duration**: Minutes to Days
 - **Typical Hold Time**: 1 minute - 7 days
 - **Backtest Range**: 3-12 months
 - **Focus**: Market microstructure, intraday patterns, high-frequency noise
-- **Key Considerations**: 
+- **Key Considerations**:
   - Transaction costs critical
   - Recent data most relevant
   - Market session effects
   - Liquidity dynamics
 
 ### Mid-Term Trading
+
 - **Position Duration**: Days to Weeks
 - **Typical Hold Time**: 1 week - 3 months
 - **Backtest Range**: 12-36 months
@@ -59,6 +63,7 @@ The DCA (Dollar Cost Averaging) Backtesting Suggestion System is a comprehensive
   - Gradual position sizing
 
 ### Long-Term Trading
+
 - **Position Duration**: Months to Years
 - **Typical Hold Time**: 3 months - 2+ years
 - **Backtest Range**: 2-10 years
@@ -97,6 +102,7 @@ The system automatically analyzes various factors:
 ### Short-Term Strategies
 
 #### ⚡ Scalping DCA (Minutes-based)
+
 ```
 Timeframe: SHORT_TERM
 Trading Frequency: minutes
@@ -111,6 +117,7 @@ Range: 2-5 months
 ```
 
 #### 🎯 Daily Swing DCA
+
 ```
 Timeframe: SHORT_TERM
 Trading Frequency: daily
@@ -127,6 +134,7 @@ Range: 4-9 months
 ### Mid-Term Strategies
 
 #### 📊 Weekly Swing Trading
+
 ```
 Timeframe: MID_TERM
 Trading Frequency: weekly
@@ -141,6 +149,7 @@ Range: 12-27 months
 ```
 
 #### 🎯 Monthly Position Building
+
 ```
 Timeframe: MID_TERM
 Trading Frequency: monthly
@@ -157,6 +166,7 @@ Range: 20-45 months
 ### Long-Term Strategies
 
 #### 💎 Quarterly DCA (Conservative)
+
 ```
 Timeframe: LONG_TERM
 Trading Frequency: quarterly
@@ -171,6 +181,7 @@ Range: 50-126 months
 ```
 
 #### 🏛️ Generational HODL DCA
+
 ```
 Timeframe: LONG_TERM
 Trading Frequency: quarterly
@@ -187,6 +198,7 @@ Range: 72-180 months
 ## 🔄 Market Cycle Considerations
 
 ### Bear Market Bottom (6-18 months)
+
 - **Short-term**: 6 months testing
 - **Mid-term**: 12 months testing
 - **Long-term**: 24 months testing
@@ -194,6 +206,7 @@ Range: 72-180 months
 - **Characteristics**: Low volatility, sideways action, strong support levels
 
 ### Bull Market Rise (12-24 months)
+
 - **Short-term**: 8 months testing
 - **Mid-term**: 18 months testing
 - **Long-term**: 36 months testing
@@ -201,6 +214,7 @@ Range: 72-180 months
 - **Characteristics**: Strong uptrends, frequent pullbacks, high volatility
 
 ### Bull Market Peak (2-6 months)
+
 - **Short-term**: 4 months testing
 - **Mid-term**: 8 months testing
 - **Long-term**: 12 months testing
@@ -208,6 +222,7 @@ Range: 72-180 months
 - **Characteristics**: Extreme volatility, quick reversals, FOMO periods
 
 ### Bear Market Crash (3-12 months)
+
 - **Short-term**: 6 months testing
 - **Mid-term**: 12 months testing
 - **Long-term**: 24 months testing
@@ -215,6 +230,7 @@ Range: 72-180 months
 - **Characteristics**: Strong downtrends, panic selling, liquidation cascades
 
 ### Recovery Phase (4-10 months)
+
 - **Short-term**: 6 months testing
 - **Mid-term**: 15 months testing
 - **Long-term**: 30 months testing
@@ -225,21 +241,22 @@ Range: 72-180 months
 
 ### Recommended Periods by Strategy Type
 
-| Strategy Type | Timeframe | Recommended | Primary Focus |
-|---------------|-----------|-------------|---------------|
-| Scalping DCA | SHORT | 3-6 months | Market microstructure |
-| Day Trading DCA | SHORT | 4-8 months | Daily patterns |
-| Short Swing DCA | SHORT | 6-12 months | Quick trends |
-| Weekly Swing DCA | MID | 12-24 months | Weekly cycles |
-| Monthly DCA | MID | 18-36 months | Monthly trends |
-| Trend Following DCA | MID | 24-48 months | Market cycles |
-| Quarterly DCA | LONG | 36-84 months | Market cycles |
-| Annual DCA | LONG | 60-120 months | Technology trends |
-| HODL DCA | LONG | 84-180 months | Generational wealth |
+| Strategy Type       | Timeframe | Recommended   | Primary Focus         |
+| ------------------- | --------- | ------------- | --------------------- |
+| Scalping DCA        | SHORT     | 3-6 months    | Market microstructure |
+| Day Trading DCA     | SHORT     | 4-8 months    | Daily patterns        |
+| Short Swing DCA     | SHORT     | 6-12 months   | Quick trends          |
+| Weekly Swing DCA    | MID       | 12-24 months  | Weekly cycles         |
+| Monthly DCA         | MID       | 18-36 months  | Monthly trends        |
+| Trend Following DCA | MID       | 24-48 months  | Market cycles         |
+| Quarterly DCA       | LONG      | 36-84 months  | Market cycles         |
+| Annual DCA          | LONG      | 60-120 months | Technology trends     |
+| HODL DCA            | LONG      | 84-180 months | Generational wealth   |
 
 ### Timeframe Summary
 
 #### SHORT-TERM SUMMARY
+
 - **MINIMUM**: 3 months (pattern recognition)
 - **OPTIMAL**: 6-9 months (noise vs signal balance)
 - **MAXIMUM**: 12 months (avoid old regime overfitting)
@@ -247,6 +264,7 @@ Range: 72-180 months
 - **RISK**: High frequency requires recent data
 
 #### MID-TERM SUMMARY
+
 - **MINIMUM**: 12 months (multiple cycles)
 - **OPTIMAL**: 18-36 months (robust validation)
 - **MAXIMUM**: 60 months (comprehensive testing)
@@ -254,6 +272,7 @@ Range: 72-180 months
 - **RISK**: Balance historical vs current relevance
 
 #### LONG-TERM SUMMARY
+
 - **MINIMUM**: 36 months (basic cycle coverage)
 - **OPTIMAL**: 60-84 months (full cycle robustness)
 - **MAXIMUM**: 180 months (generational testing)
@@ -274,6 +293,7 @@ Range: 72-180 months
 ### Core Types
 
 #### TimeframeCategory
+
 ```go
 type TimeframeCategory string
 
@@ -285,6 +305,7 @@ const (
 ```
 
 #### TimeframeSpecificBacktestSelector
+
 ```go
 type TimeframeSpecificBacktestSelector struct {
     Timeframe         TimeframeCategory
@@ -298,6 +319,7 @@ type TimeframeSpecificBacktestSelector struct {
 ```
 
 #### TimeframeBacktestRecommendation
+
 ```go
 type TimeframeBacktestRecommendation struct {
     Timeframe              TimeframeCategory
@@ -315,23 +337,29 @@ type TimeframeBacktestRecommendation struct {
 ### Key Functions
 
 #### GetTimeframeBoundaries()
+
 Returns definitions for all timeframes with their characteristics.
 
 #### GetRecommendedBacktestPeriods()
+
 Returns pre-configured recommendations for common trading styles.
 
 #### GetCryptoMarketCycles()
+
 Returns information about crypto market cycles and their impact on different timeframes.
 
 #### AnalyzeCurrentMarketForBacktest()
+
 Analyzes current market conditions to provide contextual recommendations.
 
 #### CalculateOptimalPeriod()
+
 Core function that calculates optimal backtesting period based on multiple factors.
 
 ## 📝 Best Practices
 
 ### For Short-Term Strategies
+
 1. **Focus on recent data** - Older data may be less relevant
 2. **Include transaction costs** - Critical for high-frequency strategies
 3. **Test different market sessions** - Asian, European, US hours
@@ -339,6 +367,7 @@ Core function that calculates optimal backtesting period based on multiple facto
 5. **Paper trade extensively** - Validate before going live
 
 ### For Mid-Term Strategies
+
 1. **Include seasonal patterns** - Quarter-end effects, holidays
 2. **Test across market regimes** - Bull, bear, sideways periods
 3. **Validate economic impact** - Fed announcements, major news
@@ -346,6 +375,7 @@ Core function that calculates optimal backtesting period based on multiple facto
 5. **Monitor correlation changes** - Market relationships evolve
 
 ### For Long-Term Strategies
+
 1. **Include complete cycles** - Full bull/bear market cycles
 2. **Consider regulatory changes** - Long-term landscape shifts
 3. **Test technology adoption** - Blockchain evolution impacts
@@ -384,4 +414,4 @@ For questions, issues, or feature requests, please open an issue on the GitHub r
 
 ---
 
-*Last updated: December 2024*
+_Last updated: December 2024_

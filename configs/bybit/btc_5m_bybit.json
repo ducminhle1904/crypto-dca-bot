@@ -1,0 +1,48 @@
+{
+  "strategy": {
+    "symbol": "BTCUSDT",
+    "base_amount": 100,
+    "max_multiplier": 1.5,
+    "price_threshold": 0.01,
+    "interval": "5m",
+    "window_size": 80,
+    "tp_percent": 0.06,
+    "cycle": true,
+    "indicators": ["rsi", "macd", "bb", "ema"],
+    "rsi": {
+      "period": 10,
+      "oversold": 35,
+      "overbought": 70
+    },
+    "macd": {
+      "fast_period": 6,
+      "slow_period": 32,
+      "signal_period": 14
+    },
+    "bollinger_bands": {
+      "period": 25,
+      "std_dev": 1.8
+    },
+    "ema": {
+      "period": 15
+    }
+  },
+  "exchange": {
+    "name": "bybit",
+    "bybit": {
+      "api_key": "${BYBIT_API_KEY}",
+      "api_secret": "${BYBIT_API_SECRET}",
+      "testnet": false,
+      "demo": true
+    }
+  },
+  "risk": {
+    "initial_balance": 1000.0,
+    "commission": 0.001
+  },
+  "notifications": {
+    "enabled": false,
+    "telegram_token": "${TELEGRAM_TOKEN}",
+    "telegram_chat": "${TELEGRAM_CHAT_ID}"
+  }
+}

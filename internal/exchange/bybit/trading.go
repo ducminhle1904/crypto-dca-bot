@@ -481,7 +481,7 @@ type PositionInfo struct {
 	Side           string    `json:"side"`
 	Size           string    `json:"size"`
 	PositionValue  string    `json:"positionValue"`
-	EntryPrice     string    `json:"entryPrice"`
+	AvgPrice       string    `json:"avgPrice"`       // Fixed: API returns avgPrice, not entryPrice
 	MarkPrice      string    `json:"markPrice"`
 	LiqPrice       string    `json:"liqPrice"`
 	UnrealisedPnl  string    `json:"unrealisedPnl"`
@@ -742,7 +742,7 @@ func (c *Client) parsePositionsResponse(response interface{}) ([]PositionInfo, e
 			Side           string `json:"side"`
 			Size           string `json:"size"`
 			PositionValue  string `json:"positionValue"`
-			EntryPrice     string `json:"entryPrice"`
+			AvgPrice       string `json:"avgPrice"`       // Fixed: API returns avgPrice, not entryPrice
 			MarkPrice      string `json:"markPrice"`
 			LiqPrice       string `json:"liqPrice"`
 			UnrealisedPnl  string `json:"unrealisedPnl"`
@@ -773,7 +773,7 @@ func (c *Client) parsePositionsResponse(response interface{}) ([]PositionInfo, e
 			Side:           posData.Side,
 			Size:           posData.Size,
 			PositionValue:  posData.PositionValue,
-			EntryPrice:     posData.EntryPrice,
+			AvgPrice:       posData.AvgPrice,       // Fixed: use AvgPrice instead of EntryPrice
 			MarkPrice:      posData.MarkPrice,
 			LiqPrice:       posData.LiqPrice,
 			UnrealisedPnl:  posData.UnrealisedPnl,

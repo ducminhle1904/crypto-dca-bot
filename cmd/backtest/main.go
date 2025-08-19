@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"flag"
@@ -17,9 +18,11 @@ import (
 	"math/rand"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/bybit"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
+	"github.com/joho/godotenv"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -33,6 +36,7 @@ const (
 	DefaultMaxMultiplier  = 3.0
 	DefaultPriceThreshold = 0.02 // 2%
 	DefaultTPPercent      = 0.02 // 2%
+	DefaultMinOrderQty    = 0.01 // Default minimum order quantity (typical for BTCUSDT)
 	
 	// Default indicator parameters
 	DefaultRSIPeriod      = 14
@@ -171,6 +175,78 @@ type BacktestConfig struct {
 	// Take-profit configuration
 	TPPercent      float64 `json:"tp_percent"`
     Cycle         bool    `json:"cycle"`
+	
+	// Minimum lot size for realistic simulation (e.g., 0.01 for BTCUSDT)
+	MinOrderQty    float64 `json:"min_order_qty"`
+}
+
+// NestedConfig represents the new nested configuration format for output
+type NestedConfig struct {
+	Strategy      StrategyConfig      `json:"strategy"`
+	Exchange      ExchangeConfig      `json:"exchange"`
+	Risk          RiskConfig          `json:"risk"`
+	Notifications NotificationsConfig `json:"notifications"`
+}
+
+type StrategyConfig struct {
+	Symbol         string             `json:"symbol"`
+	BaseAmount     float64            `json:"base_amount"`
+	MaxMultiplier  float64            `json:"max_multiplier"`
+	PriceThreshold float64            `json:"price_threshold"`
+	Interval       string             `json:"interval"`
+	WindowSize     int                `json:"window_size"`
+	TPPercent      float64            `json:"tp_percent"`
+	Cycle          bool               `json:"cycle"`
+	Indicators     []string           `json:"indicators"`
+	RSI            RSIConfig          `json:"rsi"`
+	MACD           MACDConfig         `json:"macd"`
+	BollingerBands BollingerBandsConfig `json:"bollinger_bands"`
+	EMA            EMAConfig          `json:"ema"`
+}
+
+type RSIConfig struct {
+	Period     int     `json:"period"`
+	Oversold   float64 `json:"oversold"`
+	Overbought float64 `json:"overbought"`
+}
+
+type MACDConfig struct {
+	FastPeriod   int `json:"fast_period"`
+	SlowPeriod   int `json:"slow_period"`
+	SignalPeriod int `json:"signal_period"`
+}
+
+type BollingerBandsConfig struct {
+	Period int     `json:"period"`
+	StdDev float64 `json:"std_dev"`
+}
+
+type EMAConfig struct {
+	Period int `json:"period"`
+}
+
+type ExchangeConfig struct {
+	Name  string      `json:"name"`
+	Bybit BybitConfig `json:"bybit"`
+}
+
+type BybitConfig struct {
+	APIKey    string `json:"api_key"`
+	APISecret string `json:"api_secret"`
+	Testnet   bool   `json:"testnet"`
+	Demo      bool   `json:"demo"`
+}
+
+type RiskConfig struct {
+	InitialBalance float64 `json:"initial_balance"`
+	Commission     float64 `json:"commission"`
+	MinOrderQty    float64 `json:"min_order_qty"`
+}
+
+type NotificationsConfig struct {
+	Enabled       bool   `json:"enabled"`
+	TelegramToken string `json:"telegram_token"`
+	TelegramChat  string `json:"telegram_chat"`
 }
 
 // findDataFile attempts to locate data files for a specific exchange
@@ -219,6 +295,7 @@ func main() {
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
 		consoleOnly    = flag.Bool("console-only", false, "Only display results in console, do not write files (best.json, trades.xlsx)")
+		envFile        = flag.String("env", ".env", "Environment file path for Bybit API credentials")
 	)
 	
 	flag.Parse()
@@ -227,6 +304,11 @@ func main() {
     if *configFile != "" && !strings.ContainsAny(*configFile, "/\\") {
         *configFile = filepath.Join("configs", *configFile + ".json")
     }
+	
+	// Load environment variables from .env file
+	if err := loadEnvFile(*envFile); err != nil {
+		log.Printf("Warning: Could not load .env file (%v), checking environment variables...", err)
+	}
 	
 	// Load configuration - cycle is always enabled, console output only
 	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
@@ -258,6 +340,12 @@ func main() {
 		cfg.DataFile = findDataFile(*dataRoot, *exchange, sym, *intervalFlag)
 	}
 	
+	// Fetch minimum order quantity from Bybit before backtesting
+	if err := fetchAndSetMinOrderQty(cfg); err != nil {
+		log.Printf("Warning: Could not fetch minimum order quantity from Bybit: %v", err)
+		log.Printf("Using default minimum order quantity: %.6f", cfg.MinOrderQty)
+	}
+	
 	if *allIntervals {
 		runAcrossIntervals(cfg, *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly)
 		return
@@ -277,6 +365,7 @@ func main() {
 		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
 		fmt.Printf("  Price Threshold:  %.2f%%\n", bestConfig.PriceThreshold*100)
 		fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
+		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
 		if containsIndicator(bestConfig.Indicators, "rsi") {
 			fmt.Printf("  RSI Period:     %d\n", bestConfig.RSIPeriod)
 			fmt.Printf("  RSI Oversold:   %.0f\n", bestConfig.RSIOversold)
@@ -361,6 +450,52 @@ func main() {
 	}
 }
 
+func loadEnvFile(envFile string) error {
+	// Load .env file if it exists
+	if _, err := os.Stat(envFile); err == nil {
+		return godotenv.Load(envFile)
+	}
+	return fmt.Errorf("env file %s not found", envFile)
+}
+
+func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
+	// Create Bybit client to fetch instrument info
+	bybitConfig := bybit.Config{
+		APIKey:    os.Getenv("BYBIT_API_KEY"),
+		APISecret: os.Getenv("BYBIT_API_SECRET"),
+		Demo:      true, // Use demo mode for fetching instrument info (safer)
+	}
+
+	// Skip if no API credentials (use default)
+	if bybitConfig.APIKey == "" || bybitConfig.APISecret == "" {
+		log.Printf("No Bybit API credentials found, using default min_order_qty: %.6f", cfg.MinOrderQty)
+		return nil
+	}
+
+	bybitClient := bybit.NewClient(bybitConfig)
+	
+	// Determine category from data file path
+	category := "linear" // Default
+	if strings.Contains(cfg.DataFile, "spot") {
+		category = "spot"
+	} else if strings.Contains(cfg.DataFile, "inverse") {
+		category = "inverse"
+	}
+
+	// Fetch instrument constraints
+	ctx := context.Background()
+	minQty, _, _, err := bybitClient.GetInstrumentManager().GetQuantityConstraints(ctx, category, cfg.Symbol)
+	if err != nil {
+		return fmt.Errorf("failed to fetch instrument constraints for %s: %w", cfg.Symbol, err)
+	}
+
+	// Update config with fetched minimum order quantity
+	cfg.MinOrderQty = minQty
+	log.Printf("✅ Fetched minimum order quantity for %s: %.6f %s", cfg.Symbol, minQty, cfg.Symbol)
+	
+	return nil
+}
+
 func loadConfig(configFile, dataFile, symbol string, balance, commission float64,
 	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64) *BacktestConfig {
 	
@@ -384,6 +519,7 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		EMAPeriod:      DefaultEMAPeriod,
 		Indicators:     nil,
 		TPPercent:      0, // Default to 0 TP, will be set later if needed
+		MinOrderQty:    DefaultMinOrderQty, // Default minimum order quantity
 	}
 	
 	// Load from config file if provided
@@ -473,6 +609,10 @@ func validateConfig(cfg *BacktestConfig) error {
 		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
 	}
 	
+	if cfg.MinOrderQty < 0 {
+		return fmt.Errorf("minimum order quantity must be non-negative, got: %.6f", cfg.MinOrderQty)
+	}
+	
 	return nil
 }
 
@@ -538,6 +678,11 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 		cfgCopy := *cfg
 		cfgCopy.DataFile = candlesPath
 
+		// Fetch minimum order quantity for this interval
+		if err := fetchAndSetMinOrderQty(&cfgCopy); err != nil {
+			log.Printf("Warning: Could not fetch minimum order quantity for %s: %v", interval, err)
+		}
+
 		var res *backtest.BacktestResults
 		var bestCfg BacktestConfig
 		if optimize {
@@ -570,14 +715,14 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 
 	fmt.Println("\n================ Interval Comparison ================")
 	fmt.Printf("Symbol: %s\n", sym)
-	fmt.Println("Interval | Return% | Trades | Base$ | MaxMult | TP% | Threshold% | RSI(p/ov) | Indicators")
+	fmt.Println("Interval | Return% | Trades | Base$ | MaxMult | TP% | Threshold% | MinQty | RSI(p/ov) | Indicators")
 	for _, r := range resultsByInterval {
 		c := r.OptimizedCfg
 		rsiInfo := "-/-"
 		if containsIndicator(c.Indicators, "rsi") {
 			rsiInfo = fmt.Sprintf("%d/%.0f", c.RSIPeriod, c.RSIOversold)
 		}
-		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %8s | %s\n",
+		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %6.3f | %8s | %s\n",
 			r.Interval,
 			r.Results.TotalReturn*100,
 			r.Results.TotalTrades,
@@ -585,6 +730,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 			c.MaxMultiplier,
 			c.TPPercent*100,
 			c.PriceThreshold*100,
+			c.MinOrderQty,
 			rsiInfo,
 			strings.Join(c.Indicators, ","),
 		)
@@ -696,8 +842,8 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 		data[0].Timestamp.Format("2006-01-02 15:04"),
 		data[len(data)-1].Timestamp.Format("2006-01-02 15:04"))
 	fmt.Printf("Indicators: %s\n", indicatorSummary(cfg))
-	fmt.Printf("Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f\n",
-		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission)
+	fmt.Printf("Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f\n",
+		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty)
 	
 	// DCA Strategy details
 	if cfg.Cycle {
@@ -716,7 +862,7 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 	// Create and run backtest engine
 	tp := cfg.TPPercent
 	if !cfg.Cycle { tp = 0 }
-	engine := backtest.NewBacktestEngine(cfg.InitialBalance, cfg.Commission, strat, tp)
+	engine := backtest.NewBacktestEngine(cfg.InitialBalance, cfg.Commission, strat, tp, cfg.MinOrderQty)
 	results := engine.Run(data, cfg.WindowSize)
 
 	// Update all metrics
@@ -731,8 +877,6 @@ func guessIntervalFromPath(path string) string {
 	dir := filepath.Dir(path)
 	return filepath.Base(dir)
 }
-
-
 
 func indicatorSummary(cfg *BacktestConfig) string {
 	parts := []string{}
@@ -1328,12 +1472,106 @@ func containsIndicator(indicators []string, name string) bool {
 }
 
 func printBestConfigJSON(cfg BacktestConfig) {
-	data, _ := json.MarshalIndent(cfg, "", "  ")
+	// Convert to nested format for consistent output
+	nestedCfg := convertToNestedConfig(cfg)
+	data, _ := json.MarshalIndent(nestedCfg, "", "  ")
 	fmt.Println(string(data))
 }
 
+// convertToNestedConfig converts a BacktestConfig to the new nested format
+func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
+	// Extract interval from data file path (e.g., "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m")
+	interval := extractIntervalFromPath(cfg.DataFile)
+	if interval == "" {
+		interval = "5m" // Default fallback
+	}
+	
+	return NestedConfig{
+		Strategy: StrategyConfig{
+			Symbol:         cfg.Symbol,
+			BaseAmount:     cfg.BaseAmount,
+			MaxMultiplier:  cfg.MaxMultiplier,
+			PriceThreshold: cfg.PriceThreshold,
+			Interval:       interval,
+			WindowSize:     cfg.WindowSize,
+			TPPercent:      cfg.TPPercent,
+			Cycle:          cfg.Cycle,
+			Indicators:     cfg.Indicators,
+			RSI: RSIConfig{
+				Period:     cfg.RSIPeriod,
+				Oversold:   cfg.RSIOversold,
+				Overbought: cfg.RSIOverbought,
+			},
+			MACD: MACDConfig{
+				FastPeriod:   cfg.MACDFast,
+				SlowPeriod:   cfg.MACDSlow,
+				SignalPeriod: cfg.MACDSignal,
+			},
+			BollingerBands: BollingerBandsConfig{
+				Period: cfg.BBPeriod,
+				StdDev: cfg.BBStdDev,
+			},
+			EMA: EMAConfig{
+				Period: cfg.EMAPeriod,
+			},
+		},
+		Exchange: ExchangeConfig{
+			Name: "bybit",
+			Bybit: BybitConfig{
+				APIKey:    "${BYBIT_API_KEY}",
+				APISecret: "${BYBIT_API_SECRET}",
+				Testnet:   false,
+				Demo:      true,
+			},
+		},
+		Risk: RiskConfig{
+			InitialBalance: cfg.InitialBalance,
+			Commission:     cfg.Commission,
+			MinOrderQty:    cfg.MinOrderQty,
+		},
+		Notifications: NotificationsConfig{
+			Enabled:       false,
+			TelegramToken: "${TELEGRAM_TOKEN}",
+			TelegramChat:  "${TELEGRAM_CHAT_ID}",
+		},
+	}
+}
+
+// extractIntervalFromPath extracts interval from data file path
+// Example: "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m"
+func extractIntervalFromPath(dataPath string) string {
+	if dataPath == "" {
+		return ""
+	}
+	
+	// Normalize path separators
+	dataPath = filepath.ToSlash(dataPath)
+	parts := strings.Split(dataPath, "/")
+	
+	// Look for interval pattern (number followed by m,h,d)
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
+		if len(part) >= 2 {
+			// Check if it matches interval pattern (e.g., "5m", "1h", "4h", "1d")
+			lastChar := part[len(part)-1]
+			if lastChar == 'm' || lastChar == 'h' || lastChar == 'd' {
+				// Check if the rest is numeric
+				numPart := part[:len(part)-1]
+				if _, err := strconv.Atoi(numPart); err == nil {
+					return part
+				}
+			}
+		}
+	}
+	
+	return ""
+}
+
 func writeBestConfigJSON(cfg BacktestConfig, path string) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// Convert to nested format
+	nestedCfg := convertToNestedConfig(cfg)
+	
+	data, err := json.MarshalIndent(nestedCfg, "", "  ")
 	if err != nil { return err }
 	// ensure directory exists
 	if dir := filepath.Dir(path); dir != "." && dir != "" {

@@ -147,10 +147,21 @@ func (b *BinanceExchange) PlaceMarketOrder(symbol string, side OrderSide, quanti
 	// In production, this would make a real API call to Binance
 	orderID := fmt.Sprintf("mock_%d", time.Now().Unix())
 
+	// Convert string-based OrderSide to int for legacy types.Order
+	var sideInt int
+	switch side {
+	case OrderSideBuy:
+		sideInt = 0 // Buy = 0
+	case OrderSideSell:
+		sideInt = 1 // Sell = 1
+	default:
+		sideInt = 0 // Default to buy
+	}
+
 	return &types.Order{
 		ID:        orderID,
 		Symbol:    symbol,
-		Side:      int(side),
+		Side:      sideInt,
 		Quantity:  quantity,
 		Price:     0, // Market order
 		Status:    "FILLED",

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/joho/godotenv"
 )
 
@@ -91,11 +94,8 @@ func main() {
 	symbol, interval, category := extractTradingParams(*configFile, config)
 	
 	fmt.Println("🚀 Enhanced DCA Live Bot Starting...")
-	fmt.Printf("📊 Symbol: %s\n", symbol)
-	fmt.Printf("⏰ Interval: %s\n", interval)
-	fmt.Printf("🏪 Category: %s\n", category)
-	fmt.Printf("🔧 Environment: %s\n", getEnvironmentString(*demo))
-	fmt.Println("=" + strings.Repeat("=", 50))
+	fmt.Println()
+	printStartupTable(symbol, interval, category, getEnvironmentString(*demo))
 
 	// Create Bybit client
 	bybitConfig := bybit.Config{
@@ -109,12 +109,7 @@ func main() {
 		log.Fatal("Please set BYBIT_API_KEY and BYBIT_API_SECRET in .env file or environment variables")
 	}
 
-	fmt.Printf("🏦 Exchange: Bybit (demo: %v)\n", *demo)
-	if *demo {
-		fmt.Println("📝 Note: Demo mode uses paper trading - no real money involved")
-	} else {
-		fmt.Println("⚠️  LIVE TRADING MODE - Real money will be used!")
-	}
+
 
 	bybitClient := bybit.NewClient(bybitConfig)
 
@@ -167,6 +162,75 @@ func main() {
 
 	bot.Stop()
 	fmt.Println("✅ Bot stopped successfully")
+}
+
+// printStartupTable prints the initial startup information in a table format
+func printStartupTable(symbol, interval, category, environment string) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetTitle("BOT INITIALIZATION")
+	t.SetStyle(table.StyleRounded)
+	
+	t.AppendRows([]table.Row{
+		{"📊 Symbol", symbol},
+		{"⏰ Interval", interval},
+		{"🏪 Category", category},
+		{"🔧 Environment", environment},
+	})
+	
+	// Configure column settings
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, WidthMin: 15, WidthMax: 15, Align: text.AlignLeft},
+		{Number: 2, WidthMin: 30, WidthMax: 35, Align: text.AlignLeft},
+	})
+	
+	t.Render()
+	fmt.Println()
+}
+
+// printBotConfigTable prints the bot configuration in a table format  
+func printBotConfigTable(bot *LiveBot, minQtyInfo, minNotionalInfo string, indicators []string, tradingMode string) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetTitle("BOT CONFIGURATION")
+	t.SetStyle(table.StyleRounded)
+	
+	// Trading Parameters Section
+	t.AppendRows([]table.Row{
+		{"💰 Initial Balance", fmt.Sprintf("$%.2f", bot.balance)},
+		{"📈 Base DCA Amount", fmt.Sprintf("$%.2f", bot.config.BaseAmount)},
+		{"🔄 Max Multiplier", fmt.Sprintf("%.2f", bot.config.MaxMultiplier)},
+		{"📊 Price Threshold", fmt.Sprintf("%.2f%%", bot.config.PriceThreshold*100)},
+		{"🎯 Take Profit", fmt.Sprintf("%.2f%%", bot.config.TPPercent*100)},
+	})
+	
+	// Add separator
+	t.AppendSeparator()
+	
+	// Order Constraints Section
+	t.AppendRows([]table.Row{
+		{"📏 Min Order Qty", minQtyInfo},
+		{"💵 Min Notional", minNotionalInfo},
+	})
+	
+	// Add separator
+	t.AppendSeparator()
+	
+	// Technical & Mode Section
+	indicatorStr := strings.Join(indicators, ", ")
+	t.AppendRows([]table.Row{
+		{"📊 Indicators", indicatorStr},
+		{"🚨 Trading Mode", tradingMode},
+	})
+	
+	// Configure column settings
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, WidthMin: 18, WidthMax: 18, Align: text.AlignLeft},
+		{Number: 2, WidthMin: 25, WidthMax: 40, Align: text.AlignLeft},
+	})
+	
+	t.Render()
+	fmt.Println()
 }
 
 func getEnvironmentString(demo bool) string {
@@ -314,22 +378,7 @@ func (bot *LiveBot) syncAccountBalance() error {
 	}
 	
 	// Update bot balance with real account balance
-	configBalance := bot.balance
 	bot.balance = realBalance
-	
-	fmt.Printf("💰 Account Balance Sync:\n")
-	fmt.Printf("   Config Balance: $%.2f\n", configBalance)
-	fmt.Printf("   Real Balance:   $%.2f (%s)\n", realBalance, baseCurrency)
-	fmt.Printf("   Account Type:   %s\n", accountType)
-	fmt.Printf("   Category:       %s\n", bot.category)
-	
-	if realBalance < configBalance {
-		fmt.Printf("⚠️  Real balance is lower than config balance\n")
-	} else if realBalance > configBalance {
-		fmt.Printf("✅ Real balance is higher than config balance\n")
-	} else {
-		fmt.Printf("✅ Real balance matches config balance\n")
-	}
 	
 	return nil
 }
@@ -406,20 +455,47 @@ func (bot *LiveBot) initializeStrategy() error {
 func (bot *LiveBot) Start() error {
 	bot.running = true
 
-	fmt.Printf("🔄 Starting live bot for %s/%s\n", bot.symbol, bot.interval)
-	fmt.Printf("💰 Initial Balance: $%.2f\n", bot.balance)
-	fmt.Printf("📈 Base DCA Amount: $%.2f\n", bot.config.BaseAmount)
-	fmt.Printf("🔄 Max Multiplier: %.2f\n", bot.config.MaxMultiplier)
-	fmt.Printf("📊 Price Threshold: %.2f%%\n", bot.config.PriceThreshold*100)
-	fmt.Printf("🎯 Take Profit: %.2f%%\n", bot.config.TPPercent*100)
-	
-	// Show trading mode based on demo flag
-	if bot.bybitClient.IsDemo() {
-		fmt.Println("🧪 DEMO MODE - Paper trading (no real money)")
-	} else {
-		fmt.Println("💰 LIVE TRADING MODE - Real money will be used!")
+	// Check for existing position on startup and sync bot state
+	if err := bot.syncExistingPosition(); err != nil {
+		log.Printf("⚠️ Could not sync existing position: %v", err)
 	}
-	fmt.Println(strings.Repeat("=", 60))
+
+	// Get minimum lot size info for the table
+	var minQtyInfo string
+	var minNotionalInfo string
+	ctx := context.Background()
+	minQty, _, _, err := bot.bybitClient.GetInstrumentManager().GetQuantityConstraints(ctx, bot.category, bot.symbol)
+	if err != nil {
+		minQtyInfo = "⚠️ Could not fetch"
+		minNotionalInfo = "⚠️ Could not fetch"
+	} else {
+		currentPrice, priceErr := bot.getCurrentPrice()
+		if priceErr != nil {
+			minQtyInfo = fmt.Sprintf("%.6f %s", minQty, bot.symbol)
+			minNotionalInfo = "⚠️ Price unavailable"
+		} else {
+			minNotionalValue := minQty * currentPrice
+			minQtyInfo = fmt.Sprintf("%.6f %s", minQty, bot.symbol)
+			minNotionalInfo = fmt.Sprintf("~$%.2f", minNotionalValue)
+		}
+	}
+
+	// Get active indicators list
+	indicators := bot.config.Indicators
+	if len(indicators) == 0 {
+		indicators = []string{"none"}
+	}
+	
+	// Trading mode
+	var tradingMode string
+	if bot.bybitClient.IsDemo() {
+		tradingMode = "🧪 DEMO MODE (Paper Trading)"
+	} else {
+		tradingMode = "💰 LIVE TRADING MODE (Real Money!)"
+	}
+
+	// Print configuration table
+	printBotConfigTable(bot, minQtyInfo, minNotionalInfo, indicators, tradingMode)
 
 	// Start the main trading loop
 	go bot.tradingLoop()
@@ -427,27 +503,204 @@ func (bot *LiveBot) Start() error {
 	return nil
 }
 
+// syncExistingPosition syncs bot state with any existing position on Bybit
+func (bot *LiveBot) syncExistingPosition() error {
+	position, err := bot.getCurrentPosition()
+	if err != nil {
+		return fmt.Errorf("failed to get existing position: %w", err)
+	}
+	
+	if position == nil {
+		// No existing position - initialize to zero state
+		bot.currentPosition = 0
+		bot.averagePrice = 0
+		bot.totalInvested = 0
+		bot.dcaLevel = 0
+		fmt.Printf("✅ No existing position found - starting fresh\n")
+		return nil
+	}
+	
+	// Sync with existing position
+	positionValue := parseFloat(position.PositionValue)
+	avgPrice := parseFloat(position.AvgPrice)
+	
+	if positionValue > 0 && avgPrice > 0 {
+		bot.currentPosition = positionValue
+		bot.averagePrice = avgPrice
+		bot.totalInvested = positionValue // For futures, this tracks notional invested
+		bot.dcaLevel = 1 // Assume at least level 1 if position exists
+		
+		fmt.Printf("🔄 Synced with existing position:\n")
+		fmt.Printf("   Position Value: $%.2f\n", positionValue)
+		fmt.Printf("   Entry Price: $%.2f\n", avgPrice)
+		fmt.Printf("   Position Size: %s %s\n", position.Size, position.Symbol)
+		fmt.Printf("   Unrealized P&L: $%s\n", position.UnrealisedPnl)
+	}
+	
+	return nil
+}
+
+// syncPositionData syncs bot internal state with real Bybit position data
+func (bot *LiveBot) syncPositionData() error {
+	position, err := bot.getCurrentPosition()
+	if err != nil {
+		return fmt.Errorf("failed to get current position: %w", err)
+	}
+	
+	if position == nil {
+		// No position exists - ensure bot state reflects this
+		if bot.currentPosition > 0 {
+			// Bot thinks it has a position but Bybit says no - reset state
+			bot.currentPosition = 0
+			bot.averagePrice = 0
+			bot.totalInvested = 0
+			bot.dcaLevel = 0
+		}
+		return nil
+	}
+	
+	// Position exists - sync all relevant data
+	positionValue := parseFloat(position.PositionValue)
+	avgPrice := parseFloat(position.AvgPrice)
+	positionSize := parseFloat(position.Size)
+	unrealizedPnL := parseFloat(position.UnrealisedPnl)
+	markPrice := parseFloat(position.MarkPrice)
+	
+	// Update bot state with real position data
+	if positionValue > 0 && avgPrice > 0 {
+		bot.currentPosition = positionValue
+		bot.averagePrice = avgPrice
+		bot.totalInvested = positionValue // For futures, this tracks notional invested
+		
+		// Estimate DCA level based on position size vs base amount
+		if bot.config.BaseAmount > 0 {
+			estimatedLevel := int(positionValue / bot.config.BaseAmount)
+			if estimatedLevel > bot.dcaLevel {
+				bot.dcaLevel = estimatedLevel
+			}
+		}
+		
+		// Store additional position info for potential use
+		_ = positionSize    // Position quantity
+		_ = unrealizedPnL   // Current P&L
+		_ = markPrice       // Current mark price
+	}
+	
+	return nil
+}
+
 func (bot *LiveBot) Stop() {
 	if bot.running {
 		bot.running = false
+		
+		// Close any open positions before stopping
+		if err := bot.closeOpenPositions(); err != nil {
+			log.Printf("⚠️ Error closing positions during shutdown: %v", err)
+		}
+		
 		close(bot.stopChan)
 	}
+}
+
+// closeOpenPositions closes all open positions using real position data from API
+func (bot *LiveBot) closeOpenPositions() error {
+	fmt.Printf("🔍 Checking for open positions to close...\n")
+	
+	// Get current position from API
+	position, err := bot.getCurrentPosition()
+	if err != nil {
+		return fmt.Errorf("failed to get current position: %w", err)
+	}
+	
+	if position == nil {
+		fmt.Printf("✅ No open positions to close\n")
+		bot.currentPosition = 0
+		return nil
+	}
+	
+	positionSize := parseFloat(position.Size)
+	if positionSize <= 0 {
+		fmt.Printf("✅ No open positions to close (size: %s)\n", position.Size)
+		bot.currentPosition = 0
+		return nil
+	}
+	
+	fmt.Printf("🚨 Closing position: %s %s (value: $%s)\n", position.Size, position.Symbol, position.PositionValue)
+	
+	// Get current price for P&L calculation
+	currentPrice, err := bot.getCurrentPrice()
+	if err != nil {
+		log.Printf("⚠️ Could not get current price for P&L calculation: %v", err)
+		currentPrice = parseFloat(position.MarkPrice) // Use mark price as fallback
+	}
+	
+	// Place market sell order to close entire position
+	ctx := context.Background()
+	quantityStr := position.Size // Use exact position size from API
+	
+	order, err := bot.bybitClient.PlaceMarketOrder(ctx, bot.category, bot.symbol, bybit.OrderSideSell, quantityStr)
+	if err != nil {
+		return fmt.Errorf("failed to place sell order: %w", err)
+	}
+	
+	// Calculate P&L based on real position data
+	avgPrice := parseFloat(position.AvgPrice)
+	positionValue := parseFloat(position.PositionValue)
+	saleValue := positionSize * currentPrice
+	profit := saleValue - positionValue
+	profitPercent := (profit / positionValue) * 100
+	
+	fmt.Printf("🔄 POSITION CLOSED (SHUTDOWN)\n")
+	fmt.Printf("   Order ID: %s\n", order.OrderID)
+	fmt.Printf("   Quantity: %s %s\n", position.Size, bot.symbol)
+	fmt.Printf("   Entry Price: $%.2f\n", avgPrice)
+	fmt.Printf("   Exit Price: $%.2f\n", currentPrice)
+	fmt.Printf("   P&L: $%.2f (%.2f%%)\n", profit, profitPercent)
+	fmt.Printf("   Position Value: $%.2f\n", positionValue)
+	
+	// Reset bot state
+	bot.currentPosition = 0
+	bot.averagePrice = 0
+	bot.totalInvested = 0
+	bot.dcaLevel = 0
+	
+	// Refresh balance after closing position
+	if err := bot.refreshBalance(); err != nil {
+		log.Printf("⚠️ Could not refresh balance after closing position: %v", err)
+	}
+	
+	// Notify strategy of cycle completion if configured
+	if bot.config.Cycle {
+		bot.strategy.OnCycleComplete()
+	}
+	
+	return nil
 }
 
 func (bot *LiveBot) tradingLoop() {
 	// Calculate interval duration
 	intervalDuration := bot.getIntervalDuration()
 	
-	// Run initial check
+	// Calculate time to wait until next candle close
+	waitDuration := bot.getTimeUntilNextCandle()
+	
+	fmt.Printf("⏰ Waiting %.0f seconds for next %s candle close...\n", waitDuration.Seconds(), bot.interval)
+	
+	// Wait for the next candle close before starting
+	time.Sleep(waitDuration)
+	
+	// Run initial check at candle close
+	fmt.Printf("🕐 Candle closed - running initial check\n")
 	bot.checkAndTrade()
 
-	// Create ticker for regular checks
+	// Create ticker for regular checks aligned with candle closes
 	ticker := time.NewTicker(intervalDuration)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
+			fmt.Printf("🕐 Candle closed - checking market\n")
 			bot.checkAndTrade()
 		case <-bot.stopChan:
 			return
@@ -461,6 +714,18 @@ func (bot *LiveBot) checkAndTrade() {
 			log.Printf("❌ Error in trading loop: %v", r)
 		}
 	}()
+
+	// Refresh account balance to get exact current balance
+	if err := bot.refreshBalance(); err != nil {
+		log.Printf("⚠️ Could not refresh balance: %v", err)
+		// Continue with existing balance - don't stop trading
+	}
+
+	// Sync position data with Bybit to keep bot state accurate
+	if err := bot.syncPositionData(); err != nil {
+		log.Printf("⚠️ Could not sync position data: %v", err)
+		// Continue with existing data - don't stop trading
+	}
 
 	// Get current market data
 	currentPrice, err := bot.getCurrentPrice()
@@ -575,11 +840,6 @@ func (bot *LiveBot) executeTrade(action string, price float64) {
 }
 
 func (bot *LiveBot) executeBuy(price float64) {
-	// Refresh balance before trading (to ensure we have the latest balance)
-	if err := bot.refreshBalance(); err != nil {
-		log.Printf("⚠️ Could not refresh balance: %v", err)
-	}
-
 	// Calculate DCA amount based on level
 	amount := bot.config.BaseAmount
 	if bot.dcaLevel > 0 {
@@ -590,41 +850,134 @@ func (bot *LiveBot) executeBuy(price float64) {
 		amount *= multiplier
 	}
 
-	if amount > bot.balance {
-		log.Printf("⚠️ Insufficient balance: $%.2f < $%.2f", bot.balance, amount)
-		return
+	// Get instrument constraints to check minimum order quantity
+	ctx := context.Background()
+	minQty, _, _, err := bot.bybitClient.GetInstrumentManager().GetQuantityConstraints(ctx, bot.category, bot.symbol)
+	if err != nil {
+		log.Printf("⚠️ Could not get instrument constraints: %v", err)
+		minQty = 0 // Fallback to no minimum
 	}
 
 	quantity := amount / price
+	originalNotional := amount
+
+	// Apply minimum quantity constraint and step size
+	if minQty > 0 {
+		// Round to nearest multiple of minQty (step size)
+		multiplier := math.Round(quantity / minQty)
+		
+		// Ensure at least 1 step (minimum quantity)
+		if multiplier < 1 {
+			multiplier = 1
+		}
+		
+		adjustedQuantity := multiplier * minQty
+		
+		if adjustedQuantity != quantity {
+			quantity = adjustedQuantity
+			amount = quantity * price // Recalculate notional based on step-adjusted quantity
+			fmt.Printf("📏 Quantity adjusted to step size: %.6f %s (step: %.6f)\n", quantity, bot.symbol, minQty)
+		}
+	}
+
+	// For 10x leverage, we only need margin = final amount / 10
+	marginRequired := amount / 10
+	if marginRequired > bot.balance {
+		if originalNotional != amount {
+			log.Printf("⚠️ Insufficient margin: $%.2f < $%.2f (required for $%.2f position after min lot adjustment)", bot.balance, marginRequired, amount)
+		} else {
+			log.Printf("⚠️ Insufficient margin: $%.2f < $%.2f (required for $%.2f position)", bot.balance, marginRequired, amount)
+		}
+		return
+	}
+
 	quantityStr := fmt.Sprintf("%.6f", quantity)
 
 	// Execute buy order
-	ctx := context.Background()
 	order, err := bot.bybitClient.PlaceMarketOrder(ctx, bot.category, bot.symbol, bybit.OrderSideBuy, quantityStr)
 	if err != nil {
 		log.Printf("❌ Failed to place buy order: %v", err)
 		return
 	}
 
-	// Update position
-	if bot.currentPosition == 0 {
-		bot.averagePrice = price
+	// Initialize variables for position tracking
+	var actualNotionalPosition, actualExecutionPrice float64
+
+	// Get actual position data from Bybit API after order execution
+	fmt.Printf("🔍 Fetching current position from Bybit API...\n")
+	position, err := bot.getCurrentPosition()
+	if err != nil {
+		log.Printf("⚠️ Could not fetch position data: %v", err)
+		// Fallback to order response data
+		executedValue := parseFloat(order.CumExecValue)
+		avgExecPrice := parseFloat(order.AvgPrice)
+		if executedValue == 0 {
+			executedValue = amount
+		}
+		if avgExecPrice == 0 {
+			avgExecPrice = price
+		}
+		actualNotionalPosition = executedValue
+		actualExecutionPrice = avgExecPrice
+	} else if position == nil {
+		log.Printf("⚠️ No position found - using order data")
+		// Use order response as fallback
+		executedValue := parseFloat(order.CumExecValue)
+		avgExecPrice := parseFloat(order.AvgPrice)
+		if executedValue == 0 {
+			executedValue = amount
+		}
+		if avgExecPrice == 0 {
+			avgExecPrice = price
+		}
+		actualNotionalPosition = executedValue
+		actualExecutionPrice = avgExecPrice
 	} else {
-		totalValue := bot.currentPosition*bot.averagePrice + quantity*price
-		bot.currentPosition += quantity
-		bot.averagePrice = totalValue / bot.currentPosition
+		// Use real position data from API
+		actualNotionalPosition = parseFloat(position.PositionValue)
+		actualExecutionPrice = parseFloat(position.AvgPrice)
+		
+		fmt.Printf("✅ Position API Data:\n")
+		fmt.Printf("   Position Size: %s %s\n", position.Size, position.Symbol)
+		fmt.Printf("   Entry Price: $%.2f\n", actualExecutionPrice)
+		fmt.Printf("   Position Value: $%.2f\n", actualNotionalPosition)
+		fmt.Printf("   Unrealized P&L: $%s\n", position.UnrealisedPnl)
+	}
+	
+	// Calculate the increment for this order
+	var orderIncrement float64
+	if position != nil {
+		// When we have position API data, use the total position directly
+		// The increment is the difference from our previous position
+		orderIncrement = actualNotionalPosition - bot.currentPosition
+		bot.currentPosition = actualNotionalPosition
+		bot.averagePrice = actualExecutionPrice
+	} else {
+		// When using fallback data, add to existing position
+		orderIncrement = actualNotionalPosition
+		if bot.currentPosition == 0 {
+			bot.averagePrice = actualExecutionPrice
+			bot.currentPosition = actualNotionalPosition
+		} else {
+			// Average based on actual executed notional position sizes
+			totalNotional := bot.currentPosition + actualNotionalPosition
+			weightedPrice := (bot.currentPosition*bot.averagePrice + actualNotionalPosition*actualExecutionPrice) / totalNotional
+			bot.currentPosition = totalNotional
+			bot.averagePrice = weightedPrice
+		}
 	}
 
-	bot.currentPosition += quantity
-	bot.totalInvested += amount
-	bot.balance -= amount
+	bot.totalInvested += orderIncrement         // Track actual invested amount increment
+	bot.balance -= marginRequired               // Only deduct margin requirement  
 	bot.dcaLevel++
 
 	fmt.Printf("✅ BUY ORDER EXECUTED\n")
 	fmt.Printf("   Order ID: %s\n", order.OrderID)
-	fmt.Printf("   Quantity: %.6f %s\n", quantity, bot.symbol)
-	fmt.Printf("   Price: $%.2f\n", price)
-	fmt.Printf("   Amount: $%.2f\n", amount)
+	fmt.Printf("   Quantity: %s %s\n", order.CumExecQty, bot.symbol)
+	fmt.Printf("   Price: $%.2f\n", actualExecutionPrice)
+	fmt.Printf("   Notional: $%.2f\n", orderIncrement)
+	fmt.Printf("   Margin Used: $%.2f (10x leverage)\n", marginRequired)
+	fmt.Printf("   Total Position: $%.2f\n", bot.currentPosition)
 	fmt.Printf("   DCA Level: %d\n", bot.dcaLevel)
 }
 
@@ -633,9 +986,11 @@ func (bot *LiveBot) executeSell(price float64) {
 		return
 	}
 
-	quantityStr := fmt.Sprintf("%.6f", bot.currentPosition)
+	// Calculate the asset quantity to close the entire notional position
+	assetQuantity := bot.currentPosition / price
+	quantityStr := fmt.Sprintf("%.6f", assetQuantity)
 
-	// Sell entire position
+	// Close entire position
 	ctx := context.Background()
 	order, err := bot.bybitClient.PlaceMarketOrder(ctx, bot.category, bot.symbol, bybit.OrderSideSell, quantityStr)
 	if err != nil {
@@ -643,19 +998,22 @@ func (bot *LiveBot) executeSell(price float64) {
 		return
 	}
 
-	saleValue := bot.currentPosition * price
+	// P&L calculation for futures based on price change
+	priceRatio := price / bot.averagePrice
+	saleValue := bot.totalInvested * priceRatio
 	profit := saleValue - bot.totalInvested
 	profitPercent := (price - bot.averagePrice) / bot.averagePrice * 100
 
 	fmt.Printf("✅ SELL ORDER EXECUTED\n")
 	fmt.Printf("   Order ID: %s\n", order.OrderID)
-	fmt.Printf("   Quantity: %.6f %s\n", bot.currentPosition, bot.symbol)
+	fmt.Printf("   Asset Quantity: %.6f %s\n", assetQuantity, bot.symbol)
 	fmt.Printf("   Price: $%.2f\n", price)
-	fmt.Printf("   Sale Value: $%.2f\n", saleValue)
+	fmt.Printf("   Notional Closed: $%.2f\n", bot.currentPosition)
 	fmt.Printf("   Profit: $%.2f (%.2f%%)\n", profit, profitPercent)
 
-	// Reset position
-	bot.balance += saleValue
+	// Reset position - for futures, we get back the margin plus profit/loss
+	marginReleased := bot.totalInvested / 10  // Original margin used
+	bot.balance += marginReleased + profit    // Margin + P&L
 	bot.currentPosition = 0
 	bot.averagePrice = 0
 	bot.totalInvested = 0
@@ -672,15 +1030,20 @@ func (bot *LiveBot) logStatus(currentPrice float64, action string) {
 	
 	fmt.Printf("\n[%s] 📊 Market Status\n", timestamp)
 	fmt.Printf("💰 Price: $%.2f | Action: %s\n", currentPrice, action)
-	fmt.Printf("💼 Balance: $%.2f | Position: %.6f %s\n", bot.balance, bot.currentPosition, bot.symbol)
+	fmt.Printf("💼 Balance: $%.2f | Notional Position: $%.2f\n", bot.balance, bot.currentPosition)
 	
-	if bot.currentPosition > 0 {
-		currentValue := bot.currentPosition * currentPrice
+	if bot.currentPosition > 0 && bot.averagePrice > 0 {
+		// For futures: calculate current value based on price change from average
+		priceRatio := currentPrice / bot.averagePrice
+		currentValue := bot.totalInvested * priceRatio
 		unrealizedPnL := currentValue - bot.totalInvested
 		unrealizedPercent := (currentPrice - bot.averagePrice) / bot.averagePrice * 100
 		
-		fmt.Printf("📈 Avg Price: $%.2f | Current Value: $%.2f\n", bot.averagePrice, currentValue)
+		fmt.Printf("📈 Entry Price: $%.2f | Current Value: $%.2f\n", bot.averagePrice, currentValue)
 		fmt.Printf("📊 Unrealized P&L: $%.2f (%.2f%%) | DCA Level: %d\n", unrealizedPnL, unrealizedPercent, bot.dcaLevel)
+		fmt.Printf("💰 Margin Used: $%.2f (10x leverage)\n", bot.totalInvested/10)
+	} else {
+		fmt.Printf("📊 No active position\n")
 	}
 	fmt.Println(strings.Repeat("-", 50))
 }
@@ -710,6 +1073,136 @@ func (bot *LiveBot) getIntervalDuration() time.Duration {
 		}
 		return 1 * time.Hour // Default
 	}
+}
+
+// getTimeUntilNextCandle calculates how long to wait until the next candle closes
+func (bot *LiveBot) getTimeUntilNextCandle() time.Duration {
+	now := time.Now().UTC()
+	
+	switch bot.interval {
+	case "1":
+		// Next minute boundary (e.g., 14:23:30 -> wait until 14:24:00)
+		next := now.Truncate(time.Minute).Add(time.Minute)
+		return next.Sub(now)
+		
+	case "3":
+		// Next 3-minute boundary (e.g., 14:23:30 -> wait until 14:24:00 or 14:27:00)
+		minutes := now.Minute()
+		nextMinute := ((minutes / 3) + 1) * 3
+		if nextMinute >= 60 {
+			next := now.Truncate(time.Hour).Add(time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+		return next.Sub(now)
+		
+	case "5":
+		// Next 5-minute boundary (e.g., 14:23:30 -> wait until 14:25:00)
+		minutes := now.Minute()
+		nextMinute := ((minutes / 5) + 1) * 5
+		if nextMinute >= 60 {
+			next := now.Truncate(time.Hour).Add(time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+		return next.Sub(now)
+		
+	case "15":
+		// Next 15-minute boundary (e.g., 14:23:30 -> wait until 14:30:00)
+		minutes := now.Minute()
+		nextMinute := ((minutes / 15) + 1) * 15
+		if nextMinute >= 60 {
+			next := now.Truncate(time.Hour).Add(time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+		return next.Sub(now)
+		
+	case "30":
+		// Next 30-minute boundary (e.g., 14:23:30 -> wait until 14:30:00 or 15:00:00)
+		minutes := now.Minute()
+		var nextMinute int
+		if minutes < 30 {
+			nextMinute = 30
+		} else {
+			nextMinute = 0 // Next hour
+		}
+		
+		if nextMinute == 0 {
+			next := now.Truncate(time.Hour).Add(time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+		return next.Sub(now)
+		
+	case "60":
+		// Next hour boundary (e.g., 14:23:30 -> wait until 15:00:00)
+		next := now.Truncate(time.Hour).Add(time.Hour)
+		return next.Sub(now)
+		
+	case "240":
+		// Next 4-hour boundary (e.g., 14:23:30 -> wait until 16:00:00 or 20:00:00)
+		hours := now.Hour()
+		nextHour := ((hours / 4) + 1) * 4
+		if nextHour >= 24 {
+			next := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), nextHour, 0, 0, 0, time.UTC)
+		return next.Sub(now)
+		
+	case "D":
+		// Next day boundary (e.g., today 14:23:30 -> wait until tomorrow 00:00:00)
+		next := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
+		return next.Sub(now)
+		
+	default:
+		// Try to parse as minutes for custom intervals
+		if minutes, err := strconv.Atoi(bot.interval); err == nil {
+			intervalMinutes := minutes
+			currentMinutes := now.Minute()
+			nextMinute := ((currentMinutes / intervalMinutes) + 1) * intervalMinutes
+			
+			if nextMinute >= 60 {
+				next := now.Truncate(time.Hour).Add(time.Hour)
+				return next.Sub(now)
+			}
+			next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+			return next.Sub(now)
+		}
+		
+		// Fallback to 5-minute alignment
+		minutes := now.Minute()
+		nextMinute := ((minutes / 5) + 1) * 5
+		if nextMinute >= 60 {
+			next := now.Truncate(time.Hour).Add(time.Hour)
+			return next.Sub(now)
+		}
+		next := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), nextMinute, 0, 0, time.UTC)
+		return next.Sub(now)
+	}
+}
+
+// getCurrentPosition fetches the current position data from Bybit API
+func (bot *LiveBot) getCurrentPosition() (*bybit.PositionInfo, error) {
+	ctx := context.Background()
+	positions, err := bot.bybitClient.GetPositions(ctx, bot.category, bot.symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get positions: %w", err)
+	}
+
+	// Find position for our symbol
+	for _, pos := range positions {
+		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+			// Only return positions with size > 0
+			if parseFloat(pos.Size) > 0 {
+				return &pos, nil
+			}
+		}
+	}
+
+	// No position found or position size is 0
+	return nil, nil
 }
 
 func parseFloat(s string) float64 {
