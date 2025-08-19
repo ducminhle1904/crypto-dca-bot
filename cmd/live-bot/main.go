@@ -68,7 +68,6 @@ func main() {
 	var (
 		configFile = flag.String("config", "", "Configuration file (e.g., btc_5.json)")
 		demo       = flag.Bool("demo", true, "Use demo trading environment - paper trading (default: true)")
-		dryRun     = flag.Bool("dry-run", true, "Dry run mode - no actual trading (default: true)")
 		envFile    = flag.String("env", ".env", "Environment file path (default: .env)")
 	)
 	flag.Parse()
@@ -96,7 +95,6 @@ func main() {
 	fmt.Printf("⏰ Interval: %s\n", interval)
 	fmt.Printf("🏪 Category: %s\n", category)
 	fmt.Printf("🔧 Environment: %s\n", getEnvironmentString(*demo))
-	fmt.Printf("🧪 Dry Run: %v\n", *dryRun)
 	fmt.Println("=" + strings.Repeat("=", 50))
 
 	// Create Bybit client
@@ -152,7 +150,7 @@ func main() {
 	}
 
 	// Start the bot
-	if err := bot.Start(*dryRun); err != nil {
+	if err := bot.Start(); err != nil {
 		log.Fatalf("Failed to start bot: %v", err)
 	}
 
@@ -405,7 +403,7 @@ func (bot *LiveBot) initializeStrategy() error {
 	return nil
 }
 
-func (bot *LiveBot) Start(dryRun bool) error {
+func (bot *LiveBot) Start() error {
 	bot.running = true
 
 	fmt.Printf("🔄 Starting live bot for %s/%s\n", bot.symbol, bot.interval)
@@ -415,13 +413,16 @@ func (bot *LiveBot) Start(dryRun bool) error {
 	fmt.Printf("📊 Price Threshold: %.2f%%\n", bot.config.PriceThreshold*100)
 	fmt.Printf("🎯 Take Profit: %.2f%%\n", bot.config.TPPercent*100)
 	
-	if dryRun {
-		fmt.Println("🧪 DRY RUN MODE - No actual trades will be executed")
+	// Show trading mode based on demo flag
+	if bot.bybitClient.IsDemo() {
+		fmt.Println("🧪 DEMO MODE - Paper trading (no real money)")
+	} else {
+		fmt.Println("💰 LIVE TRADING MODE - Real money will be used!")
 	}
 	fmt.Println(strings.Repeat("=", 60))
 
 	// Start the main trading loop
-	go bot.tradingLoop(dryRun)
+	go bot.tradingLoop()
 
 	return nil
 }
@@ -433,12 +434,12 @@ func (bot *LiveBot) Stop() {
 	}
 }
 
-func (bot *LiveBot) tradingLoop(dryRun bool) {
+func (bot *LiveBot) tradingLoop() {
 	// Calculate interval duration
 	intervalDuration := bot.getIntervalDuration()
 	
 	// Run initial check
-	bot.checkAndTrade(dryRun)
+	bot.checkAndTrade()
 
 	// Create ticker for regular checks
 	ticker := time.NewTicker(intervalDuration)
@@ -447,14 +448,14 @@ func (bot *LiveBot) tradingLoop(dryRun bool) {
 	for {
 		select {
 		case <-ticker.C:
-			bot.checkAndTrade(dryRun)
+			bot.checkAndTrade()
 		case <-bot.stopChan:
 			return
 		}
 	}
 }
 
-func (bot *LiveBot) checkAndTrade(dryRun bool) {
+func (bot *LiveBot) checkAndTrade() {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("❌ Error in trading loop: %v", r)
@@ -486,11 +487,14 @@ func (bot *LiveBot) checkAndTrade(dryRun bool) {
 	// Log current status
 	bot.logStatus(currentPrice, action)
 
-	// Execute trading action
-	if action != "HOLD" && !dryRun {
+	// Execute trading action based on demo mode
+	if action != "HOLD" {
+		if bot.bybitClient.IsDemo() {
+			fmt.Printf("🧪 DEMO MODE: Executing %s at $%.2f (paper trading)\n", action, currentPrice)
+		} else {
+			fmt.Printf("💰 LIVE MODE: Executing %s at $%.2f (real money)\n", action, currentPrice)
+		}
 		bot.executeTrade(action, currentPrice)
-	} else if action != "HOLD" && dryRun {
-		fmt.Printf("🧪 DRY RUN: Would execute %s at $%.2f\n", action, currentPrice)
 	}
 }
 

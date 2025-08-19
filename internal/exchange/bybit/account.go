@@ -22,12 +22,12 @@ const (
 
 // Balance represents a coin balance in the account
 type Balance struct {
-	Coin            string  `json:"coin"`
-	WalletBalance   float64 `json:"walletBalance"`
-	AvailableToTrade float64 `json:"availableToTrade"`
+	Coin                string  `json:"coin"`
+	WalletBalance       float64 `json:"walletBalance"`
+	AvailableToTrade    float64 `json:"availableToTrade"`
 	AvailableToWithdraw float64 `json:"availableToWithdraw"`
-	Locked          float64 `json:"locked"`
-	Bonus           float64 `json:"bonus"`
+	Locked              float64 `json:"locked"`
+	Bonus               float64 `json:"bonus"`
 }
 
 // AccountInfo represents account information
@@ -101,7 +101,14 @@ func (c *Client) GetTradableBalance(ctx context.Context, accountType AccountType
 		return 0, err
 	}
 
-	return balance.AvailableToTrade, nil
+	// If AvailableToTrade is 0, fall back to WalletBalance
+	if balance.AvailableToTrade > 0 {
+		return balance.AvailableToTrade, nil
+	}
+	
+	// Fallback to wallet balance if available to trade is 0
+	fmt.Printf("AvailableToTrade is 0, using WalletBalance: %f\n", balance.WalletBalance)
+	return balance.WalletBalance, nil
 }
 
 // GetAccountInfo retrieves general account information
@@ -208,14 +215,24 @@ func (c *Client) parseAccountBalanceResponse(response interface{}) (*AccountInfo
 
 	// Convert coin balances
 	for i, coin := range account.Coin {
-		accountInfo.Coin[i] = Balance{
+		walletBalance := parseFloat64(coin.WalletBalance)
+		equity := parseFloat64(coin.Equity)
+		availableToWithdraw := parseFloat64(coin.AvailableToWithdraw)
+		locked := parseFloat64(coin.TotalOrderIM) + parseFloat64(coin.TotalPositionIM)
+		bonus := parseFloat64(coin.Bonus)
+		
+		// Calculate available to trade as equity - locked amounts
+		calculatedAvailableToTrade := equity - locked
+		
+		balance := Balance{
 			Coin:                coin.Coin,
-			WalletBalance:       parseFloat64(coin.WalletBalance),
-			AvailableToTrade:    parseFloat64(coin.AvailableToTrade),
-			AvailableToWithdraw: parseFloat64(coin.AvailableToWithdraw),
-			Locked:              parseFloat64(coin.TotalOrderIM) + parseFloat64(coin.TotalPositionIM),
-			Bonus:               parseFloat64(coin.Bonus),
+			WalletBalance:       walletBalance,
+			AvailableToTrade:    calculatedAvailableToTrade, // Use calculated value
+			AvailableToWithdraw: availableToWithdraw,
+			Locked:              locked,
+			Bonus:               bonus,
 		}
+		accountInfo.Coin[i] = balance
 	}
 
 	return accountInfo, nil

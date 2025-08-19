@@ -112,6 +112,19 @@ func (c *Client) PlaceOrder(ctx context.Context, params PlaceOrderParams) (*Orde
 		params.TimeInForce = TimeInForceGTC
 	}
 
+	// Validate and adjust quantity using instrument info
+	if c.instrumentManager != nil {
+		adjustedQty, err := c.instrumentManager.ValidateAndAdjustQuantity(ctx, params.Category, params.Symbol, params.Qty)
+		if err != nil {
+			return nil, fmt.Errorf("quantity validation failed: %w", err)
+		}
+		
+		// Update the quantity if it was adjusted
+		if adjustedQty != params.Qty {
+			params.Qty = adjustedQty
+		}
+	}
+
 	// Convert params to map for API call
 	apiParams := map[string]interface{}{
 		"category":  params.Category,

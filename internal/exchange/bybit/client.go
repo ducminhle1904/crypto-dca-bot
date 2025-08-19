@@ -1,16 +1,20 @@
 package bybit
 
 import (
+	"context"
+	"fmt"
+
 	bybit_api "github.com/bybit-exchange/bybit.go.api"
 )
 
 // Client wraps the Bybit API client with additional functionality
 type Client struct {
-	httpClient *bybit_api.Client
-	apiKey     string
-	apiSecret  string
-	testnet    bool
-	demo       bool
+	httpClient        *bybit_api.Client
+	apiKey            string
+	apiSecret         string
+	testnet           bool
+	demo              bool
+	instrumentManager *InstrumentManager
 }
 
 // Config holds the configuration for the Bybit client
@@ -40,13 +44,18 @@ func NewClient(config Config) *Client {
 		bybit_api.WithBaseURL(baseURL),
 	)
 
-	return &Client{
+	client := &Client{
 		httpClient: httpClient,
 		apiKey:     config.APIKey,
 		apiSecret:  config.APISecret,
 		testnet:    config.Testnet,
 		demo:       config.Demo,
 	}
+	
+	// Initialize instrument manager
+	client.instrumentManager = NewInstrumentManager(client)
+	
+	return client
 }
 
 // IsTestnet returns whether the client is configured for testnet
@@ -68,6 +77,29 @@ func (c *Client) GetEnvironment() string {
 	} else {
 		return "mainnet"
 	}
+}
+
+// GetInstrumentManager returns the instrument manager
+func (c *Client) GetInstrumentManager() *InstrumentManager {
+	return c.instrumentManager
+}
+
+// PreloadInstruments preloads instrument information for commonly traded symbols
+func (c *Client) PreloadInstruments(ctx context.Context, symbols []string) error {
+	if c.instrumentManager == nil {
+		return fmt.Errorf("instrument manager not initialized")
+	}
+	
+	for _, symbol := range symbols {
+		// Try to get instrument info for each symbol
+		_, err := c.instrumentManager.GetInstrumentInfo(ctx, "linear", symbol)
+		if err != nil {
+			// Log error but continue with other symbols
+			fmt.Printf("Warning: Failed to preload instrument info for %s: %v\n", symbol, err)
+		}
+	}
+	
+	return nil
 }
 
 

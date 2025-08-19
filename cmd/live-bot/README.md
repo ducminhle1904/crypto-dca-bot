@@ -9,7 +9,7 @@ A live trading bot that executes Dollar Cost Averaging (DCA) strategies using By
 - **Multi-indicator Analysis**: RSI, MACD, Bollinger Bands, EMA, SMA
 - **Configuration-driven**: Uses config files for strategy parameters
 - **Risk Management**: Position sizing, take-profit levels, DCA multipliers
-- **Safety Features**: Dry-run mode, timestamp sync, balance checks
+- **Safety Features**: Demo mode (paper trading), timestamp sync, balance checks
 - **Live Monitoring**: Real-time status updates and trade logging
 
 ## 📋 Prerequisites
@@ -47,30 +47,26 @@ A live trading bot that executes Dollar Cost Averaging (DCA) strategies using By
 ### Basic Usage
 
 ```bash
-# Run with a specific config (dry-run mode, demo mode)
+# Run with a specific config (demo mode - paper trading)
 go run cmd/live-bot/main.go -config btc_5.json
 
-# Same as above (defaults to dry-run and demo mode)
+# Same as above (defaults to demo mode - paper trading)
 go run cmd/live-bot/main.go -config btc_5
 ```
 
 ### Command Line Options
 
-| Flag       | Description                      | Default |
-| ---------- | -------------------------------- | ------- |
-| `-config`  | Configuration file (required)    | -       |
-| `-demo`    | Use demo trading (paper trading) | `true`  |
-| `-dry-run` | Dry run mode (no actual trades)  | `true`  |
-| `-env`     | Environment file path            | `.env`  |
+| Flag      | Description                      | Default |
+| --------- | -------------------------------- | ------- |
+| `-config` | Configuration file (required)    | -       |
+| `-demo`   | Use demo trading (paper trading) | `true`  |
+| `-env`    | Environment file path            | `.env`  |
 
 ### Advanced Usage
 
 ```bash
-# Disable dry-run mode (still in demo mode for safety)
-go run cmd/live-bot/main.go -config btc_5.json -dry-run=false
-
 # Run live trading with real money (⚠️ Use real API keys)
-go run cmd/live-bot/main.go -config btc_5.json -demo=false -dry-run=false
+go run cmd/live-bot/main.go -config btc_5.json -demo=false
 
 # Use custom .env file
 go run cmd/live-bot/main.go -config btc_5.json -env=production.env
@@ -82,10 +78,10 @@ go run cmd/live-bot/main.go -config btc_5.json -env=production.env
 
 ```bash
 # Step 1: Demo trading environment (paper trading - SAFE)
-go run cmd/live-bot/main.go -config btc_5.json -demo=true -dry-run=false
+go run cmd/live-bot/main.go -config btc_5.json -demo=true
 
 # Step 2: Live trading with real money (use with extreme caution)
-go run cmd/live-bot/main.go -config btc_5.json -demo=false -dry-run=false
+go run cmd/live-bot/main.go -config btc_5.json -demo=false
 ```
 
 ## 📁 Configuration Files
@@ -326,8 +322,8 @@ When you provide valid API credentials, the bot automatically syncs with your re
 
 ### Built-in Safety Features
 
-1. **Dry Run Default**: Always starts in simulation mode
-2. **Testnet Default**: Uses testnet by default
+1. **Demo Mode Default**: Always starts in paper trading mode (safe)
+2. **Paper Trading**: Uses demo environment by default
 3. **Balance Checks**: Prevents trades exceeding available balance
 4. **Position Limits**: Respects maximum multiplier settings
 5. **Error Handling**: Graceful error recovery and logging
@@ -457,7 +453,7 @@ Enable verbose logging by modifying log levels in the code or using environment 
 # 1. Test with existing config
 go run cmd/live-bot/main.go -config btc_5.json
 
-# 2. Should show: credentials loaded, dry-run mode active
+# 2. Should show: credentials loaded, demo mode active
 # 3. If successful, you'll see market data being fetched
 ```
 
@@ -476,8 +472,8 @@ go run cmd/live-bot/main.go -config my_strategy.json
 
 ## 🎯 Best Practices
 
-1. **Start with Testnet**: Always test strategies on testnet first
-2. **Use Dry Run**: Validate logic before live trading
+1. **Start with Demo Mode**: Always test strategies in demo mode first (paper trading)
+2. **Validate Strategy**: Test your strategy thoroughly before live trading
 3. **Monitor Performance**: Track P&L and adjust parameters
 4. **Risk Management**: Never risk more than you can afford to lose
 5. **Regular Updates**: Keep strategy parameters updated based on market conditions
