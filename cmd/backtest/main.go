@@ -49,6 +49,18 @@ const (
 	DefaultBBStdDev       = 2.0
 	DefaultEMAPeriod      = 50
 	
+	// New combo indicator parameters
+	DefaultHullMAPeriod   = 20
+	DefaultMFIPeriod      = 14
+	DefaultMFIOversold    = 20
+	DefaultMFIOverbought  = 80
+	DefaultKeltnerPeriod  = 20
+	DefaultKeltnerMultiplier = 2.0
+	DefaultWaveTrendN1    = 10
+	DefaultWaveTrendN2    = 21
+	DefaultWaveTrendOverbought = 60
+	DefaultWaveTrendOversold = -60
+	
 	// Genetic Algorithm constants
 	GAPopulationSize = 60   // Population size for optimization
 	GAGenerations    = 35   // Number of generations
@@ -76,6 +88,12 @@ const (
 	MinBBPeriod            = 2     // Minimum Bollinger Bands period
 	MinEMAPeriod           = 1     // Minimum EMA period
 	
+	// New combo validation constants
+	MinHullMAPeriod        = 2     // Minimum Hull MA period
+	MinMFIPeriod           = 2     // Minimum MFI period
+	MinKeltnerPeriod       = 2     // Minimum Keltner period
+	MinWaveTrendPeriod     = 2     // Minimum WaveTrend period
+	
 	// Display and formatting constants
 	ReportLineLength       = 50
 	ProgressReportInterval = 5     // Report progress every N generations
@@ -102,6 +120,17 @@ var (
 		BBPeriods       []int
 		BBStdDev        []float64
 		EMAPeriods      []int
+		// New combo optimization ranges
+		HullMAPeriods   []int
+		MFIPeriods      []int
+		MFIOversold     []float64
+		MFIOverbought   []float64
+		KeltnerPeriods  []int
+		KeltnerMultipliers []float64
+		WaveTrendN1     []int
+		WaveTrendN2     []int
+		WaveTrendOverbought []float64
+		WaveTrendOversold   []float64
 	}{
 		Multipliers:     []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
 		TPCandidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
@@ -114,6 +143,17 @@ var (
 		BBPeriods:       []int{10, 14, 16, 18, 20, 22, 25, 28, 30},
 		BBStdDev:        []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0},
 		EMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
+		// New combo ranges
+		HullMAPeriods:   []int{10, 15, 20, 25, 30, 40, 50},
+		MFIPeriods:      []int{10, 12, 14, 16, 18, 20, 22},
+		MFIOversold:     []float64{15, 20, 25, 30},
+		MFIOverbought:   []float64{70, 75, 80, 85},
+		KeltnerPeriods:  []int{15, 20, 25, 30, 40, 50},
+		KeltnerMultipliers: []float64{1.5, 1.8, 2.0, 2.2, 2.5, 3.0},
+		WaveTrendN1:     []int{8, 10, 12, 15, 18, 20},
+		WaveTrendN2:     []int{18, 21, 24, 28, 32, 35},
+		WaveTrendOverbought: []float64{50, 60, 70, 80},
+		WaveTrendOversold:   []float64{-80, -70, -60, -50},
 	}
 	
 	// Data cache for performance optimization
@@ -155,7 +195,10 @@ type BacktestConfig struct {
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
 	
-	// Technical indicator parameters
+	// Combo selection
+	UseNewCombo    bool    `json:"use_new_combo"` // true = new combo, false = classic combo
+	
+	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
 	RSIOverbought  float64 `json:"rsi_overbought"`
@@ -168,6 +211,18 @@ type BacktestConfig struct {
 	BBStdDev       float64 `json:"bb_std_dev"`
 	
 	EMAPeriod      int     `json:"ema_period"`
+	
+	// New combo indicator parameters
+	HullMAPeriod   int     `json:"hull_ma_period"`
+	MFIPeriod      int     `json:"mfi_period"`
+	MFIOversold    float64 `json:"mfi_oversold"`
+	MFIOverbought  float64 `json:"mfi_overbought"`
+	KeltnerPeriod  int     `json:"keltner_period"`
+	KeltnerMultiplier float64 `json:"keltner_multiplier"`
+	WaveTrendN1    int     `json:"wavetrend_n1"`
+	WaveTrendN2    int     `json:"wavetrend_n2"`
+	WaveTrendOverbought float64 `json:"wavetrend_overbought"`
+	WaveTrendOversold   float64 `json:"wavetrend_oversold"`
 	
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
@@ -182,10 +237,10 @@ type BacktestConfig struct {
 
 // NestedConfig represents the new nested configuration format for output
 type NestedConfig struct {
-	Strategy      StrategyConfig      `json:"strategy"`
-	Exchange      ExchangeConfig      `json:"exchange"`
-	Risk          RiskConfig          `json:"risk"`
-	Notifications NotificationsConfig `json:"notifications"`
+	Strategy         StrategyConfig     `json:"strategy"`
+	Exchange         ExchangeConfig     `json:"exchange"`
+	Risk             RiskConfig         `json:"risk"`
+	Notifications    NotificationsConfig `json:"notifications"`
 }
 
 type StrategyConfig struct {
@@ -198,10 +253,17 @@ type StrategyConfig struct {
 	TPPercent      float64            `json:"tp_percent"`
 	Cycle          bool               `json:"cycle"`
 	Indicators     []string           `json:"indicators"`
-	RSI            RSIConfig          `json:"rsi"`
-	MACD           MACDConfig         `json:"macd"`
-	BollingerBands BollingerBandsConfig `json:"bollinger_bands"`
-	EMA            EMAConfig          `json:"ema"`
+	UseNewCombo    bool               `json:"use_new_combo"`
+	// Classic combo - use pointers so they can be omitted when not used
+	RSI            *RSIConfig         `json:"rsi,omitempty"`
+	MACD           *MACDConfig        `json:"macd,omitempty"`
+	BollingerBands *BollingerBandsConfig `json:"bollinger_bands,omitempty"`
+	EMA            *EMAConfig         `json:"ema,omitempty"`
+	// New combo - use pointers so they can be omitted when not used
+	HullMA         *HullMAConfig      `json:"hull_ma,omitempty"`
+	MFI            *MFIConfig         `json:"mfi,omitempty"`
+	KeltnerChannels *KeltnerChannelsConfig `json:"keltner_channels,omitempty"`
+	WaveTrend      *WaveTrendConfig   `json:"wavetrend,omitempty"`
 }
 
 type RSIConfig struct {
@@ -249,6 +311,29 @@ type NotificationsConfig struct {
 	TelegramChat  string `json:"telegram_chat"`
 }
 
+// New combo indicator configs
+type HullMAConfig struct {
+	Period int `json:"period"`
+}
+
+type MFIConfig struct {
+	Period     int     `json:"period"`
+	Oversold   float64 `json:"oversold"`
+	Overbought float64 `json:"overbought"`
+}
+
+type KeltnerChannelsConfig struct {
+	Period     int     `json:"period"`
+	Multiplier float64 `json:"multiplier"`
+}
+
+type WaveTrendConfig struct {
+	N1          int     `json:"n1"`
+	N2          int     `json:"n2"`
+	Overbought  float64 `json:"overbought"`
+	Oversold    float64 `json:"oversold"`
+}
+
 // findDataFile attempts to locate data files for a specific exchange
 // Structure: data/{exchange}/{category}/{symbol}/{interval}/candles.csv
 func findDataFile(dataRoot, exchange, symbol, interval string) string {
@@ -290,6 +375,7 @@ func main() {
 		baseAmount     = flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount")
 		maxMultiplier  = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
 		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
+		useNewCombo    = flag.Bool("new-combo", false, "Use new combo indicators (Hull MA, MFI, Keltner Channels, WaveTrend) instead of classic (RSI, MACD, BB, EMA)")
 		optimize       = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
@@ -312,7 +398,7 @@ func main() {
 	
 	// Load configuration - cycle is always enabled, console output only
 	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
-		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold)
+		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold, *useNewCombo)
 
 	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
@@ -329,9 +415,13 @@ func main() {
 		}
 	}
 
-	// Set default indicators if not specified in config file
+	// Set default indicators based on combo selection
 	if len(cfg.Indicators) == 0 {
-		cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
+		if cfg.UseNewCombo {
+			cfg.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
+		} else {
+			cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
+		}
 	}
 
 	// Resolve data file from symbol/interval if not explicitly provided and not scanning all intervals
@@ -360,24 +450,46 @@ func main() {
 		
 		fmt.Println(strings.Repeat("=", 50))
 		fmt.Printf("Best Parameters:\n")
+		fmt.Printf("  Combo Type:       %s\n", getComboTypeName(bestConfig.UseNewCombo))
 		fmt.Printf("  Indicators:       %s\n", strings.Join(bestConfig.Indicators, ","))
 		fmt.Printf("  Base Amount:      $%.2f\n", bestConfig.BaseAmount)
 		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
 		fmt.Printf("  Price Threshold:  %.2f%%\n", bestConfig.PriceThreshold*100)
 		fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
 		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
-		if containsIndicator(bestConfig.Indicators, "rsi") {
-			fmt.Printf("  RSI Period:     %d\n", bestConfig.RSIPeriod)
-			fmt.Printf("  RSI Oversold:   %.0f\n", bestConfig.RSIOversold)
-		}
-		if containsIndicator(bestConfig.Indicators, "macd") {
-			fmt.Printf("  MACD: fast=%d slow=%d signal=%d\n", bestConfig.MACDFast, bestConfig.MACDSlow, bestConfig.MACDSignal)
-		}
-		if containsIndicator(bestConfig.Indicators, "bb") {
-			fmt.Printf("  BB: period=%d std=%.2f\n", bestConfig.BBPeriod, bestConfig.BBStdDev)
-		}
-		if containsIndicator(bestConfig.Indicators, "ema") {
-			fmt.Printf("  EMA Period:     %d\n", bestConfig.EMAPeriod)
+		
+		if bestConfig.UseNewCombo {
+			// New combo parameters
+			if containsIndicator(bestConfig.Indicators, "hull_ma") {
+				fmt.Printf("  Hull MA Period:   %d\n", bestConfig.HullMAPeriod)
+			}
+			if containsIndicator(bestConfig.Indicators, "mfi") {
+				fmt.Printf("  MFI Period:       %d\n", bestConfig.MFIPeriod)
+				fmt.Printf("  MFI Oversold:     %.0f\n", bestConfig.MFIOversold)
+			}
+			if containsIndicator(bestConfig.Indicators, "keltner") {
+				fmt.Printf("  Keltner Period:   %d\n", bestConfig.KeltnerPeriod)
+				fmt.Printf("  Keltner Multiplier: %.1f\n", bestConfig.KeltnerMultiplier)
+			}
+			if containsIndicator(bestConfig.Indicators, "wavetrend") {
+				fmt.Printf("  WaveTrend N1:     %d\n", bestConfig.WaveTrendN1)
+				fmt.Printf("  WaveTrend N2:     %d\n", bestConfig.WaveTrendN2)
+			}
+		} else {
+			// Classic combo parameters
+			if containsIndicator(bestConfig.Indicators, "rsi") {
+				fmt.Printf("  RSI Period:       %d\n", bestConfig.RSIPeriod)
+				fmt.Printf("  RSI Oversold:     %.0f\n", bestConfig.RSIOversold)
+			}
+			if containsIndicator(bestConfig.Indicators, "macd") {
+				fmt.Printf("  MACD: fast=%d slow=%d signal=%d\n", bestConfig.MACDFast, bestConfig.MACDSlow, bestConfig.MACDSignal)
+			}
+			if containsIndicator(bestConfig.Indicators, "bb") {
+				fmt.Printf("  BB: period=%d std=%.2f\n", bestConfig.BBPeriod, bestConfig.BBStdDev)
+			}
+			if containsIndicator(bestConfig.Indicators, "ema") {
+				fmt.Printf("  EMA Period:       %d\n", bestConfig.EMAPeriod)
+			}
 		}
 		
 		// Determine interval string for usage example
@@ -497,7 +609,7 @@ func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
 }
 
 func loadConfig(configFile, dataFile, symbol string, balance, commission float64,
-	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64) *BacktestConfig {
+	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64, useNewCombo bool) *BacktestConfig {
 	
 	cfg := &BacktestConfig{
 		DataFile:       dataFile,
@@ -508,6 +620,8 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		BaseAmount:     baseAmount,
 		MaxMultiplier:  maxMultiplier,
 		PriceThreshold: priceThreshold,
+		UseNewCombo:    useNewCombo,
+		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
 		RSIOverbought:  DefaultRSIOverbought,
@@ -517,6 +631,17 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		BBPeriod:       DefaultBBPeriod,
 		BBStdDev:       DefaultBBStdDev,
 		EMAPeriod:      DefaultEMAPeriod,
+		// New combo defaults
+		HullMAPeriod:   DefaultHullMAPeriod,
+		MFIPeriod:      DefaultMFIPeriod,
+		MFIOversold:    DefaultMFIOversold,
+		MFIOverbought:  DefaultMFIOverbought,
+		KeltnerPeriod:  DefaultKeltnerPeriod,
+		KeltnerMultiplier: DefaultKeltnerMultiplier,
+		WaveTrendN1:    DefaultWaveTrendN1,
+		WaveTrendN2:    DefaultWaveTrendN2,
+		WaveTrendOverbought: DefaultWaveTrendOverbought,
+		WaveTrendOversold:   DefaultWaveTrendOversold,
 		Indicators:     nil,
 		TPPercent:      0, // Default to 0 TP, will be set later if needed
 		MinOrderQty:    DefaultMinOrderQty, // Default minimum order quantity
@@ -607,6 +732,53 @@ func validateConfig(cfg *BacktestConfig) error {
 	
 	if cfg.EMAPeriod < MinEMAPeriod {
 		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
+	}
+	
+	// Validate new combo indicator parameters
+	if cfg.UseNewCombo {
+		if cfg.HullMAPeriod < MinHullMAPeriod {
+			return fmt.Errorf("Hull MA period must be at least %d, got: %d", MinHullMAPeriod, cfg.HullMAPeriod)
+		}
+		
+		if cfg.MFIPeriod < MinMFIPeriod {
+			return fmt.Errorf("MFI period must be at least %d, got: %d", MinMFIPeriod, cfg.MFIPeriod)
+		}
+		
+		if cfg.MFIOversold <= 0 || cfg.MFIOversold >= MaxRSIValue {
+			return fmt.Errorf("MFI oversold must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.MFIOversold)
+		}
+		
+		if cfg.MFIOverbought <= 0 || cfg.MFIOverbought >= MaxRSIValue {
+			return fmt.Errorf("MFI overbought must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.MFIOverbought)
+		}
+		
+		if cfg.MFIOversold >= cfg.MFIOverbought {
+			return fmt.Errorf("MFI oversold (%.1f) must be less than overbought (%.1f)", cfg.MFIOversold, cfg.MFIOverbought)
+		}
+		
+		if cfg.KeltnerPeriod < MinKeltnerPeriod {
+			return fmt.Errorf("Keltner period must be at least %d, got: %d", MinKeltnerPeriod, cfg.KeltnerPeriod)
+		}
+		
+		if cfg.KeltnerMultiplier <= 0 {
+			return fmt.Errorf("Keltner multiplier must be positive, got: %.2f", cfg.KeltnerMultiplier)
+		}
+		
+		if cfg.WaveTrendN1 < MinWaveTrendPeriod {
+			return fmt.Errorf("WaveTrend N1 must be at least %d, got: %d", MinWaveTrendPeriod, cfg.WaveTrendN1)
+		}
+		
+		if cfg.WaveTrendN2 < MinWaveTrendPeriod {
+			return fmt.Errorf("WaveTrend N2 must be at least %d, got: %d", MinWaveTrendPeriod, cfg.WaveTrendN2)
+		}
+		
+		if cfg.WaveTrendN1 >= cfg.WaveTrendN2 {
+			return fmt.Errorf("WaveTrend N1 (%d) must be less than N2 (%d)", cfg.WaveTrendN1, cfg.WaveTrendN2)
+		}
+		
+		if cfg.WaveTrendOversold >= cfg.WaveTrendOverbought {
+			return fmt.Errorf("WaveTrend oversold (%.1f) must be less than overbought (%.1f)", cfg.WaveTrendOversold, cfg.WaveTrendOverbought)
+		}
 	}
 	
 	if cfg.MinOrderQty < 0 {
@@ -715,14 +887,41 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 
 	fmt.Println("\n================ Interval Comparison ================")
 	fmt.Printf("Symbol: %s\n", sym)
-	fmt.Println("Interval | Return% | Trades | Base$ | MaxMult | TP% | Threshold% | MinQty | RSI(p/ov) | Indicators")
+	fmt.Println("Interval | Return% | Trades | Base$ | MaxMult | TP% | Threshold% | MinQty | Combo | Indicators")
 	for _, r := range resultsByInterval {
 		c := r.OptimizedCfg
-		rsiInfo := "-/-"
-		if containsIndicator(c.Indicators, "rsi") {
-			rsiInfo = fmt.Sprintf("%d/%.0f", c.RSIPeriod, c.RSIOversold)
+		comboInfo := getComboTypeName(c.UseNewCombo)
+		indicatorInfo := "-"
+		if c.UseNewCombo {
+			// New combo info
+			if containsIndicator(c.Indicators, "hull_ma") {
+				indicatorInfo = fmt.Sprintf("HullMA(%d)", c.HullMAPeriod)
+			}
+			if containsIndicator(c.Indicators, "mfi") {
+				indicatorInfo = fmt.Sprintf("MFI(%d/%.0f)", c.MFIPeriod, c.MFIOversold)
+			}
+			if containsIndicator(c.Indicators, "keltner") {
+				indicatorInfo = fmt.Sprintf("Keltner(%d/%.1f)", c.KeltnerPeriod, c.KeltnerMultiplier)
+			}
+			if containsIndicator(c.Indicators, "wavetrend") {
+				indicatorInfo = fmt.Sprintf("WT(%d/%d)", c.WaveTrendN1, c.WaveTrendN2)
+			}
+		} else {
+			// Classic combo info
+			if containsIndicator(c.Indicators, "rsi") {
+				indicatorInfo = fmt.Sprintf("RSI(%d/%.0f)", c.RSIPeriod, c.RSIOversold)
+			}
+			if containsIndicator(c.Indicators, "macd") {
+				indicatorInfo = fmt.Sprintf("MACD(%d/%d/%d)", c.MACDFast, c.MACDSlow, c.MACDSignal)
+			}
+			if containsIndicator(c.Indicators, "bb") {
+				indicatorInfo = fmt.Sprintf("BB(%d/%.2f)", c.BBPeriod, c.BBStdDev)
+			}
+			if containsIndicator(c.Indicators, "ema") {
+				indicatorInfo = fmt.Sprintf("EMA(%d)", c.EMAPeriod)
+			}
 		}
-		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %6.3f | %8s | %s\n",
+		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %6.3f | %s | %s\n",
 			r.Interval,
 			r.Results.TotalReturn*100,
 			r.Results.TotalTrades,
@@ -731,29 +930,47 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 			c.TPPercent*100,
 			c.PriceThreshold*100,
 			c.MinOrderQty,
-			rsiInfo,
-			strings.Join(c.Indicators, ","),
+			comboInfo,
+			indicatorInfo,
 		)
 	}
 	best := resultsByInterval[bestIdx]
 	fmt.Printf("\nBest interval: %s (Return %.2f%%)\n", best.Interval, best.Results.TotalReturn*100)
-	fmt.Printf("Best settings -> Indicators: %s | Base: $%.0f, MaxMult: %.2f, TP: %.2f%%",
-		strings.Join(best.OptimizedCfg.Indicators, ","),
+	fmt.Printf("Best settings -> Combo: %s | Base: $%.0f, MaxMult: %.2f, TP: %.2f%%",
+		getComboTypeName(best.OptimizedCfg.UseNewCombo),
 		best.OptimizedCfg.BaseAmount,
 		best.OptimizedCfg.MaxMultiplier,
 		best.OptimizedCfg.TPPercent*100,
 	)
-	if containsIndicator(best.OptimizedCfg.Indicators, "rsi") {
-		fmt.Printf(", RSI: %d/%.0f", best.OptimizedCfg.RSIPeriod, best.OptimizedCfg.RSIOversold)
-	}
-	if containsIndicator(best.OptimizedCfg.Indicators, "macd") {
-		fmt.Printf(", MACD: %d/%d/%d", best.OptimizedCfg.MACDFast, best.OptimizedCfg.MACDSlow, best.OptimizedCfg.MACDSignal)
-	}
-	if containsIndicator(best.OptimizedCfg.Indicators, "bb") {
-		fmt.Printf(", BB: p=%d sd=%.2f", best.OptimizedCfg.BBPeriod, best.OptimizedCfg.BBStdDev)
-	}
-	if containsIndicator(best.OptimizedCfg.Indicators, "ema") {
-		fmt.Printf(", EMA: %d", best.OptimizedCfg.EMAPeriod)
+	
+	if best.OptimizedCfg.UseNewCombo {
+		// New combo parameters
+		if containsIndicator(best.OptimizedCfg.Indicators, "hull_ma") {
+			fmt.Printf(", Hull MA: %d", best.OptimizedCfg.HullMAPeriod)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "mfi") {
+			fmt.Printf(", MFI: %d/%.0f", best.OptimizedCfg.MFIPeriod, best.OptimizedCfg.MFIOversold)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "keltner") {
+			fmt.Printf(", Keltner: %d/%.1f", best.OptimizedCfg.KeltnerPeriod, best.OptimizedCfg.KeltnerMultiplier)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "wavetrend") {
+			fmt.Printf(", WaveTrend: %d/%d", best.OptimizedCfg.WaveTrendN1, best.OptimizedCfg.WaveTrendN2)
+		}
+	} else {
+		// Classic combo parameters
+		if containsIndicator(best.OptimizedCfg.Indicators, "rsi") {
+			fmt.Printf(", RSI: %d/%.0f", best.OptimizedCfg.RSIPeriod, best.OptimizedCfg.RSIOversold)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "macd") {
+			fmt.Printf(", MACD: %d/%d/%d", best.OptimizedCfg.MACDFast, best.OptimizedCfg.MACDSlow, best.OptimizedCfg.MACDSignal)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "bb") {
+			fmt.Printf(", BB: p=%d sd=%.2f", best.OptimizedCfg.BBPeriod, best.OptimizedCfg.BBStdDev)
+		}
+		if containsIndicator(best.OptimizedCfg.Indicators, "ema") {
+			fmt.Printf(", EMA: %d", best.OptimizedCfg.EMAPeriod)
+		}
 	}
 	fmt.Printf("\n")
 
@@ -841,6 +1058,9 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 		len(data),
 		data[0].Timestamp.Format("2006-01-02 15:04"),
 		data[len(data)-1].Timestamp.Format("2006-01-02 15:04"))
+	
+	// Combo information - prominently displayed
+	fmt.Printf("🎯 COMBO: %s\n", getComboTypeName(cfg.UseNewCombo))
 	fmt.Printf("Indicators: %s\n", indicatorSummary(cfg))
 	fmt.Printf("Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f\n",
 		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty)
@@ -882,24 +1102,42 @@ func indicatorSummary(cfg *BacktestConfig) string {
 	parts := []string{}
 	set := make(map[string]bool)
 	for _, n := range cfg.Indicators { set[strings.ToLower(n)] = true }
-	if set["rsi"] {
-		parts = append(parts, fmt.Sprintf("rsi(p=%d,ov=%.0f)", cfg.RSIPeriod, cfg.RSIOversold))
-	}
-	if set["macd"] {
-		parts = append(parts, fmt.Sprintf("macd(%d/%d/%d)", cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal))
-	}
-	if set["bb"] {
-		parts = append(parts, fmt.Sprintf("bb(p=%d,sd=%.2f)", cfg.BBPeriod, cfg.BBStdDev))
-	}
-	if set["ema"] {
-		parts = append(parts, fmt.Sprintf("ema(p=%d)", cfg.EMAPeriod))
+	
+	if cfg.UseNewCombo {
+		// New combo summary
+		if set["hull_ma"] {
+			parts = append(parts, fmt.Sprintf("HullMA(%d)", cfg.HullMAPeriod))
+		}
+		if set["mfi"] {
+			parts = append(parts, fmt.Sprintf("MFI(%d/%.0f)", cfg.MFIPeriod, cfg.MFIOversold))
+		}
+		if set["keltner"] {
+			parts = append(parts, fmt.Sprintf("Keltner(%d/%.1f)", cfg.KeltnerPeriod, cfg.KeltnerMultiplier))
+		}
+		if set["wavetrend"] {
+			parts = append(parts, fmt.Sprintf("WaveTrend(%d/%d)", cfg.WaveTrendN1, cfg.WaveTrendN2))
+		}
+	} else {
+		// Classic combo summary
+		if set["rsi"] {
+			parts = append(parts, fmt.Sprintf("RSI(%d/%.0f)", cfg.RSIPeriod, cfg.RSIOversold))
+		}
+		if set["macd"] {
+			parts = append(parts, fmt.Sprintf("MACD(%d/%d/%d)", cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal))
+		}
+		if set["bb"] {
+			parts = append(parts, fmt.Sprintf("BB(%d/%.2f)", cfg.BBPeriod, cfg.BBStdDev))
+		}
+		if set["ema"] {
+			parts = append(parts, fmt.Sprintf("EMA(%d)", cfg.EMAPeriod))
+		}
 	}
 	
 	// Add price threshold info
 	if cfg.PriceThreshold > 0 {
-		parts = append(parts, fmt.Sprintf("priceThreshold=%.1f%%", cfg.PriceThreshold*100))
+		parts = append(parts, fmt.Sprintf("PriceThreshold=%.1f%%", cfg.PriceThreshold*100))
 	} else {
-		parts = append(parts, "priceThreshold=disabled")
+		parts = append(parts, "PriceThreshold=disabled")
 	}
 	
 	if len(parts) == 0 {
@@ -921,23 +1159,48 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		include[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 
-	if include["rsi"] {
-		rsi := indicators.NewRSI(cfg.RSIPeriod)
-		rsi.SetOversold(cfg.RSIOversold)
-		rsi.SetOverbought(cfg.RSIOverbought)
-		dca.AddIndicator(rsi)
-	}
-	if include["macd"] {
-		macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
-		dca.AddIndicator(macd)
-	}
-	if include["bb"] {
-		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
-		dca.AddIndicator(bb)
-	}
-	if include["ema"] {
-		ema := indicators.NewEMA(cfg.EMAPeriod)
-		dca.AddIndicator(ema)
+	if cfg.UseNewCombo {
+		// New combo indicators
+		if include["hull_ma"] {
+			hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
+			dca.AddIndicator(hullMA)
+		}
+		if include["mfi"] {
+			mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
+			mfi.SetOversold(cfg.MFIOversold)
+			mfi.SetOverbought(cfg.MFIOverbought)
+			dca.AddIndicator(mfi)
+		}
+		if include["keltner"] {
+			keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+			dca.AddIndicator(keltner)
+		}
+		if include["wavetrend"] {
+			wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
+			wavetrend.SetOverbought(cfg.WaveTrendOverbought)
+			wavetrend.SetOversold(cfg.WaveTrendOversold)
+			dca.AddIndicator(wavetrend)
+		}
+	} else {
+		// Classic combo indicators
+		if include["rsi"] {
+			rsi := indicators.NewRSI(cfg.RSIPeriod)
+			rsi.SetOversold(cfg.RSIOversold)
+			rsi.SetOverbought(cfg.RSIOverbought)
+			dca.AddIndicator(rsi)
+		}
+		if include["macd"] {
+			macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+			dca.AddIndicator(macd)
+		}
+		if include["bb"] {
+			bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+			dca.AddIndicator(bb)
+		}
+		if include["ema"] {
+			ema := indicators.NewEMA(cfg.EMAPeriod)
+			dca.AddIndicator(ema)
+		}
 	}
 
 	return dca
@@ -1127,6 +1390,9 @@ func outputConsole(results *backtest.BacktestResults) {
 	fmt.Printf("❌ Losing Trades:      %d (%.1f%%)\n", results.LosingTrades,
 		float64(results.LosingTrades)/float64(results.TotalTrades)*100)
 	
+	// Note: Combo information is already displayed at the start of the backtest
+	// in the runBacktestWithData function
+	
 	fmt.Println("\n" + strings.Repeat("=", 50))
 }
 
@@ -1281,18 +1547,32 @@ func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Indi
 			individual.config.TPPercent = 0
 		}
 		
-		// Always use all indicators - no optimization of indicator combinations
-		individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
-		
-		// Always randomize indicator parameters
-		individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
-		individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
-		individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
-		individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
-		individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
-		individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
-		individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
-		individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
+		// Set indicators based on combo selection
+		if cfg.UseNewCombo {
+			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
+			// Randomize new combo indicator parameters
+			individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
+			individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
+			individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
+			individual.config.MFIOverbought = randomChoice(OptimizationRanges.MFIOverbought, rng)
+			individual.config.KeltnerPeriod = randomChoice(OptimizationRanges.KeltnerPeriods, rng)
+			individual.config.KeltnerMultiplier = randomChoice(OptimizationRanges.KeltnerMultipliers, rng)
+			individual.config.WaveTrendN1 = randomChoice(OptimizationRanges.WaveTrendN1, rng)
+			individual.config.WaveTrendN2 = randomChoice(OptimizationRanges.WaveTrendN2, rng)
+			individual.config.WaveTrendOverbought = randomChoice(OptimizationRanges.WaveTrendOverbought, rng)
+			individual.config.WaveTrendOversold = randomChoice(OptimizationRanges.WaveTrendOversold, rng)
+		} else {
+			individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
+			// Randomize classic combo indicator parameters
+			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
+		}
 		
 		population[i] = individual
 	}
@@ -1387,31 +1667,68 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 			child.config.TPPercent = parent2.config.TPPercent
 		}
 		if rng.Intn(2) == 0 {
-			child.config.RSIPeriod = parent2.config.RSIPeriod
+			child.config.PriceThreshold = parent2.config.PriceThreshold
 		}
-		if rng.Intn(2) == 0 {
-			child.config.RSIOversold = parent2.config.RSIOversold
-		}
-		if rng.Intn(2) == 0 {
-			child.config.MACDFast = parent2.config.MACDFast
-		}
-		if rng.Intn(2) == 0 {
-			child.config.MACDSlow = parent2.config.MACDSlow
-		}
-		if rng.Intn(2) == 0 {
-			child.config.MACDSignal = parent2.config.MACDSignal
-		}
-		if rng.Intn(2) == 0 {
-			child.config.BBPeriod = parent2.config.BBPeriod
-		}
-		if rng.Intn(2) == 0 {
-			child.config.BBStdDev = parent2.config.BBStdDev
-		}
-		if rng.Intn(2) == 0 {
-			child.config.EMAPeriod = parent2.config.EMAPeriod
-		}
-		if rng.Intn(2) == 0 {
-			child.config.Indicators = parent2.config.Indicators
+		
+		// Crossover indicator parameters based on combo selection
+		if parent1.config.UseNewCombo {
+			// New combo parameters
+			if rng.Intn(2) == 0 {
+				child.config.HullMAPeriod = parent2.config.HullMAPeriod
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MFIPeriod = parent2.config.MFIPeriod
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MFIOversold = parent2.config.MFIOversold
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MFIOverbought = parent2.config.MFIOverbought
+			}
+			if rng.Intn(2) == 0 {
+				child.config.KeltnerPeriod = parent2.config.KeltnerPeriod
+			}
+			if rng.Intn(2) == 0 {
+				child.config.KeltnerMultiplier = parent2.config.KeltnerMultiplier
+			}
+			if rng.Intn(2) == 0 {
+				child.config.WaveTrendN1 = parent2.config.WaveTrendN1
+			}
+			if rng.Intn(2) == 0 {
+				child.config.WaveTrendN2 = parent2.config.WaveTrendN2
+			}
+			if rng.Intn(2) == 0 {
+				child.config.WaveTrendOverbought = parent2.config.WaveTrendOverbought
+			}
+			if rng.Intn(2) == 0 {
+				child.config.WaveTrendOversold = parent2.config.WaveTrendOversold
+			}
+		} else {
+			// Classic combo parameters
+			if rng.Intn(2) == 0 {
+				child.config.RSIPeriod = parent2.config.RSIPeriod
+			}
+			if rng.Intn(2) == 0 {
+				child.config.RSIOversold = parent2.config.RSIOversold
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MACDFast = parent2.config.MACDFast
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MACDSlow = parent2.config.MACDSlow
+			}
+			if rng.Intn(2) == 0 {
+				child.config.MACDSignal = parent2.config.MACDSignal
+			}
+			if rng.Intn(2) == 0 {
+				child.config.BBPeriod = parent2.config.BBPeriod
+			}
+			if rng.Intn(2) == 0 {
+				child.config.BBStdDev = parent2.config.BBStdDev
+			}
+			if rng.Intn(2) == 0 {
+				child.config.EMAPeriod = parent2.config.EMAPeriod
+			}
 		}
 	}
 	
@@ -1422,9 +1739,18 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand.Rand) {
 	if rng.Float64() < rate {
 		// Mutate any parameter including indicator parameters
-		availableParams := []int{0, 2, 3, 4, 5, 6, 7, 8, 9, 10} // All except TP
+		availableParams := []int{0, 2, 3} // Base params: MaxMultiplier, PriceThreshold
 		if cfg.Cycle {
 			availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
+		}
+		
+		// Add indicator parameters based on combo selection
+		if cfg.UseNewCombo {
+			// New combo parameters: 4-13
+			availableParams = append(availableParams, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+		} else {
+			// Classic combo parameters: 4-13
+			availableParams = append(availableParams, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
 		}
 		
 		switch randomChoice(availableParams, rng) {
@@ -1435,25 +1761,69 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand
 		case 2:
 			individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		case 3:
-			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+			if cfg.UseNewCombo {
+				individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
+			} else {
+				individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
+			}
 		case 4:
-			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+			if cfg.UseNewCombo {
+				individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
+			} else {
+				individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
+			}
 		case 5:
-			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+			if cfg.UseNewCombo {
+				individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
+			} else {
+				individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
+			}
 		case 6:
-			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+			if cfg.UseNewCombo {
+				individual.config.MFIOverbought = randomChoice(OptimizationRanges.MFIOverbought, rng)
+			} else {
+				individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
+			}
 		case 7:
-			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+			if cfg.UseNewCombo {
+				individual.config.KeltnerPeriod = randomChoice(OptimizationRanges.KeltnerPeriods, rng)
+			} else {
+				individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
+			}
 		case 8:
-			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+			if cfg.UseNewCombo {
+				individual.config.KeltnerMultiplier = randomChoice(OptimizationRanges.KeltnerMultipliers, rng)
+			} else {
+				individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
+			}
 		case 9:
-			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+			if cfg.UseNewCombo {
+				individual.config.WaveTrendN1 = randomChoice(OptimizationRanges.WaveTrendN1, rng)
+			} else {
+				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
+			}
 		case 10:
-			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
+			if cfg.UseNewCombo {
+				individual.config.WaveTrendN2 = randomChoice(OptimizationRanges.WaveTrendN2, rng)
+			} else {
+				individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
+			}
+		case 11:
+			if cfg.UseNewCombo {
+				individual.config.WaveTrendOverbought = randomChoice(OptimizationRanges.WaveTrendOverbought, rng)
+			}
+		case 12:
+			if cfg.UseNewCombo {
+				individual.config.WaveTrendOversold = randomChoice(OptimizationRanges.WaveTrendOversold, rng)
+			}
 		}
 		
-		// Ensure indicators always remain the same
-		individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
+		// Ensure indicators remain the same based on combo selection
+		if cfg.UseNewCombo {
+			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
+		} else {
+			individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
+		}
 		
 		// Reset fitness to force re-evaluation
 		individual.fitness = 0
@@ -1471,6 +1841,22 @@ func containsIndicator(indicators []string, name string) bool {
 	return false
 }
 
+// getComboTypeName returns a human-readable name for the combo type
+func getComboTypeName(useNewCombo bool) string {
+	if useNewCombo {
+		return "NEW COMBO: Hull MA + MFI + Keltner + WaveTrend"
+	}
+	return "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
+}
+
+// getComboDescription returns a concise description of the combo type
+func getComboDescription(useNewCombo bool) string {
+	if useNewCombo {
+		return "Hull MA + MFI + Keltner Channels + WaveTrend"
+	}
+	return "RSI + MACD + Bollinger Bands + EMA"
+}
+
 func printBestConfigJSON(cfg BacktestConfig) {
 	// Convert to nested format for consistent output
 	nestedCfg := convertToNestedConfig(cfg)
@@ -1486,8 +1872,8 @@ func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 		interval = "5m" // Default fallback
 	}
 	
-	return NestedConfig{
-		Strategy: StrategyConfig{
+			// Only include the combo that was actually used
+		strategyConfig := StrategyConfig{
 			Symbol:         cfg.Symbol,
 			BaseAmount:     cfg.BaseAmount,
 			MaxMultiplier:  cfg.MaxMultiplier,
@@ -1497,44 +1883,73 @@ func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 			TPPercent:      cfg.TPPercent,
 			Cycle:          cfg.Cycle,
 			Indicators:     cfg.Indicators,
-			RSI: RSIConfig{
+			UseNewCombo:    cfg.UseNewCombo,
+		}
+		
+		// Add combo-specific configurations based on what was used
+		if cfg.UseNewCombo {
+			// Only include new combo parameters
+			strategyConfig.HullMA = &HullMAConfig{
+				Period: cfg.HullMAPeriod,
+			}
+			strategyConfig.MFI = &MFIConfig{
+				Period:     cfg.MFIPeriod,
+				Oversold:   cfg.MFIOversold,
+				Overbought: cfg.MFIOverbought,
+			}
+			strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
+				Period:     cfg.KeltnerPeriod,
+				Multiplier: cfg.KeltnerMultiplier,
+			}
+			strategyConfig.WaveTrend = &WaveTrendConfig{
+				N1:          cfg.WaveTrendN1,
+				N2:          cfg.WaveTrendN2,
+				Overbought:  cfg.WaveTrendOverbought,
+				Oversold:    cfg.WaveTrendOversold,
+			}
+		} else {
+			// Only include classic combo parameters
+			strategyConfig.RSI = &RSIConfig{
 				Period:     cfg.RSIPeriod,
 				Oversold:   cfg.RSIOversold,
 				Overbought: cfg.RSIOverbought,
-			},
-			MACD: MACDConfig{
+			}
+			strategyConfig.MACD = &MACDConfig{
 				FastPeriod:   cfg.MACDFast,
 				SlowPeriod:   cfg.MACDSlow,
 				SignalPeriod: cfg.MACDSignal,
-			},
-			BollingerBands: BollingerBandsConfig{
+			}
+			strategyConfig.BollingerBands = &BollingerBandsConfig{
 				Period: cfg.BBPeriod,
 				StdDev: cfg.BBStdDev,
-			},
-			EMA: EMAConfig{
+			}
+			strategyConfig.EMA = &EMAConfig{
 				Period: cfg.EMAPeriod,
+			}
+		}
+		
+				return NestedConfig{
+			Strategy:         strategyConfig,
+			Exchange: ExchangeConfig{
+				Name: "bybit",
+				Bybit: BybitConfig{
+					APIKey:    "${BYBIT_API_KEY}",
+					APISecret: "${BYBIT_API_SECRET}",
+					Testnet:   false,
+					Demo:      true,
+				},
 			},
-		},
-		Exchange: ExchangeConfig{
-			Name: "bybit",
-			Bybit: BybitConfig{
-				APIKey:    "${BYBIT_API_KEY}",
-				APISecret: "${BYBIT_API_SECRET}",
-				Testnet:   false,
-				Demo:      true,
+			Risk: RiskConfig{
+				InitialBalance: cfg.InitialBalance,
+				Commission:     cfg.Commission,
+				MinOrderQty:    cfg.MinOrderQty,
 			},
-		},
-		Risk: RiskConfig{
-			InitialBalance: cfg.InitialBalance,
-			Commission:     cfg.Commission,
-			MinOrderQty:    cfg.MinOrderQty,
-		},
-		Notifications: NotificationsConfig{
-			Enabled:       false,
-			TelegramToken: "${TELEGRAM_TOKEN}",
-			TelegramChat:  "${TELEGRAM_CHAT_ID}",
-		},
-	}
+			Notifications: NotificationsConfig{
+				Enabled:       false,
+				TelegramToken: "${TELEGRAM_TOKEN}",
+				TelegramChat:  "${TELEGRAM_CHAT_ID}",
+			},
+		}
 }
 
 // extractIntervalFromPath extracts interval from data file path

@@ -10,16 +10,16 @@ import (
 // WaveTrend represents the WaveTrend oscillator technical indicator
 // WaveTrend combines multiple smoothing techniques to create a momentum oscillator
 type WaveTrend struct {
-	channelLength int     // Length for channel calculation (default: 10)
-	averageLength int     // Length for average calculation (default: 21)
-	overBought    float64 // Overbought level (default: 60)
-	overSold      float64 // Oversold level (default: -60)
+	n1           int     // First EMA length for channel calculation (default: 10)
+	n2           int     // Second EMA length for average calculation (default: 21)
+	overBought   float64 // Overbought level (default: 60)
+	overSold     float64 // Oversold level (default: -60)
 	
 	// Internal components
 	esaEMA     *EMA     // ESA (Exponential Simple Average) calculator
 	dEMA       *EMA     // D (smoothed absolute difference) calculator
-	tciEMA     *EMA     // TCI (Typical Channel Index) calculator
-	wt2Values  []float64 // Rolling window for WT2 calculation
+	wt1EMA     *EMA     // WT1 (WaveTrend) calculator
+	wt2Values  []float64 // Rolling window for WT2 calculation (SMA of WT1, length 4)
 	
 	// State tracking
 	lastWT1        float64
@@ -35,16 +35,16 @@ func NewWaveTrend() *WaveTrend {
 }
 
 // NewWaveTrendCustom creates a new WaveTrend indicator with custom parameters
-func NewWaveTrendCustom(channelLength, averageLength int) *WaveTrend {
+func NewWaveTrendCustom(n1, n2 int) *WaveTrend {
 	return &WaveTrend{
-		channelLength: channelLength,
-		averageLength: averageLength,
+		n1:           n1,
+		n2:           n2,
 		overBought:    60.0,
 		overSold:      -60.0,
-		esaEMA:        NewEMA(channelLength),
-		dEMA:          NewEMA(channelLength),
-		tciEMA:        NewEMA(averageLength),
-		wt2Values:     make([]float64, 0, averageLength),
+		esaEMA:        NewEMA(n1),
+		dEMA:          NewEMA(n1),
+		wt1EMA:        NewEMA(n2),
+		wt2Values:     make([]float64, 0, 4), // WT2 is SMA(WT1, 4)
 	}
 }
 
@@ -73,7 +73,7 @@ func (wt *WaveTrend) initialCalculation(data []types.OHLCV) (float64, error) {
 		candle := data[i]
 		hlc3 := (candle.High + candle.Low + candle.Close) / 3.0
 		
-		// Update ESA (Exponential Simple Average)
+		// Update ESA (Exponential Simple Average of Typical Price)
 		esaData := []types.OHLCV{{Close: hlc3}}
 		esa, err := wt.esaEMA.Calculate(esaData)
 		if err != nil {
@@ -94,33 +94,33 @@ func (wt *WaveTrend) initialCalculation(data []types.OHLCV) (float64, error) {
 			ci = (hlc3 - esa) / (0.015 * d)
 		}
 		
-		// Update TCI (Typical Channel Index)
-		tciData := []types.OHLCV{{Close: ci}}
-		tci, err := wt.tciEMA.Calculate(tciData)
+		// Update WT1 (WaveTrend = EMA of CI)
+		wt1Data := []types.OHLCV{{Close: ci}}
+		wt1, err := wt.wt1EMA.Calculate(wt1Data)
 		if err != nil {
 			continue // Skip if not enough data yet
 		}
 		
-		// WT1 = TCI
-		wt.lastWT1 = tci
+		// WT1 = EMA(CI, n2)
+		wt.lastWT1 = wt1
 		
-		// Update WT2 rolling window
-		wt.wt2Values = append(wt.wt2Values, tci)
-		if len(wt.wt2Values) > wt.averageLength {
-			wt.wt2Values = wt.wt2Values[1:] // Remove oldest
+		// Update WT2 rolling window (SMA of WT1, length 4)
+		wt.wt2Values = append(wt.wt2Values, wt1)
+		if len(wt.wt2Values) > 4 {
+			wt.wt2Values = wt.wt2Values[1:] // Remove oldest, keep only 4 values
 		}
 		
 		wt.lastHLC3 = hlc3
 		wt.dataPoints = i + 1
 	}
 
-	// Calculate WT2 (SMA of WT1/TCI values)
-	if len(wt.wt2Values) >= wt.averageLength {
+	// Calculate WT2 (SMA of last 4 WT1 values)
+	if len(wt.wt2Values) >= 4 {
 		sum := 0.0
 		for _, val := range wt.wt2Values {
 			sum += val
 		}
-		wt.lastWT2 = sum / float64(len(wt.wt2Values))
+		wt.lastWT2 = sum / 4.0
 	}
 
 	wt.initialized = true
@@ -137,7 +137,7 @@ func (wt *WaveTrend) incrementalCalculation(data []types.OHLCV) (float64, error)
 	latest := data[len(data)-1]
 	hlc3 := (latest.High + latest.Low + latest.Close) / 3.0
 
-	// Update ESA
+	// Update ESA (Exponential Simple Average of Typical Price)
 	esaData := []types.OHLCV{{Close: hlc3}}
 	esa, err := wt.esaEMA.Calculate(esaData)
 	if err != nil {
@@ -158,29 +158,29 @@ func (wt *WaveTrend) incrementalCalculation(data []types.OHLCV) (float64, error)
 		ci = (hlc3 - esa) / (0.015 * d)
 	}
 
-	// Update TCI (Typical Channel Index)
-	tciData := []types.OHLCV{{Close: ci}}
-	tci, err := wt.tciEMA.Calculate(tciData)
+	// Update WT1 (WaveTrend = EMA of CI)
+	wt1Data := []types.OHLCV{{Close: ci}}
+	wt1, err := wt.wt1EMA.Calculate(wt1Data)
 	if err != nil {
 		return wt.lastWT1, err
 	}
 
-	// WT1 = TCI
-	wt.lastWT1 = tci
+	// WT1 = EMA(CI, n2)
+	wt.lastWT1 = wt1
 
-	// Update WT2 rolling window
-	wt.wt2Values = append(wt.wt2Values, tci)
-	if len(wt.wt2Values) > wt.averageLength {
-		wt.wt2Values = wt.wt2Values[1:] // Remove oldest
+	// Update WT2 rolling window (SMA of WT1, length 4)
+	wt.wt2Values = append(wt.wt2Values, wt1)
+	if len(wt.wt2Values) > 4 {
+		wt.wt2Values = wt.wt2Values[1:] // Remove oldest, keep only 4 values
 	}
 
-	// Calculate WT2 (SMA of WT1/TCI values)
-	if len(wt.wt2Values) >= wt.averageLength {
+	// Calculate WT2 (SMA of last 4 WT1 values)
+	if len(wt.wt2Values) >= 4 {
 		sum := 0.0
 		for _, val := range wt.wt2Values {
 			sum += val
 		}
-		wt.lastWT2 = sum / float64(len(wt.wt2Values))
+		wt.lastWT2 = sum / 4.0
 	}
 
 	wt.lastHLC3 = hlc3
@@ -255,7 +255,7 @@ func (wt *WaveTrend) GetRequiredPeriods() int {
 // getMinRequiredPeriods calculates the minimum required periods
 func (wt *WaveTrend) getMinRequiredPeriods() int {
 	// Need enough data for all EMAs to initialize
-	return wt.channelLength + wt.averageLength
+	return wt.n1 + wt.n2
 }
 
 // GetWT1 returns the last calculated WT1 value
