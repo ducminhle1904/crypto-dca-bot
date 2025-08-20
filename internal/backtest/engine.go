@@ -26,7 +26,9 @@ type BacktestEngine struct {
 	cycleEntries       int
 	cycleStartTime     time.Time
 	cycleQtySum        float64
-	cycleCostSum       float64 // sum(entryPrice * qty)
+	cycleCostSum         float64 // sum(entryPrice * qty) - net cost after commission
+	cycleGrossCostSum    float64 // sum(entryPrice * gross_qty) - gross cost before commission  
+	cycleCommissionSum   float64 // sum of commission paid in current cycle
 }
 
 type BacktestResults struct {
@@ -57,14 +59,18 @@ type Trade struct {
 }
 
 type CycleSummary struct {
-	CycleNumber int
-	StartTime   time.Time
-	EndTime     time.Time
-	Entries     int
-	AvgEntry    float64
-	TargetPrice float64
-	RealizedPnL float64
-	Completed   bool // true if closed by TP, false if left open at end
+	CycleNumber     int
+	StartTime       time.Time
+	EndTime         time.Time
+	Entries         int
+	AvgEntry        float64    // Weighted average entry price (net cost basis)
+	AvgGrossEntry   float64    // Weighted average entry price (gross cost basis)
+	TargetPrice     float64
+	RealizedPnL     float64
+	TotalCost       float64    // Total net cost invested (after commission)
+	TotalGrossCost  float64    // Total gross cost invested (before commission)
+	TotalCommission float64    // Total commission paid in this cycle
+	Completed       bool       // true if closed by TP, false if left open at end
 }
 
 func NewBacktestEngine(
@@ -134,15 +140,18 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 				}
 			}
 
-			// Check if we have enough balance for the actual amount (after lot size adjustment)
-			if balance > actualAmount {
-				// Execute buy with actual amount (may be adjusted for lot size)
-				commission := actualAmount * b.commission
-				netAmount := actualAmount - commission
+			// Calculate commission on original target amount (what strategy intended to invest)
+			commission := targetAmount * b.commission
+			totalCost := actualAmount + commission // Adjusted amount + commission on original
+			
+			// Check if we have enough balance for total cost (adjusted amount + commission)
+			if balance >= totalCost {
+				// Execute buy with actual amount, but deduct commission separately
+				netAmount := actualAmount // The lot-adjusted amount becomes the net investment
 				actualQuantity := netAmount / currentPrice
 
 				position += actualQuantity
-				balance -= actualAmount
+				balance -= totalCost // Deduct both adjusted amount and commission
 
 				// begin a new cycle if needed (only when TP enabled)
 				if b.tpPercent > 0 && !b.cycleOpen {
@@ -152,6 +161,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleStartTime = data[i].Timestamp
 					b.cycleQtySum = 0
 					b.cycleCostSum = 0
+					b.cycleGrossCostSum = 0
+					b.cycleCommissionSum = 0
 				}
 
 				//Recording the transaction (input) - use actual executed values
@@ -164,7 +175,13 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 				if b.cycleOpen {
 					b.cycleEntries++
 					b.cycleQtySum += actualQuantity
+					// Track net cost (actual quantity after commission deduction)
 					b.cycleCostSum += currentPrice * actualQuantity
+					// Track gross cost (what we would have bought without commission)
+					grossQuantity := actualAmount / currentPrice
+					b.cycleGrossCostSum += currentPrice * grossQuantity  
+					// Track commission for this cycle
+					b.cycleCommissionSum += commission
 					trade.Cycle = b.currentCycleNumber
 				}
 
@@ -209,15 +226,20 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					}
 
 					// finalize cycle summary
+					avgGrossEntry := b.cycleGrossCostSum / (b.cycleGrossCostSum / currentPrice) // gross cost / gross qty
 					b.results.Cycles = append(b.results.Cycles, CycleSummary{
-						CycleNumber: b.currentCycleNumber,
-						StartTime:   b.cycleStartTime,
-						EndTime:     data[i].Timestamp,
-						Entries:     b.cycleEntries,
-						AvgEntry:    avgEntry,
-						TargetPrice: target,
-						RealizedPnL: realized,
-						Completed:   true,
+						CycleNumber:     b.currentCycleNumber,
+						StartTime:       b.cycleStartTime,
+						EndTime:         data[i].Timestamp,
+						Entries:         b.cycleEntries,
+						AvgEntry:        avgEntry,          // Net average entry
+						AvgGrossEntry:   avgGrossEntry,     // Gross average entry
+						TargetPrice:     target,
+						RealizedPnL:     realized,
+						TotalCost:       b.cycleCostSum,        // Net cost
+						TotalGrossCost:  b.cycleGrossCostSum,   // Gross cost
+						TotalCommission: b.cycleCommissionSum,  // Commission
+						Completed:       true,
 					})
 					b.results.CompletedCycles++
 
@@ -227,6 +249,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleEntries = 0
 					b.cycleQtySum = 0
 					b.cycleCostSum = 0
+					b.cycleGrossCostSum = 0
+					b.cycleCommissionSum = 0
 					
 					// Notify strategy that cycle is complete so it can reset state
 					b.strategy.OnCycleComplete()
@@ -273,15 +297,20 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 				realized += t.PnL
 			}
 		}
+		avgGrossEntry := b.cycleGrossCostSum / (b.cycleGrossCostSum / finalPrice) // gross cost / gross qty
 		b.results.Cycles = append(b.results.Cycles, CycleSummary{
-			CycleNumber: b.currentCycleNumber,
-			StartTime:   b.cycleStartTime,
-			EndTime:     finalTime,
-			Entries:     b.cycleEntries,
-			AvgEntry:    avgEntry,
-			TargetPrice: target,
-			RealizedPnL: realized,
-			Completed:   false,
+			CycleNumber:     b.currentCycleNumber,
+			StartTime:       b.cycleStartTime,
+			EndTime:         finalTime,
+			Entries:         b.cycleEntries,
+			AvgEntry:        avgEntry,          // Net average entry
+			AvgGrossEntry:   avgGrossEntry,     // Gross average entry
+			TargetPrice:     target,
+			RealizedPnL:     realized,
+			TotalCost:       b.cycleCostSum,        // Net cost
+			TotalGrossCost:  b.cycleGrossCostSum,   // Gross cost
+			TotalCommission: b.cycleCommissionSum,  // Commission
+			Completed:       false,
 		})
 		// Keep CompletedCycles unchanged
 	}
@@ -303,5 +332,42 @@ func (b *BacktestResults) PrintSummary() {
 	fmt.Printf("Profit Factor: %.2f\n", b.ProfitFactor)
 	if len(b.Cycles) > 0 {
 		fmt.Printf("Completed Cycles: %d (Total Cycles: %d)\n", b.CompletedCycles, len(b.Cycles))
+		b.PrintCycleDetails()
 	}
+}
+
+// PrintCycleDetails prints detailed information about each cycle
+func (b *BacktestResults) PrintCycleDetails() {
+	if len(b.Cycles) == 0 {
+		return
+	}
+	
+	fmt.Printf("\n=== Cycle Details ===\n")
+	totalCommission := 0.0
+	for _, cycle := range b.Cycles {
+		status := "✅ Completed"
+		if !cycle.Completed {
+			status = "⏳ Incomplete"
+		}
+		
+		fmt.Printf("Cycle #%d %s\n", cycle.CycleNumber, status)
+		fmt.Printf("  Entries: %d\n", cycle.Entries)
+		fmt.Printf("  Net Avg Entry: $%.2f\n", cycle.AvgEntry)
+		fmt.Printf("  Gross Avg Entry: $%.2f\n", cycle.AvgGrossEntry) 
+		fmt.Printf("  Total Net Cost: $%.2f\n", cycle.TotalCost)
+		fmt.Printf("  Total Gross Cost: $%.2f\n", cycle.TotalGrossCost)
+		fmt.Printf("  Total Commission: $%.2f (%.3f%%)\n", 
+			cycle.TotalCommission, 
+			(cycle.TotalCommission/cycle.TotalGrossCost)*100)
+		if cycle.Completed {
+			fmt.Printf("  Target Price: $%.2f\n", cycle.TargetPrice)
+		}
+		fmt.Printf("  Realized PnL: $%.2f\n", cycle.RealizedPnL)
+		fmt.Printf("  Duration: %s\n", cycle.EndTime.Sub(cycle.StartTime).String())
+		fmt.Printf("\n")
+		
+		totalCommission += cycle.TotalCommission
+	}
+	
+	fmt.Printf("Total Commission Paid: $%.2f\n", totalCommission)
 }

@@ -2,29 +2,31 @@
   "strategy": {
     "symbol": "SUIUSDT",
     "base_amount": 40,
-    "max_multiplier": 1.5,
+    "max_multiplier": 3,
     "price_threshold": 0.01,
     "interval": "5m",
-    "window_size": 80,
-    "tp_percent": 0.06,
+    "window_size": 100,
+    "tp_percent": 0.04,
     "cycle": true,
-    "indicators": ["rsi", "macd", "bb", "ema"],
-    "rsi": {
-      "period": 10,
-      "oversold": 40,
-      "overbought": 70
+    "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
+    "use_advanced_combo": true,
+    "hull_ma": {
+      "period": 10
     },
-    "macd": {
-      "fast_period": 18,
-      "slow_period": 35,
-      "signal_period": 14
+    "mfi": {
+      "period": 20,
+      "oversold": 20,
+      "overbought": 85
     },
-    "bollinger_bands": {
-      "period": 14,
-      "std_dev": 2.5
+    "keltner_channels": {
+      "period": 50,
+      "multiplier": 1.5
     },
-    "ema": {
-      "period": 30
+    "wavetrend": {
+      "n1": 20,
+      "n2": 35,
+      "overbought": 70,
+      "oversold": -70
     }
   },
   "exchange": {
@@ -37,8 +39,9 @@
     }
   },
   "risk": {
-    "initial_balance": 1000.0,
-    "commission": 0.001
+    "initial_balance": 500,
+    "commission": 0.0005,
+    "min_order_qty": 10
   },
   "notifications": {
     "enabled": false,

@@ -49,7 +49,7 @@ const (
 	DefaultBBStdDev       = 2.0
 	DefaultEMAPeriod      = 50
 	
-	// New combo indicator parameters
+	// Advanced combo indicator parameters
 	DefaultHullMAPeriod   = 20
 	DefaultMFIPeriod      = 14
 	DefaultMFIOversold    = 20
@@ -88,7 +88,7 @@ const (
 	MinBBPeriod            = 2     // Minimum Bollinger Bands period
 	MinEMAPeriod           = 1     // Minimum EMA period
 	
-	// New combo validation constants
+	// Advanced combo validation constants
 	MinHullMAPeriod        = 2     // Minimum Hull MA period
 	MinMFIPeriod           = 2     // Minimum MFI period
 	MinKeltnerPeriod       = 2     // Minimum Keltner period
@@ -120,7 +120,7 @@ var (
 		BBPeriods       []int
 		BBStdDev        []float64
 		EMAPeriods      []int
-		// New combo optimization ranges
+		// Advanced combo optimization ranges
 		HullMAPeriods   []int
 		MFIPeriods      []int
 		MFIOversold     []float64
@@ -143,7 +143,7 @@ var (
 		BBPeriods:       []int{10, 14, 16, 18, 20, 22, 25, 28, 30},
 		BBStdDev:        []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0},
 		EMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
-		// New combo ranges
+		// Advanced combo ranges
 		HullMAPeriods:   []int{10, 15, 20, 25, 30, 40, 50},
 		MFIPeriods:      []int{10, 12, 14, 16, 18, 20, 22},
 		MFIOversold:     []float64{15, 20, 25, 30},
@@ -195,8 +195,8 @@ type BacktestConfig struct {
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
 	
-	// Combo selection
-	UseNewCombo    bool    `json:"use_new_combo"` // true = new combo, false = classic combo
+	// Combo selection  
+	UseAdvancedCombo bool  `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
 	
 	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
@@ -212,7 +212,7 @@ type BacktestConfig struct {
 	
 	EMAPeriod      int     `json:"ema_period"`
 	
-	// New combo indicator parameters
+	// Advanced combo indicator parameters
 	HullMAPeriod   int     `json:"hull_ma_period"`
 	MFIPeriod      int     `json:"mfi_period"`
 	MFIOversold    float64 `json:"mfi_oversold"`
@@ -253,13 +253,13 @@ type StrategyConfig struct {
 	TPPercent      float64            `json:"tp_percent"`
 	Cycle          bool               `json:"cycle"`
 	Indicators     []string           `json:"indicators"`
-	UseNewCombo    bool               `json:"use_new_combo"`
+	UseAdvancedCombo bool             `json:"use_advanced_combo"`
 	// Classic combo - use pointers so they can be omitted when not used
 	RSI            *RSIConfig         `json:"rsi,omitempty"`
 	MACD           *MACDConfig        `json:"macd,omitempty"`
 	BollingerBands *BollingerBandsConfig `json:"bollinger_bands,omitempty"`
 	EMA            *EMAConfig         `json:"ema,omitempty"`
-	// New combo - use pointers so they can be omitted when not used
+	// Advanced combo - use pointers so they can be omitted when not used
 	HullMA         *HullMAConfig      `json:"hull_ma,omitempty"`
 	MFI            *MFIConfig         `json:"mfi,omitempty"`
 	KeltnerChannels *KeltnerChannelsConfig `json:"keltner_channels,omitempty"`
@@ -311,7 +311,7 @@ type NotificationsConfig struct {
 	TelegramChat  string `json:"telegram_chat"`
 }
 
-// New combo indicator configs
+// Advanced combo indicator configs
 type HullMAConfig struct {
 	Period int `json:"period"`
 }
@@ -375,7 +375,7 @@ func main() {
 		baseAmount     = flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount")
 		maxMultiplier  = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
 		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
-		useNewCombo    = flag.Bool("new-combo", false, "Use new combo indicators (Hull MA, MFI, Keltner Channels, WaveTrend) instead of classic (RSI, MACD, BB, EMA)")
+		useAdvancedCombo = flag.Bool("advanced-combo", false, "Use advanced combo indicators (Hull MA, MFI, Keltner Channels, WaveTrend) instead of classic (RSI, MACD, BB, EMA)")
 		optimize       = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
@@ -398,7 +398,7 @@ func main() {
 	
 	// Load configuration - cycle is always enabled, console output only
 	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
-		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold, *useNewCombo)
+		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold, *useAdvancedCombo)
 
 	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
@@ -417,7 +417,7 @@ func main() {
 
 	// Set default indicators based on combo selection
 	if len(cfg.Indicators) == 0 {
-		if cfg.UseNewCombo {
+		if cfg.UseAdvancedCombo {
 			cfg.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
 		} else {
 			cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
@@ -450,7 +450,7 @@ func main() {
 		
 		fmt.Println(strings.Repeat("=", 50))
 		fmt.Printf("Best Parameters:\n")
-		fmt.Printf("  Combo Type:       %s\n", getComboTypeName(bestConfig.UseNewCombo))
+		fmt.Printf("  Combo Type:       %s\n", getComboTypeName(bestConfig.UseAdvancedCombo))
 		fmt.Printf("  Indicators:       %s\n", strings.Join(bestConfig.Indicators, ","))
 		fmt.Printf("  Base Amount:      $%.2f\n", bestConfig.BaseAmount)
 		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
@@ -458,8 +458,8 @@ func main() {
 		fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
 		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
 		
-		if bestConfig.UseNewCombo {
-			// New combo parameters
+		if bestConfig.UseAdvancedCombo {
+			// Advanced combo parameters
 			if containsIndicator(bestConfig.Indicators, "hull_ma") {
 				fmt.Printf("  Hull MA Period:   %d\n", bestConfig.HullMAPeriod)
 			}
@@ -609,7 +609,7 @@ func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
 }
 
 func loadConfig(configFile, dataFile, symbol string, balance, commission float64,
-	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64, useNewCombo bool) *BacktestConfig {
+	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64, useAdvancedCombo bool) *BacktestConfig {
 	
 	cfg := &BacktestConfig{
 		DataFile:       dataFile,
@@ -620,7 +620,7 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		BaseAmount:     baseAmount,
 		MaxMultiplier:  maxMultiplier,
 		PriceThreshold: priceThreshold,
-		UseNewCombo:    useNewCombo,
+		UseAdvancedCombo:    useAdvancedCombo,
 		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
@@ -631,7 +631,7 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		BBPeriod:       DefaultBBPeriod,
 		BBStdDev:       DefaultBBStdDev,
 		EMAPeriod:      DefaultEMAPeriod,
-		// New combo defaults
+		// Advanced combo defaults
 		HullMAPeriod:   DefaultHullMAPeriod,
 		MFIPeriod:      DefaultMFIPeriod,
 		MFIOversold:    DefaultMFIOversold,
@@ -653,8 +653,12 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		if err != nil {
 			log.Printf("Warning: Could not read config file: %v", err)
 		} else {
-			if err := json.Unmarshal(data, cfg); err != nil {
-				log.Printf("Warning: Could not parse config file: %v", err)
+			// Try to load as nested config first, then fall back to flat config
+			if err := loadFromNestedConfig(data, cfg); err != nil {
+				// Fall back to flat config loading for backward compatibility
+				if err := json.Unmarshal(data, cfg); err != nil {
+					log.Printf("Warning: Could not parse config file as nested or flat format: %v", err)
+				}
 			}
 		}
 	}
@@ -665,6 +669,81 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 	}
 	
 	return cfg
+}
+
+// loadFromNestedConfig loads configuration from nested JSON format into flat BacktestConfig
+func loadFromNestedConfig(data []byte, cfg *BacktestConfig) error {
+	var nestedCfg NestedConfig
+	if err := json.Unmarshal(data, &nestedCfg); err != nil {
+		return err
+	}
+
+	// Map strategy fields
+	strategy := nestedCfg.Strategy
+	cfg.Symbol = strategy.Symbol
+	cfg.BaseAmount = strategy.BaseAmount
+	cfg.MaxMultiplier = strategy.MaxMultiplier
+	cfg.PriceThreshold = strategy.PriceThreshold
+	cfg.WindowSize = strategy.WindowSize
+	cfg.TPPercent = strategy.TPPercent
+	cfg.Cycle = strategy.Cycle
+	cfg.Indicators = strategy.Indicators
+	cfg.UseAdvancedCombo = strategy.UseAdvancedCombo
+
+	// Map indicator-specific configurations
+	if strategy.UseAdvancedCombo {
+		// Advanced combo parameters
+		if strategy.HullMA != nil {
+			cfg.HullMAPeriod = strategy.HullMA.Period
+		}
+		if strategy.MFI != nil {
+			cfg.MFIPeriod = strategy.MFI.Period
+			cfg.MFIOversold = strategy.MFI.Oversold
+			cfg.MFIOverbought = strategy.MFI.Overbought
+		}
+		if strategy.KeltnerChannels != nil {
+			cfg.KeltnerPeriod = strategy.KeltnerChannels.Period
+			cfg.KeltnerMultiplier = strategy.KeltnerChannels.Multiplier
+		}
+		if strategy.WaveTrend != nil {
+			cfg.WaveTrendN1 = strategy.WaveTrend.N1
+			cfg.WaveTrendN2 = strategy.WaveTrend.N2
+			cfg.WaveTrendOverbought = strategy.WaveTrend.Overbought
+			cfg.WaveTrendOversold = strategy.WaveTrend.Oversold
+		}
+	} else {
+		// Classic combo parameters
+		if strategy.RSI != nil {
+			cfg.RSIPeriod = strategy.RSI.Period
+			cfg.RSIOversold = strategy.RSI.Oversold
+			cfg.RSIOverbought = strategy.RSI.Overbought
+		}
+		if strategy.MACD != nil {
+			cfg.MACDFast = strategy.MACD.FastPeriod
+			cfg.MACDSlow = strategy.MACD.SlowPeriod
+			cfg.MACDSignal = strategy.MACD.SignalPeriod
+		}
+		if strategy.BollingerBands != nil {
+			cfg.BBPeriod = strategy.BollingerBands.Period
+			cfg.BBStdDev = strategy.BollingerBands.StdDev
+		}
+		if strategy.EMA != nil {
+			cfg.EMAPeriod = strategy.EMA.Period
+		}
+	}
+
+	// Map risk parameters
+	if nestedCfg.Risk.InitialBalance > 0 {
+		cfg.InitialBalance = nestedCfg.Risk.InitialBalance
+	}
+	if nestedCfg.Risk.Commission > 0 {
+		cfg.Commission = nestedCfg.Risk.Commission
+	}
+	if nestedCfg.Risk.MinOrderQty > 0 {
+		cfg.MinOrderQty = nestedCfg.Risk.MinOrderQty
+	}
+
+	return nil
 }
 
 // validateConfig performs basic validation on configuration parameters
@@ -734,8 +813,8 @@ func validateConfig(cfg *BacktestConfig) error {
 		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
 	}
 	
-	// Validate new combo indicator parameters
-	if cfg.UseNewCombo {
+	// Validate advanced combo indicator parameters
+	if cfg.UseAdvancedCombo {
 		if cfg.HullMAPeriod < MinHullMAPeriod {
 			return fmt.Errorf("Hull MA period must be at least %d, got: %d", MinHullMAPeriod, cfg.HullMAPeriod)
 		}
@@ -890,10 +969,10 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 	fmt.Println("Interval | Return% | Trades | Base$ | MaxMult | TP% | Threshold% | MinQty | Combo | Indicators")
 	for _, r := range resultsByInterval {
 		c := r.OptimizedCfg
-		comboInfo := getComboTypeName(c.UseNewCombo)
+		comboInfo := getComboTypeName(c.UseAdvancedCombo)
 		indicatorInfo := "-"
-		if c.UseNewCombo {
-			// New combo info
+		if c.UseAdvancedCombo {
+			// Advanced combo info
 			if containsIndicator(c.Indicators, "hull_ma") {
 				indicatorInfo = fmt.Sprintf("HullMA(%d)", c.HullMAPeriod)
 			}
@@ -937,14 +1016,14 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 	best := resultsByInterval[bestIdx]
 	fmt.Printf("\nBest interval: %s (Return %.2f%%)\n", best.Interval, best.Results.TotalReturn*100)
 	fmt.Printf("Best settings -> Combo: %s | Base: $%.0f, MaxMult: %.2f, TP: %.2f%%",
-		getComboTypeName(best.OptimizedCfg.UseNewCombo),
+		getComboTypeName(best.OptimizedCfg.UseAdvancedCombo),
 		best.OptimizedCfg.BaseAmount,
 		best.OptimizedCfg.MaxMultiplier,
 		best.OptimizedCfg.TPPercent*100,
 	)
 	
-	if best.OptimizedCfg.UseNewCombo {
-		// New combo parameters
+	if best.OptimizedCfg.UseAdvancedCombo {
+		// Advanced combo parameters
 		if containsIndicator(best.OptimizedCfg.Indicators, "hull_ma") {
 			fmt.Printf(", Hull MA: %d", best.OptimizedCfg.HullMAPeriod)
 		}
@@ -1059,8 +1138,8 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 		data[0].Timestamp.Format("2006-01-02 15:04"),
 		data[len(data)-1].Timestamp.Format("2006-01-02 15:04"))
 	
-	// Combo information - prominently displayed
-	fmt.Printf("🎯 COMBO: %s\n", getComboTypeName(cfg.UseNewCombo))
+	// Combo information - prominently displayed  
+	fmt.Printf("🎯 COMBO: %s\n", getComboTypeName(cfg.UseAdvancedCombo))
 	fmt.Printf("Indicators: %s\n", indicatorSummary(cfg))
 	fmt.Printf("Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f\n",
 		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty)
@@ -1103,8 +1182,8 @@ func indicatorSummary(cfg *BacktestConfig) string {
 	set := make(map[string]bool)
 	for _, n := range cfg.Indicators { set[strings.ToLower(n)] = true }
 	
-	if cfg.UseNewCombo {
-		// New combo summary
+	if cfg.UseAdvancedCombo {
+		// Advanced combo summary
 		if set["hull_ma"] {
 			parts = append(parts, fmt.Sprintf("HullMA(%d)", cfg.HullMAPeriod))
 		}
@@ -1159,8 +1238,8 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		include[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 
-	if cfg.UseNewCombo {
-		// New combo indicators
+	if cfg.UseAdvancedCombo {
+		// Advanced combo indicators
 		if include["hull_ma"] {
 			hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
 			dca.AddIndicator(hullMA)
@@ -1548,9 +1627,9 @@ func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Indi
 		}
 		
 		// Set indicators based on combo selection
-		if cfg.UseNewCombo {
+		if cfg.UseAdvancedCombo {
 			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-			// Randomize new combo indicator parameters
+			// Randomize advanced combo indicator parameters
 			individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
 			individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
 			individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
@@ -1671,8 +1750,8 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 		}
 		
 		// Crossover indicator parameters based on combo selection
-		if parent1.config.UseNewCombo {
-			// New combo parameters
+		if parent1.config.UseAdvancedCombo {
+			// Advanced combo parameters
 			if rng.Intn(2) == 0 {
 				child.config.HullMAPeriod = parent2.config.HullMAPeriod
 			}
@@ -1745,8 +1824,8 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand
 		}
 		
 		// Add indicator parameters based on combo selection
-		if cfg.UseNewCombo {
-			// New combo parameters: 4-13
+		if cfg.UseAdvancedCombo {
+			// Advanced combo parameters: 4-13
 			availableParams = append(availableParams, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
 		} else {
 			// Classic combo parameters: 4-13
@@ -1761,65 +1840,65 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand
 		case 2:
 			individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		case 3:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
 			} else {
 				individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
 			}
 		case 4:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
 			} else {
 				individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
 			}
 		case 5:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
 			} else {
 				individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
 			}
 		case 6:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.MFIOverbought = randomChoice(OptimizationRanges.MFIOverbought, rng)
 			} else {
 				individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
 			}
 		case 7:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.KeltnerPeriod = randomChoice(OptimizationRanges.KeltnerPeriods, rng)
 			} else {
 				individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
 			}
 		case 8:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.KeltnerMultiplier = randomChoice(OptimizationRanges.KeltnerMultipliers, rng)
 			} else {
 				individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
 			}
 		case 9:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.WaveTrendN1 = randomChoice(OptimizationRanges.WaveTrendN1, rng)
 			} else {
 				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
 			}
 		case 10:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.WaveTrendN2 = randomChoice(OptimizationRanges.WaveTrendN2, rng)
 			} else {
 				individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
 			}
 		case 11:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.WaveTrendOverbought = randomChoice(OptimizationRanges.WaveTrendOverbought, rng)
 			}
 		case 12:
-			if cfg.UseNewCombo {
+			if cfg.UseAdvancedCombo {
 				individual.config.WaveTrendOversold = randomChoice(OptimizationRanges.WaveTrendOversold, rng)
 			}
 		}
 		
 		// Ensure indicators remain the same based on combo selection
-		if cfg.UseNewCombo {
+		if cfg.UseAdvancedCombo {
 			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
 		} else {
 			individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
@@ -1842,16 +1921,16 @@ func containsIndicator(indicators []string, name string) bool {
 }
 
 // getComboTypeName returns a human-readable name for the combo type
-func getComboTypeName(useNewCombo bool) string {
-	if useNewCombo {
-		return "NEW COMBO: Hull MA + MFI + Keltner + WaveTrend"
+func getComboTypeName(useAdvancedCombo bool) string {
+	if useAdvancedCombo {
+		return "ADVANCED COMBO: Hull MA + MFI + Keltner + WaveTrend"
 	}
 	return "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
 }
 
 // getComboDescription returns a concise description of the combo type
-func getComboDescription(useNewCombo bool) string {
-	if useNewCombo {
+func getComboDescription(useAdvancedCombo bool) string {
+	if useAdvancedCombo {
 		return "Hull MA + MFI + Keltner Channels + WaveTrend"
 	}
 	return "RSI + MACD + Bollinger Bands + EMA"
@@ -1883,12 +1962,12 @@ func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 			TPPercent:      cfg.TPPercent,
 			Cycle:          cfg.Cycle,
 			Indicators:     cfg.Indicators,
-			UseNewCombo:    cfg.UseNewCombo,
+			UseAdvancedCombo:    cfg.UseAdvancedCombo,
 		}
 		
 		// Add combo-specific configurations based on what was used
-		if cfg.UseNewCombo {
-			// Only include new combo parameters
+		if cfg.UseAdvancedCombo {
+			// Only include advanced combo parameters
 			strategyConfig.HullMA = &HullMAConfig{
 				Period: cfg.HullMAPeriod,
 			}

@@ -85,7 +85,19 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		return &TradeDecision{Action: ActionHold, Reason: "No indicators configured"}, nil
 	}
 
-	confidence := float64(buySignals) / float64(totalIndicators)
+	// Only consider indicators that gave active signals (buy or sell)
+	activeSignals := buySignals + sellSignals
+	
+	// If no indicators are giving active signals, hold
+	if activeSignals == 0 {
+		return &TradeDecision{
+			Action: ActionHold, 
+			Reason: "No active buy/sell signals from indicators",
+		}, nil
+	}
+	
+	// Calculate confidence based on active signals only
+	confidence := float64(buySignals) / float64(activeSignals)
 
 	if confidence >= s.minConfidence {
 		// Apply price threshold check for DCA entries
