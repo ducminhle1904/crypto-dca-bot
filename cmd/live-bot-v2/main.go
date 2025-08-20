@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -21,7 +20,6 @@ func main() {
 		exchangeName = flag.String("exchange", "", "Exchange name (bybit, binance) - overrides config")
 		demo         = flag.Bool("demo", true, "Use demo trading environment - paper trading (default: true)")
 		envFile      = flag.String("env", ".env", "Environment file path (default: .env)")
-		legacy       = flag.Bool("legacy", false, "Convert legacy config format to new format")
 	)
 	flag.Parse()
 
@@ -36,62 +34,30 @@ func main() {
 
 	fmt.Println("🚀 DCA Bot Starting...")
 
-	var botConfig *config.LiveBotConfig
-	var err error
-
-	if *legacy {
-		// Convert legacy config to new format
-		if *exchangeName == "" {
-			*exchangeName = "bybit" // Default for legacy configs
-		}
-		
-		fmt.Printf("🔄 Converting legacy config format for %s...\n", *exchangeName)
-		botConfig, err = config.MigrateFromLegacyConfig(*configFile, *exchangeName)
-		if err != nil {
-			log.Fatalf("Failed to migrate legacy config: %v", err)
-		}
-		
-		// Apply demo mode override
-		if *demo {
-			switch strings.ToLower(*exchangeName) {
-			case "bybit":
-				if botConfig.Exchange.Bybit != nil {
-					botConfig.Exchange.Bybit.Demo = true
-					botConfig.Exchange.Bybit.Testnet = false
-				}
-			case "binance":
-				if botConfig.Exchange.Binance != nil {
-					botConfig.Exchange.Binance.Demo = false // Binance doesn't have demo
-					botConfig.Exchange.Binance.Testnet = true
-				}
+	// Load config file
+	botConfig, err := config.LoadLiveBotConfig(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	
+	// Apply exchange override if specified
+	if *exchangeName != "" {
+		botConfig.Exchange.Name = *exchangeName
+		fmt.Printf("🔧 Exchange overridden to: %s\n", *exchangeName)
+	}
+	
+	// Apply demo mode override if specified
+	if *demo {
+		switch strings.ToLower(botConfig.Exchange.Name) {
+		case "bybit":
+			if botConfig.Exchange.Bybit != nil {
+				botConfig.Exchange.Bybit.Demo = true
+				botConfig.Exchange.Bybit.Testnet = false
 			}
-		}
-	} else {
-		// Load new config format
-		botConfig, err = config.LoadLiveBotConfig(*configFile)
-		if err != nil {
-			log.Fatalf("Failed to load config: %v", err)
-		}
-		
-		// Apply exchange override if specified
-		if *exchangeName != "" {
-			botConfig.Exchange.Name = *exchangeName
-			fmt.Printf("🔧 Exchange overridden to: %s\n", *exchangeName)
-		}
-		
-		// Apply demo mode override if specified
-		if *demo {
-			switch strings.ToLower(botConfig.Exchange.Name) {
-			case "bybit":
-				if botConfig.Exchange.Bybit != nil {
-					botConfig.Exchange.Bybit.Demo = true
-					botConfig.Exchange.Bybit.Testnet = false
-				}
-			case "binance":
-				if botConfig.Exchange.Binance != nil {
-					botConfig.Exchange.Binance.Demo = false // Binance doesn't have demo
-					botConfig.Exchange.Binance.Testnet = true
-				}
+		case "binance":
+			if botConfig.Exchange.Binance != nil {
+				botConfig.Exchange.Binance.Demo = false // Binance doesn't have demo
+				botConfig.Exchange.Binance.Testnet = true
 			}
 		}
 	}
@@ -183,38 +149,4 @@ func ensureAPICredentials(config *config.LiveBotConfig) error {
 	return nil
 }
 
-// extractTradingParams extracts trading parameters from legacy config filename
-// This is kept for backward compatibility when using -legacy flag
-func extractTradingParams(configFile string) (interval string) {
-	// Get base filename without extension
-	basename := filepath.Base(configFile)
-	if ext := filepath.Ext(basename); ext != "" {
-		basename = strings.TrimSuffix(basename, ext)
-	}
 
-	// Extract interval from filename (e.g., btc_15m.json -> 15m)
-	parts := strings.Split(basename, "_")
-	if len(parts) >= 2 {
-		intervalPart := parts[len(parts)-1] // Last part should be interval
-		
-		// Convert common intervals to standard format
-		switch intervalPart {
-		case "1m", "3m", "5m", "15m", "30m":
-			return strings.TrimSuffix(intervalPart, "m")
-		case "1h":
-			return "60"
-		case "4h":
-			return "240"
-		case "1d":
-			return "D"
-		default:
-			// Try to extract number from string like "5m" -> "5"
-			if strings.HasSuffix(intervalPart, "m") {
-				return strings.TrimSuffix(intervalPart, "m")
-			}
-		}
-	}
-
-	// Default to 5 minutes
-	return "5"
-}

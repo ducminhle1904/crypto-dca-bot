@@ -42,15 +42,6 @@ To run in live mode with real funds, set the `-demo` flag to `false`:
 ./live-bot-v2 -config configs/bybit/btc_5m_bybit.json -demo=false
 ```
 
-## migrating From V1
-
-The V2 bot can automatically convert a V1 configuration file to the new format using the `-legacy` flag:
-
-```bash
-# Convert a legacy config file for use with Bybit
-./live-bot-v2 -config configs/btc_5.json -legacy -exchange bybit -demo
-```
-
 ## 📋 Command-Line Flags
 
 | Flag        | Description                                     | Default |
@@ -58,7 +49,6 @@ The V2 bot can automatically convert a V1 configuration file to the new format u
 | `-config`   | Path to the configuration file.                 | -       |
 | `-exchange` | The exchange to use (e.g., `bybit`, `binance`). | -       |
 | `-demo`     | Set to `false` to enable live trading.          | `true`  |
-| `-legacy`   | Set to `true` to convert a V1 config file.      | `false` |
 | `-env`      | Path to the environment file.                   | `.env`  |
 
 ## ⚙️ Configuration

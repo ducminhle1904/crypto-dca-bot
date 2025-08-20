@@ -164,7 +164,7 @@ type OrderListResponse struct {
 			Qty           string `json:"qty"`
 			Side          string `json:"side"`
 			IsLeverage    string `json:"isLeverage"`
-			PositionIdx   int    `json:"positionIdx"`
+
 			OrderStatus   string `json:"orderStatus"`
 			CancelType    string `json:"cancelType"`
 			RejectReason  string `json:"rejectReason"`

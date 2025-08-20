@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -27,19 +28,25 @@ func (bot *LiveBot) syncPositionData() error {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
 			positionValue := parseFloat(pos.PositionValue)
 			avgPrice := parseFloat(pos.AvgPrice)
+			positionSize := parseFloat(pos.Size)
 			
 			if positionValue > 0 && avgPrice > 0 {
+				// Use exchange data directly - no self-calculation
 				bot.currentPosition = positionValue
 				bot.averagePrice = avgPrice
 				bot.totalInvested = positionValue
 				
-				// Estimate DCA level based on position size vs base amount
-				if bot.config.Strategy.BaseAmount > 0 {
-					estimatedLevel := int(positionValue / bot.config.Strategy.BaseAmount)
-					if estimatedLevel > bot.dcaLevel {
-						bot.dcaLevel = estimatedLevel
-					}
+				// Only estimate DCA level if we don't have it tracked properly
+				// This is a fallback for when bot restarts mid-DCA cycle
+				if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
+					estimatedLevel := max(1, int(positionValue / bot.config.Strategy.BaseAmount))
+					bot.dcaLevel = estimatedLevel
+					log.Printf("🔄 Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
+						bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
 				}
+				
+				log.Printf("📊 Position synced - Size: %.6f, Value: $%.2f, Entry: $%.2f, PnL: %s", 
+					positionSize, positionValue, avgPrice, pos.UnrealisedPnl)
 				return nil
 			}
 		}
@@ -47,6 +54,7 @@ func (bot *LiveBot) syncPositionData() error {
 	
 	// No position found - reset state if bot thinks it has one
 	if bot.currentPosition > 0 {
+		log.Printf("🔄 No exchange position found - resetting bot state")
 		bot.currentPosition = 0
 		bot.averagePrice = 0
 		bot.totalInvested = 0
@@ -58,7 +66,7 @@ func (bot *LiveBot) syncPositionData() error {
 
 // closeOpenPositions closes all open positions using real position data
 func (bot *LiveBot) closeOpenPositions() error {
-	fmt.Printf("🔍 Checking for open positions to close...\n")
+	bot.logger.Info("🔍 Checking for open positions to close...")
 	
 	ctx := context.Background()
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
@@ -74,7 +82,7 @@ func (bot *LiveBot) closeOpenPositions() error {
 				continue
 			}
 			
-			fmt.Printf("🚨 Closing position: %s %s (value: $%s)\n", pos.Size, pos.Symbol, pos.PositionValue)
+			bot.logger.Info("🚨 Closing position: %s %s (value: $%s)", pos.Size, pos.Symbol, pos.PositionValue)
 			
 			// Get current price for P&L calculation
 			currentPrice, err := bot.exchange.GetLatestPrice(ctx, bot.symbol)
@@ -103,12 +111,8 @@ func (bot *LiveBot) closeOpenPositions() error {
 			profit := saleValue - positionValue
 			profitPercent := (profit / positionValue) * 100
 			
-			fmt.Printf("🔄 POSITION CLOSED (SHUTDOWN)\n")
-			fmt.Printf("   Order ID: %s\n", order.OrderID)
-			fmt.Printf("   Quantity: %s %s\n", pos.Size, bot.symbol)
-			fmt.Printf("   Entry Price: $%.2f\n", avgPrice)
-			fmt.Printf("   Exit Price: $%.2f\n", currentPrice)
-			fmt.Printf("   P&L: $%.2f (%.2f%%)\n", profit, profitPercent)
+			bot.logger.Info("🔄 POSITION CLOSED (SHUTDOWN) - Order: %s, Qty: %s %s, Entry: $%.2f, Exit: $%.2f, P&L: $%.2f (%.2f%%)", 
+				order.OrderID, pos.Size, bot.symbol, avgPrice, currentPrice, profit, profitPercent)
 			
 			// Reset bot state
 			bot.currentPosition = 0
@@ -118,44 +122,24 @@ func (bot *LiveBot) closeOpenPositions() error {
 			
 			// Refresh balance after closing position
 			if err := bot.syncAccountBalance(); err != nil {
-				fmt.Printf("⚠️ Could not refresh balance after closing position: %v\n", err)
+				bot.logger.LogWarning("Balance refresh", "Could not refresh balance after closing position: %v", err)
 			}
 			
 			return nil // Only close one position at a time
 		}
 	}
 	
-	fmt.Printf("✅ No open positions to close\n")
+	bot.logger.Info("✅ No open positions to close")
 	return nil
 }
 
-// logStatus logs the current trading status
-func (bot *LiveBot) logStatus(currentPrice float64, action string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	
-	fmt.Printf("\n[%s] 📊 Market Status\n", timestamp)
-	fmt.Printf("💰 Price: $%.2f | Action: %s\n", currentPrice, action)
-	fmt.Printf("💼 Balance: $%.2f | Notional Position: $%.2f\n", bot.balance, bot.currentPosition)
-	
-	if bot.currentPosition > 0 && bot.averagePrice > 0 {
-		// Calculate current value based on price change from average
-		priceRatio := currentPrice / bot.averagePrice
-		currentValue := bot.totalInvested * priceRatio
-		unrealizedPnL := currentValue - bot.totalInvested
-		unrealizedPercent := (currentPrice - bot.averagePrice) / bot.averagePrice * 100
-		
-		fmt.Printf("📈 Entry Price: $%.2f | Current Value: $%.2f\n", bot.averagePrice, currentValue)
-		fmt.Printf("📊 Unrealized P&L: $%.2f (%.2f%%) | DCA Level: %d\n", unrealizedPnL, unrealizedPercent, bot.dcaLevel)
-		fmt.Printf("💰 Margin Used: $%.2f (10x leverage)\n", bot.totalInvested/10)
-	} else {
-		fmt.Printf("📊 No active position\n")
-	}
-	fmt.Println(strings.Repeat("-", 50))
-}
+
 
 // getIntervalDuration converts interval string to time.Duration
 func (bot *LiveBot) getIntervalDuration() time.Duration {
-	switch bot.interval {
+	normalizedInterval := normalizeInterval(bot.interval)
+	
+	switch normalizedInterval {
 	case "1":
 		return 1 * time.Minute
 	case "3":
@@ -173,19 +157,63 @@ func (bot *LiveBot) getIntervalDuration() time.Duration {
 	case "D":
 		return 24 * time.Hour
 	default:
-		// Try to parse as minutes
-		if minutes, err := strconv.Atoi(bot.interval); err == nil {
+		// Try to parse as minutes for any numeric values
+		if minutes, err := strconv.Atoi(normalizedInterval); err == nil {
 			return time.Duration(minutes) * time.Minute
 		}
-		return 1 * time.Hour // Default
+		log.Printf("⚠️ Unknown interval format '%s' (normalized: '%s'), defaulting to 5 minutes", bot.interval, normalizedInterval)
+		return 5 * time.Minute // Safer default than 1 hour
 	}
+}
+
+// normalizeInterval converts various interval formats to a standard numeric format
+func normalizeInterval(interval string) string {
+	interval = strings.ToLower(interval)
+	
+	// Handle standard formats with units - convert to numeric
+	switch interval {
+	case "1m":
+		return "1"
+	case "3m":
+		return "3"
+	case "5m":
+		return "5"
+	case "15m":
+		return "15"
+	case "30m":
+		return "30"
+	case "1h":
+		return "60"
+	case "4h":
+		return "240"
+	case "1d":
+		return "D"
+	}
+	
+	// Try to parse formats like "123m"
+	if strings.HasSuffix(interval, "m") {
+		if minutes, err := strconv.Atoi(strings.TrimSuffix(interval, "m")); err == nil {
+			return strconv.Itoa(minutes)
+		}
+	}
+	
+	// Try to parse formats like "2h"
+	if strings.HasSuffix(interval, "h") {
+		if hours, err := strconv.Atoi(strings.TrimSuffix(interval, "h")); err == nil {
+			return strconv.Itoa(hours * 60) // Convert to minutes
+		}
+	}
+	
+	// Return as-is for numeric formats
+	return interval
 }
 
 // getTimeUntilNextCandle calculates how long to wait until the next candle closes
 func (bot *LiveBot) getTimeUntilNextCandle() time.Duration {
 	now := time.Now().UTC()
+	normalizedInterval := normalizeInterval(bot.interval)
 	
-	switch bot.interval {
+	switch normalizedInterval {
 	case "1":
 		next := now.Truncate(time.Minute).Add(time.Minute)
 		return next.Sub(now)
@@ -247,8 +275,8 @@ func (bot *LiveBot) getTimeUntilNextCandle() time.Duration {
 		next := now.Truncate(24 * time.Hour).Add(24 * time.Hour)
 		return next.Sub(now)
 	default:
-		// Try to parse as minutes for custom intervals
-		if minutes, err := strconv.Atoi(bot.interval); err == nil {
+		// Try to parse normalized interval as minutes for custom intervals
+		if minutes, err := strconv.Atoi(normalizedInterval); err == nil {
 			intervalMinutes := minutes
 			currentMinutes := now.Minute()
 			nextMinute := ((currentMinutes / intervalMinutes) + 1) * intervalMinutes
@@ -262,6 +290,7 @@ func (bot *LiveBot) getTimeUntilNextCandle() time.Duration {
 		}
 		
 		// Fallback to 5-minute alignment
+		log.Printf("⚠️ Unknown interval format '%s' (normalized: '%s'), using 5-minute alignment", bot.interval, normalizedInterval)
 		minutes := now.Minute()
 		nextMinute := ((minutes / 5) + 1) * 5
 		if nextMinute >= 60 {
@@ -405,3 +434,5 @@ func determineTradingCategory(exchangeName, symbol string) string {
 		return "spot" // Default fallback
 	}
 }
+
+

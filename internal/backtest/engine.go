@@ -322,6 +322,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	return b.results
 }
 
+
+
 func (b *BacktestResults) PrintSummary() {
 	fmt.Printf("=== Backtest Results ===\n")
 	fmt.Printf("Initial Balance: $%.2f\n", b.StartBalance)

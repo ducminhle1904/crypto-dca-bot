@@ -41,15 +41,25 @@ type StrategyConfig struct {
 	TPPercent float64 `json:"tp_percent"` // Take profit percentage
 	Cycle     bool    `json:"cycle"`      // Whether to cycle after take profit
 	
+	// Combo selection
+	UseAdvancedCombo bool `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
+	
 	// Technical indicators
 	Indicators []string `json:"indicators"` // List of indicators to use
 	
-	// Indicator parameters
+	// Classic combo indicator parameters
 	RSI IndicatorRSIConfig `json:"rsi"`
 	MACD IndicatorMACDConfig `json:"macd"`  
 	BollingerBands IndicatorBBConfig `json:"bollinger_bands"`
 	EMA IndicatorEMAConfig `json:"ema"`
+	
+	// Advanced combo indicator parameters
+	HullMA      IndicatorHullMAConfig      `json:"hull_ma"`
+	MFI         IndicatorMFIConfig         `json:"mfi"`
+	Keltner     IndicatorKeltnerConfig     `json:"keltner_channels"`
+	WaveTrend   IndicatorWaveTrendConfig   `json:"wavetrend"`
 }
+
 
 // IndicatorRSIConfig holds RSI indicator configuration
 type IndicatorRSIConfig struct {
@@ -74,6 +84,32 @@ type IndicatorBBConfig struct {
 // IndicatorEMAConfig holds EMA configuration
 type IndicatorEMAConfig struct {
 	Period int `json:"period"` // EMA calculation period
+}
+
+// IndicatorHullMAConfig holds Hull Moving Average configuration
+type IndicatorHullMAConfig struct {
+	Period int `json:"period"` // Hull MA calculation period
+}
+
+// IndicatorMFIConfig holds Money Flow Index configuration
+type IndicatorMFIConfig struct {
+	Period     int     `json:"period"`      // MFI calculation period
+	Oversold   float64 `json:"oversold"`    // Oversold threshold
+	Overbought float64 `json:"overbought"`  // Overbought threshold
+}
+
+// IndicatorKeltnerConfig holds Keltner Channels configuration
+type IndicatorKeltnerConfig struct {
+	Period     int     `json:"period"`     // Keltner period
+	Multiplier float64 `json:"multiplier"` // ATR multiplier
+}
+
+// IndicatorWaveTrendConfig holds WaveTrend configuration
+type IndicatorWaveTrendConfig struct {
+	N1         int     `json:"n1"`          // First EMA length for channel calculation
+	N2         int     `json:"n2"`          // Second EMA length for average calculation
+	Oversold   float64 `json:"oversold"`    // Oversold threshold
+	Overbought float64 `json:"overbought"`  // Overbought threshold
 }
 
 // RiskConfig holds risk management configuration
@@ -142,6 +178,8 @@ func (c *LiveBotConfig) setDefaults() error {
 		c.Strategy.Interval = "5m"
 	}
 
+
+
 	// RSI defaults
 	if c.Strategy.RSI.Period == 0 {
 		c.Strategy.RSI.Period = 14
@@ -177,6 +215,45 @@ func (c *LiveBotConfig) setDefaults() error {
 		c.Strategy.EMA.Period = 21
 	}
 
+	// Advanced combo indicator defaults
+	// Hull MA defaults
+	if c.Strategy.HullMA.Period == 0 {
+		c.Strategy.HullMA.Period = 20
+	}
+
+	// MFI defaults
+	if c.Strategy.MFI.Period == 0 {
+		c.Strategy.MFI.Period = 14
+	}
+	if c.Strategy.MFI.Oversold == 0 {
+		c.Strategy.MFI.Oversold = 20
+	}
+	if c.Strategy.MFI.Overbought == 0 {
+		c.Strategy.MFI.Overbought = 80
+	}
+
+	// Keltner defaults
+	if c.Strategy.Keltner.Period == 0 {
+		c.Strategy.Keltner.Period = 20
+	}
+	if c.Strategy.Keltner.Multiplier == 0 {
+		c.Strategy.Keltner.Multiplier = 2.0
+	}
+
+	// WaveTrend defaults
+	if c.Strategy.WaveTrend.N1 == 0 {
+		c.Strategy.WaveTrend.N1 = 10
+	}
+	if c.Strategy.WaveTrend.N2 == 0 {
+		c.Strategy.WaveTrend.N2 = 21
+	}
+	if c.Strategy.WaveTrend.Oversold == 0 {
+		c.Strategy.WaveTrend.Oversold = -60
+	}
+	if c.Strategy.WaveTrend.Overbought == 0 {
+		c.Strategy.WaveTrend.Overbought = 60
+	}
+
 	// Risk defaults
 	if c.Risk.InitialBalance == 0 {
 		c.Risk.InitialBalance = 1000.0
@@ -209,6 +286,8 @@ func (c *LiveBotConfig) validate() error {
 		return fmt.Errorf("price threshold must be between 0 and 1.0")
 	}
 
+
+
 	// Validate risk config
 	if c.Risk.InitialBalance <= 0 {
 		return fmt.Errorf("initial balance must be greater than 0")
@@ -223,97 +302,4 @@ func (c *LiveBotConfig) validate() error {
 	return nil
 }
 
-// MigrateFromLegacyConfig converts old config format to new format
-func MigrateFromLegacyConfig(legacyConfigFile string, exchangeName string) (*LiveBotConfig, error) {
-	// Legacy config structure (matching current main.go BotConfig)
-	type LegacyBotConfig struct {
-		DataFile        string    `json:"data_file"`
-		Symbol          string    `json:"symbol"`
-		InitialBalance  float64   `json:"initial_balance"`
-		Commission      float64   `json:"commission"`
-		WindowSize      int       `json:"window_size"`
-		BaseAmount      float64   `json:"base_amount"`
-		MaxMultiplier   float64   `json:"max_multiplier"`
-		PriceThreshold  float64   `json:"price_threshold"`
-		RSIPeriod       int       `json:"rsi_period"`
-		RSIOversold     float64   `json:"rsi_oversold"`
-		RSIOverbought   float64   `json:"rsi_overbought"`
-		MACDFast        int       `json:"macd_fast"`
-		MACDSlow        int       `json:"macd_slow"`
-		MACDSignal      int       `json:"macd_signal"`
-		BBPeriod        int       `json:"bb_period"`
-		BBStdDev        float64   `json:"bb_std_dev"`
-		EMAPeriod       int       `json:"ema_period"`
-		Indicators      []string  `json:"indicators"`
-		TPPercent       float64   `json:"tp_percent"`
-		Cycle           bool      `json:"cycle"`
-	}
 
-	// Load legacy config
-	data, err := os.ReadFile(legacyConfigFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read legacy config: %w", err)
-	}
-
-	var legacy LegacyBotConfig
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, fmt.Errorf("failed to parse legacy config: %w", err)
-	}
-
-	// Convert to new format
-	newConfig := &LiveBotConfig{
-		Strategy: StrategyConfig{
-			Symbol:         legacy.Symbol,
-			BaseAmount:     legacy.BaseAmount,
-			MaxMultiplier:  legacy.MaxMultiplier,
-			PriceThreshold: legacy.PriceThreshold,
-			Interval:       "5m", // Default, will be extracted from filename later
-			WindowSize:     legacy.WindowSize,
-			TPPercent:      legacy.TPPercent,
-			Cycle:          legacy.Cycle,
-			Indicators:     legacy.Indicators,
-			RSI: IndicatorRSIConfig{
-				Period:     legacy.RSIPeriod,
-				Oversold:   legacy.RSIOversold,
-				Overbought: legacy.RSIOverbought,
-			},
-			MACD: IndicatorMACDConfig{
-				FastPeriod:   legacy.MACDFast,
-				SlowPeriod:   legacy.MACDSlow,
-				SignalPeriod: legacy.MACDSignal,
-			},
-			BollingerBands: IndicatorBBConfig{
-				Period: legacy.BBPeriod,
-				StdDev: legacy.BBStdDev,
-			},
-			EMA: IndicatorEMAConfig{
-				Period: legacy.EMAPeriod,
-			},
-		},
-		Risk: RiskConfig{
-			InitialBalance: legacy.InitialBalance,
-			Commission:     legacy.Commission,
-		},
-		Exchange: exchange.ExchangeConfig{
-			Name: exchangeName,
-		},
-	}
-
-	// Set exchange-specific config from environment
-	switch strings.ToLower(exchangeName) {
-	case "bybit":
-		newConfig.Exchange.Bybit = &exchange.BybitConfig{
-			APIKey:    os.Getenv("BYBIT_API_KEY"),
-			APISecret: os.Getenv("BYBIT_API_SECRET"),
-			Demo:      true, // Default to demo mode for safety
-		}
-	case "binance":
-		newConfig.Exchange.Binance = &exchange.BinanceConfig{
-			APIKey:    os.Getenv("BINANCE_API_KEY"),
-			APISecret: os.Getenv("BINANCE_API_SECRET"),
-			Testnet:   true, // Default to testnet for safety
-		}
-	}
-
-	return newConfig, nil
-}

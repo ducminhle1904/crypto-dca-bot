@@ -468,7 +468,6 @@ type FuturesOrderParams struct {
 	StopLoss      string      `json:"stopLoss,omitempty"`    // Stop loss price
 	ReduceOnly    bool        `json:"reduceOnly,omitempty"`  // Reduce only flag
 	CloseOnTrigger bool       `json:"closeOnTrigger,omitempty"` // Close on trigger
-	PositionIdx   int         `json:"positionIdx,omitempty"` // Position index (0: one-way, 1: hedge buy, 2: hedge sell)
 	TriggerPrice  string      `json:"triggerPrice,omitempty"` // Trigger price for conditional orders
 	TriggerBy     string      `json:"triggerBy,omitempty"`    // Trigger price type
 	TpTriggerBy   string      `json:"tpTriggerBy,omitempty"`  // TP trigger price type
@@ -491,7 +490,7 @@ type PositionInfo struct {
 	TakeProfit     string    `json:"takeProfit"`
 	StopLoss       string    `json:"stopLoss"`
 	TrailingStop   string    `json:"trailingStop"`
-	PositionIdx    int       `json:"positionIdx"`
+
 	RiskId         int       `json:"riskId"`
 	RiskLimitValue string    `json:"riskLimitValue"`
 	CreatedTime    time.Time `json:"createdTime"`
@@ -558,9 +557,7 @@ func (c *Client) PlaceFuturesOrder(ctx context.Context, params FuturesOrderParam
 	if params.CloseOnTrigger {
 		apiParams["closeOnTrigger"] = params.CloseOnTrigger
 	}
-	if params.PositionIdx != 0 {
-		apiParams["positionIdx"] = params.PositionIdx
-	}
+
 	if params.TriggerPrice != "" {
 		apiParams["triggerPrice"] = params.TriggerPrice
 	}
@@ -590,21 +587,20 @@ func (c *Client) PlaceFuturesOrder(ctx context.Context, params FuturesOrderParam
 }
 
 // PlaceFuturesMarketOrder places a market order for futures (simplified method)
-func (c *Client) PlaceFuturesMarketOrder(ctx context.Context, category, symbol string, side OrderSide, qty string, positionIdx int) (*Order, error) {
+func (c *Client) PlaceFuturesMarketOrder(ctx context.Context, category, symbol string, side OrderSide, qty string) (*Order, error) {
 	params := FuturesOrderParams{
 		Category:    category,
 		Symbol:      symbol,
 		Side:        side,
 		OrderType:   OrderTypeMarket,
 		Qty:         qty,
-		PositionIdx: positionIdx,
 	}
 
 	return c.PlaceFuturesOrder(ctx, params)
 }
 
 // PlaceFuturesLimitOrder places a limit order for futures (simplified method)
-func (c *Client) PlaceFuturesLimitOrder(ctx context.Context, category, symbol string, side OrderSide, qty, price string, positionIdx int) (*Order, error) {
+func (c *Client) PlaceFuturesLimitOrder(ctx context.Context, category, symbol string, side OrderSide, qty, price string) (*Order, error) {
 	params := FuturesOrderParams{
 		Category:    category,
 		Symbol:      symbol,
@@ -613,7 +609,6 @@ func (c *Client) PlaceFuturesLimitOrder(ctx context.Context, category, symbol st
 		Qty:         qty,
 		Price:       price,
 		TimeInForce: TimeInForceGTC,
-		PositionIdx: positionIdx,
 	}
 
 	return c.PlaceFuturesOrder(ctx, params)
@@ -668,55 +663,9 @@ func (c *Client) SetLeverage(ctx context.Context, category, symbol string, buyLe
 	return nil
 }
 
-// SetTradingStop sets take profit and stop loss for a position
-func (c *Client) SetTradingStop(ctx context.Context, category, symbol string, positionIdx int, takeProfit, stopLoss string) error {
-	if category == "" {
-		category = "linear"
-	}
 
-	params := map[string]interface{}{
-		"category":    category,
-		"symbol":      symbol,
-		"positionIdx": positionIdx,
-	}
 
-	if takeProfit != "" {
-		params["takeProfit"] = takeProfit
-	}
-	if stopLoss != "" {
-		params["stopLoss"] = stopLoss
-	}
 
-	_, err := c.httpClient.NewUtaBybitServiceWithParams(params).SetPositionTradingStop(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to set trading stop: %w", err)
-	}
-
-	return nil
-}
-
-// SwitchPositionMode switches between one-way and hedge position modes
-func (c *Client) SwitchPositionMode(ctx context.Context, category, symbol, mode string) error {
-	if category == "" {
-		category = "linear"
-	}
-
-	params := map[string]interface{}{
-		"category": category,
-		"mode":     mode, // 0: one-way mode, 3: hedge mode
-	}
-
-	if symbol != "" {
-		params["symbol"] = symbol
-	}
-
-	_, err := c.httpClient.NewUtaBybitServiceWithParams(params).SwitchPositionMode(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to switch position mode: %w", err)
-	}
-
-	return nil
-}
 
 // parsePositionsResponse parses the positions API response
 func (c *Client) parsePositionsResponse(response interface{}) ([]PositionInfo, error) {
@@ -752,7 +701,7 @@ func (c *Client) parsePositionsResponse(response interface{}) ([]PositionInfo, e
 			TakeProfit     string `json:"takeProfit"`
 			StopLoss       string `json:"stopLoss"`
 			TrailingStop   string `json:"trailingStop"`
-			PositionIdx    int    `json:"positionIdx"`
+
 			RiskId         int    `json:"riskId"`
 			RiskLimitValue string `json:"riskLimitValue"`
 			CreatedTime    string `json:"createdTime"`
@@ -783,7 +732,7 @@ func (c *Client) parsePositionsResponse(response interface{}) ([]PositionInfo, e
 			TakeProfit:     posData.TakeProfit,
 			StopLoss:       posData.StopLoss,
 			TrailingStop:   posData.TrailingStop,
-			PositionIdx:    posData.PositionIdx,
+
 			RiskId:         posData.RiskId,
 			RiskLimitValue: posData.RiskLimitValue,
 			CreatedTime:    parseTimestamp(posData.CreatedTime),

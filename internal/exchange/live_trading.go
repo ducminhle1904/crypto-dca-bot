@@ -130,6 +130,8 @@ type Position struct {
 	MarkPrice       string `json:"mark_price"`       // Current mark price
 	UnrealisedPnl   string `json:"unrealised_pnl"`   // Unrealized P&L
 	Leverage        string `json:"leverage"`         // Position leverage
+	PositionIM      string `json:"position_im"`      // Initial Margin
+	PositionMM      string `json:"position_mm"`      // Maintenance Margin
 	CreatedTime     time.Time `json:"created_time"`
 	UpdatedTime     time.Time `json:"updated_time"`
 }

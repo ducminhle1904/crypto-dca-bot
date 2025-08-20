@@ -2,7 +2,7 @@
   "strategy": {
     "symbol": "SUIUSDT",
     "base_amount": 40,
-    "max_multiplier": 3,
+    "max_multiplier": 2,
     "price_threshold": 0.01,
     "interval": "5m",
     "window_size": 100,
@@ -14,18 +14,18 @@
       "period": 10
     },
     "mfi": {
-      "period": 20,
-      "oversold": 20,
-      "overbought": 85
+      "period": 22,
+      "oversold": 30,
+      "overbought": 80
     },
     "keltner_channels": {
-      "period": 50,
-      "multiplier": 1.5
+      "period": 25,
+      "multiplier": 2
     },
     "wavetrend": {
-      "n1": 20,
-      "n2": 35,
-      "overbought": 70,
+      "n1": 10,
+      "n2": 21,
+      "overbought": 50,
       "oversold": -70
     }
   },

@@ -1,12 +1,12 @@
 {
   "strategy": {
-    "symbol": "BTCUSDT",
-    "base_amount": 100,
-    "max_multiplier": 1.5,
-    "price_threshold": 0.01,
+    "symbol": "ARBUSDT",
+    "base_amount": 40,
+    "max_multiplier": 3,
+    "price_threshold": 0.025,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.055,
+    "tp_percent": 0.015,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
     "use_advanced_combo": true,
@@ -15,8 +15,8 @@
     },
     "mfi": {
       "period": 12,
-      "oversold": 15,
-      "overbought": 85
+      "oversold": 30,
+      "overbought": 80
     },
     "keltner_channels": {
       "period": 15,
@@ -24,9 +24,9 @@
     },
     "wavetrend": {
       "n1": 12,
-      "n2": 21,
+      "n2": 18,
       "overbought": 80,
-      "oversold": -80
+      "oversold": -50
     }
   },
   "exchange": {
@@ -41,7 +41,7 @@
   "risk": {
     "initial_balance": 500,
     "commission": 0.0005,
-    "min_order_qty": 0.001
+    "min_order_qty": 0.1
   },
   "notifications": {
     "enabled": false,

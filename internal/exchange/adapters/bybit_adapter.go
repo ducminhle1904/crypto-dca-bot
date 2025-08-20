@@ -171,6 +171,8 @@ func (b *BybitAdapter) GetPositions(ctx context.Context, category, symbol string
 			MarkPrice:       pos.MarkPrice,
 			UnrealisedPnl:   pos.UnrealisedPnl,
 			Leverage:        "1", // Default leverage - Bybit doesn't expose this in PositionInfo
+			PositionIM:      pos.PositionIM,  // Initial Margin from exchange
+			PositionMM:      pos.PositionMM,  // Maintenance Margin from exchange
 			CreatedTime:     pos.CreatedTime,
 			UpdatedTime:     pos.UpdatedTime,
 		}

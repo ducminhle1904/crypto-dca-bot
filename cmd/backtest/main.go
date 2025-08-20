@@ -186,6 +186,7 @@ func logProgress(format string, args ...interface{}) {
 type BacktestConfig struct {
 	DataFile       string  `json:"data_file"`
 	Symbol         string  `json:"symbol"`
+	Interval       string  `json:"interval"`        // Trading interval (5m, 1h, etc.)
 	InitialBalance float64 `json:"initial_balance"`
 	Commission     float64 `json:"commission"`
 	WindowSize     int     `json:"window_size"`
@@ -334,10 +335,51 @@ type WaveTrendConfig struct {
 	Oversold    float64 `json:"oversold"`
 }
 
+// convertIntervalToMinutes converts interval strings like "5m", "1h", "4h" to minute numbers
+func convertIntervalToMinutes(interval string) string {
+	// If it's already just a number, return as-is
+	if _, err := strconv.Atoi(interval); err == nil {
+		return interval
+	}
+	
+	// Parse interval string
+	interval = strings.ToLower(strings.TrimSpace(interval))
+	
+	// Extract number and unit
+	if len(interval) < 2 {
+		return interval // Invalid format, return as-is
+	}
+	
+	numStr := interval[:len(interval)-1]
+	unit := interval[len(interval)-1:]
+	
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		return interval // Invalid number, return as-is
+	}
+	
+	// Convert to minutes
+	switch unit {
+	case "m":
+		return strconv.Itoa(num)
+	case "h":
+		return strconv.Itoa(num * 60)
+	case "d":
+		return strconv.Itoa(num * 24 * 60)
+	case "w":
+		return strconv.Itoa(num * 7 * 24 * 60)
+	default:
+		return interval // Unknown unit, return as-is
+	}
+}
+
 // findDataFile attempts to locate data files for a specific exchange
 // Structure: data/{exchange}/{category}/{symbol}/{interval}/candles.csv
 func findDataFile(dataRoot, exchange, symbol, interval string) string {
 	symbol = strings.ToUpper(symbol)
+	
+	// Convert interval to minutes (5m -> 5, 1h -> 60, etc.)
+	intervalMinutes := convertIntervalToMinutes(interval)
 	
 	// Define categories by exchange
 	var categories []string
@@ -352,14 +394,14 @@ func findDataFile(dataRoot, exchange, symbol, interval string) string {
 	
 	// Check each category for the exchange
 	for _, category := range categories {
-		path := filepath.Join(dataRoot, exchange, category, symbol, interval, "candles.csv")
+		path := filepath.Join(dataRoot, exchange, category, symbol, intervalMinutes, "candles.csv")
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 	
 	// If no existing file found, return the preferred structure (first category for the exchange)
-	return filepath.Join(dataRoot, exchange, categories[0], symbol, interval, "candles.csv")
+	return filepath.Join(dataRoot, exchange, categories[0], symbol, intervalMinutes, "candles.csv")
 }
 
 func main() {
@@ -427,7 +469,14 @@ func main() {
 	// Resolve data file from symbol/interval if not explicitly provided and not scanning all intervals
 	if !*allIntervals && strings.TrimSpace(cfg.DataFile) == "" {
 		sym := strings.ToUpper(cfg.Symbol)
-		cfg.DataFile = findDataFile(*dataRoot, *exchange, sym, *intervalFlag)
+		
+		// Prefer interval from config file over command line flag
+		interval := *intervalFlag
+		if cfg.Interval != "" {
+			interval = cfg.Interval
+		}
+		
+		cfg.DataFile = findDataFile(*dataRoot, *exchange, sym, interval)
 	}
 	
 	// Fetch minimum order quantity from Bybit before backtesting
@@ -614,6 +663,7 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 	cfg := &BacktestConfig{
 		DataFile:       dataFile,
 		Symbol:         symbol,
+		Interval:       "", // Will be set from command line flag if not specified in config
 		InitialBalance: balance,
 		Commission:     commission,
 		WindowSize:     windowSize,
@@ -681,6 +731,7 @@ func loadFromNestedConfig(data []byte, cfg *BacktestConfig) error {
 	// Map strategy fields
 	strategy := nestedCfg.Strategy
 	cfg.Symbol = strategy.Symbol
+	cfg.Interval = strategy.Interval
 	cfg.BaseAmount = strategy.BaseAmount
 	cfg.MaxMultiplier = strategy.MaxMultiplier
 	cfg.PriceThreshold = strategy.PriceThreshold
