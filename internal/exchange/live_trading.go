@@ -25,6 +25,8 @@ type LiveTradingExchange interface {
 
 	// Trading operations
 	PlaceMarketOrder(ctx context.Context, params OrderParams) (*Order, error)
+	PlaceLimitOrder(ctx context.Context, params OrderParams) (*Order, error)
+	CancelOrder(ctx context.Context, category, symbol, orderID string) error
 	GetOrderStatus(ctx context.Context, orderID string) (*OrderStatus, error)
 
 	// Exchange constraints and limits

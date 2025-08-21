@@ -171,6 +171,30 @@ func (b *BinanceAdapter) PlaceMarketOrder(ctx context.Context, params exchange.O
 	return result, nil
 }
 
+// CancelOrder cancels an existing order
+func (b *BinanceAdapter) CancelOrder(ctx context.Context, category, symbol, orderID string) error {
+	// Note: This would need to be implemented in the Binance client
+	// For now, return a not implemented error
+	return &exchange.ExchangeError{
+		Code:    "NOT_IMPLEMENTED",
+		Message: "CancelOrder not implemented for Binance yet",
+		Details: "Order cancellation needs to be added to the Binance client",
+		IsRetryable: false,
+	}
+}
+
+// PlaceLimitOrder places a limit order (used for take profit orders)
+func (b *BinanceAdapter) PlaceLimitOrder(ctx context.Context, params exchange.OrderParams) (*exchange.Order, error) {
+	// Note: This would need to be implemented in the Binance client
+	// For now, return a not implemented error
+	return nil, &exchange.ExchangeError{
+		Code:    "NOT_IMPLEMENTED",
+		Message: "PlaceLimitOrder not implemented for Binance yet",
+		Details: "Limit orders need to be added to the Binance client",
+		IsRetryable: false,
+	}
+}
+
 // GetOrderStatus retrieves the status of an order
 func (b *BinanceAdapter) GetOrderStatus(ctx context.Context, orderID string) (*exchange.OrderStatus, error) {
 	// This would require implementing order status tracking in the Binance client

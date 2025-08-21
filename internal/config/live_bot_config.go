@@ -40,6 +40,7 @@ type StrategyConfig struct {
 	// Take profit settings
 	TPPercent float64 `json:"tp_percent"` // Take profit percentage
 	Cycle     bool    `json:"cycle"`      // Whether to cycle after take profit
+	AutoTPOrders bool  `json:"auto_tp_orders"` // Whether to place TP orders automatically after buys
 	
 	// Combo selection
 	UseAdvancedCombo bool `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)

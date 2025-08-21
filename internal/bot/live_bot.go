@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"sync"
+
 	"github.com/ducminhle1904/crypto-dca-bot/internal/config"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/adapters"
@@ -38,6 +40,10 @@ type LiveBot struct {
 	totalInvested   float64
 	balance         float64
 	dcaLevel        int
+	
+	// TP order management
+	activeTPOrders map[string]string // orderID -> quantity mapping
+	tpOrderMutex   sync.RWMutex      // Protect TP order map access
 }
 
 // NewLiveBot creates a new live trading bot instance
@@ -76,6 +82,8 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		category: category,
 		balance:  config.Risk.InitialBalance,
 		stopChan: make(chan struct{}),
+		activeTPOrders: make(map[string]string),
+		tpOrderMutex: sync.RWMutex{},
 	}
 
 	// Initialize strategy
@@ -460,13 +468,9 @@ func (bot *LiveBot) analyzeMarket(klines []types.OHLCV, currentPrice float64) (*
 		return decision, "BUY"
 	}
 
-	// Check for take profit
-	if bot.currentPosition > 0 && bot.averagePrice > 0 {
-		profitPercent := (currentPrice - bot.averagePrice) / bot.averagePrice
-		if profitPercent >= bot.config.Strategy.TPPercent {
-			return decision, "SELL"
-		}
-	}
+	// Note: Take profit is now handled by exchange limit orders placed after each buy
+	// This eliminates the need to wait for candle closes and provides immediate TP protection
+	// The exchange will automatically execute TP orders when price reaches target levels
 
 	return decision, "HOLD"
 }
@@ -547,8 +551,135 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		return
 	}
 
+	// Place take profit order immediately after buy (if enabled)
+	if bot.config.Strategy.AutoTPOrders {
+		if err := bot.placeTakeProfitOrder(fmt.Sprintf("%.6f", quantity), price); err != nil {
+			bot.logger.LogWarning("Take Profit Setup", "Could not place TP order: %v", err)
+			// Continue with trade execution even if TP order fails
+		}
+	}
+
 	// Sync with exchange data instead of self-calculating
 	bot.syncAfterTrade(order, "BUY")
+}
+
+// placeTakeProfitOrder places a take profit limit order after a buy
+func (bot *LiveBot) placeTakeProfitOrder(quantity string, currentPrice float64) error {
+	ctx := context.Background()
+	
+	// Calculate take profit price
+	tpPrice := currentPrice * (1 + bot.config.Strategy.TPPercent)
+	
+	// Format price to appropriate decimal places
+	formattedPrice := fmt.Sprintf("%.4f", tpPrice)
+	
+	// Place take profit limit order
+	orderParams := exchange.OrderParams{
+		Category:  bot.category,
+		Symbol:    bot.symbol,
+		Side:      exchange.OrderSideSell,
+		Quantity:  quantity,
+		OrderType: exchange.OrderTypeLimit,
+		Price:     formattedPrice,
+	}
+	
+	tpOrder, err := bot.exchange.PlaceLimitOrder(ctx, orderParams)
+	if err != nil {
+		bot.logger.LogWarning("Take Profit Order", "Failed to place TP order: %v", err)
+		return fmt.Errorf("failed to place take profit order: %w", err)
+	}
+	
+	// Track the TP order for future updates
+	bot.tpOrderMutex.Lock()
+	bot.activeTPOrders[tpOrder.OrderID] = quantity
+	bot.tpOrderMutex.Unlock()
+	
+	bot.logger.Info("🎯 Take Profit Order placed: %s %s at $%s (Order ID: %s)", 
+		quantity, bot.symbol, formattedPrice, tpOrder.OrderID)
+	
+	// Log to console for visibility
+	fmt.Printf("🎯 Take Profit Order placed: %s %s at $%s\n", 
+		quantity, bot.symbol, formattedPrice)
+	
+	return nil
+}
+
+// updateTakeProfitOrders updates existing TP orders when average price changes
+func (bot *LiveBot) updateTakeProfitOrders(newAveragePrice float64) error {
+	bot.tpOrderMutex.Lock()
+	defer bot.tpOrderMutex.Unlock()
+	
+	if len(bot.activeTPOrders) == 0 {
+		return nil // No TP orders to update
+	}
+	
+	ctx := context.Background()
+	
+	// Calculate new TP price based on new average price
+	newTPPrice := newAveragePrice * (1 + bot.config.Strategy.TPPercent)
+	formattedTPPrice := fmt.Sprintf("%.4f", newTPPrice)
+	
+	bot.logger.Info("🔄 Updating TP orders: New avg price $%.4f → New TP price $%s", 
+		newAveragePrice, formattedTPPrice)
+	
+	// Cancel all existing TP orders
+	for orderID, quantity := range bot.activeTPOrders {
+		if err := bot.exchange.CancelOrder(ctx, bot.category, bot.symbol, orderID); err != nil {
+			bot.logger.LogWarning("TP Order Update", "Failed to cancel TP order %s: %v", orderID, err)
+			continue
+		}
+		
+		bot.logger.Info("❌ Cancelled old TP order: %s (qty: %s)", orderID, quantity)
+	}
+	
+	// Clear the map
+	bot.activeTPOrders = make(map[string]string)
+	
+	// Get current total position size
+	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	if err != nil {
+		return fmt.Errorf("failed to get position for TP update: %w", err)
+	}
+	
+	var totalPositionSize string
+	for _, pos := range positions {
+		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+			totalPositionSize = pos.Size
+			break
+		}
+	}
+	
+	if totalPositionSize == "" || totalPositionSize == "0" {
+		bot.logger.LogWarning("TP Update", "No position found for TP update")
+		return nil
+	}
+	
+	// Place new TP order for entire position
+	orderParams := exchange.OrderParams{
+		Category:  bot.category,
+		Symbol:    bot.symbol,
+		Side:      exchange.OrderSideSell,
+		Quantity:  totalPositionSize,
+		OrderType: exchange.OrderTypeLimit,
+		Price:     formattedTPPrice,
+	}
+	
+	tpOrder, err := bot.exchange.PlaceLimitOrder(ctx, orderParams)
+	if err != nil {
+		return fmt.Errorf("failed to place updated TP order: %w", err)
+	}
+	
+	// Track the new TP order
+	bot.activeTPOrders[tpOrder.OrderID] = totalPositionSize
+	
+	bot.logger.Info("✅ Updated TP order placed: %s %s at $%s (Order ID: %s)", 
+		totalPositionSize, bot.symbol, formattedTPPrice, tpOrder.OrderID)
+	
+	// Log to console for visibility
+	fmt.Printf("🔄 TP Orders Updated: New avg price $%.4f → New TP price $%s\n", 
+		newAveragePrice, formattedTPPrice)
+	
+	return nil
 }
 
 // executeSell executes a sell order to close position
@@ -632,6 +763,19 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 				bot.logger.LogCycleCompletion(currentPrice, bot.averagePrice, profitPercent)
 			}
 		}
+		
+		// Clean up TP orders since position is closed
+		bot.tpOrderMutex.Lock()
+		for orderID := range bot.activeTPOrders {
+			// Cancel any remaining TP orders
+			if err := bot.exchange.CancelOrder(ctx, bot.category, bot.symbol, orderID); err != nil {
+				bot.logger.LogWarning("TP Cleanup", "Failed to cancel TP order %s: %v", orderID, err)
+			} else {
+				bot.logger.Info("🧹 Cancelled TP order %s (position closed)", orderID)
+			}
+		}
+		bot.activeTPOrders = make(map[string]string)
+		bot.tpOrderMutex.Unlock()
 		
 		// Log trade execution details
 		bot.logger.LogTradeExecution(tradeType, order.OrderID, order.CumExecQty, order.AvgPrice, order.CumExecValue, 0, 0, 0)

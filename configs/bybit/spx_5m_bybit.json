@@ -1,33 +1,32 @@
 {
   "strategy": {
-    "symbol": "ENAUSDT",
+    "symbol": "SPXUSDT",
     "base_amount": 40,
-    "max_multiplier": 3,
-    "price_threshold": 0.015,
+    "max_multiplier": 1.5,
+    "price_threshold": 0.02,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.035,
+    "tp_percent": 0.025,
     "cycle": true,
-    "auto_tp_orders": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
     "use_advanced_combo": true,
     "hull_ma": {
       "period": 50
     },
     "mfi": {
-      "period": 14,
+      "period": 16,
       "oversold": 30,
-      "overbought": 70
+      "overbought": 85
     },
     "keltner_channels": {
       "period": 50,
-      "multiplier": 1.8
+      "multiplier": 2.5
     },
     "wavetrend": {
-      "n1": 10,
-      "n2": 35,
-      "overbought": 60,
-      "oversold": -50
+      "n1": 18,
+      "n2": 18,
+      "overbought": 70,
+      "oversold": -80
     }
   },
   "exchange": {

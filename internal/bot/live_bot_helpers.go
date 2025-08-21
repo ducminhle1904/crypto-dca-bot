@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"math"
+
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -31,6 +33,13 @@ func (bot *LiveBot) syncPositionData() error {
 			positionSize := parseFloat(pos.Size)
 			
 			if positionValue > 0 && avgPrice > 0 {
+				// Check if average price has changed (indicating new DCA entry)
+				priceChanged := false
+				if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
+					priceChanged = true
+					log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
+				}
+				
 				// Use exchange data directly - no self-calculation
 				bot.currentPosition = positionValue
 				bot.averagePrice = avgPrice
@@ -47,6 +56,14 @@ func (bot *LiveBot) syncPositionData() error {
 				
 				log.Printf("📊 Position synced - Size: %.6f, Value: $%.2f, Entry: $%.2f, PnL: %s", 
 					positionSize, positionValue, avgPrice, pos.UnrealisedPnl)
+				
+				// Update TP orders if price changed and auto TP is enabled
+				if priceChanged && bot.config.Strategy.AutoTPOrders {
+					if err := bot.updateTakeProfitOrders(avgPrice); err != nil {
+						log.Printf("⚠️ Failed to update TP orders: %v", err)
+					}
+				}
+				
 				return nil
 			}
 		}

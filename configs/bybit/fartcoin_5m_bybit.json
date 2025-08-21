@@ -1,33 +1,32 @@
 {
   "strategy": {
-    "symbol": "ENAUSDT",
+    "symbol": "FARTCOINUSDT",
     "base_amount": 40,
-    "max_multiplier": 3,
-    "price_threshold": 0.015,
+    "max_multiplier": 1.2,
+    "price_threshold": 0.025,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.035,
+    "tp_percent": 0.025,
     "cycle": true,
-    "auto_tp_orders": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
     "use_advanced_combo": true,
     "hull_ma": {
-      "period": 50
+      "period": 10
     },
     "mfi": {
-      "period": 14,
+      "period": 10,
       "oversold": 30,
       "overbought": 70
     },
     "keltner_channels": {
-      "period": 50,
-      "multiplier": 1.8
+      "period": 25,
+      "multiplier": 2.2
     },
     "wavetrend": {
-      "n1": 10,
-      "n2": 35,
-      "overbought": 60,
-      "oversold": -50
+      "n1": 20,
+      "n2": 28,
+      "overbought": 70,
+      "oversold": -80
     }
   },
   "exchange": {

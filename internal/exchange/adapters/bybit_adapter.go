@@ -210,6 +210,53 @@ func (b *BybitAdapter) PlaceMarketOrder(ctx context.Context, params exchange.Ord
 	return result, nil
 }
 
+// PlaceLimitOrder places a limit order (used for take profit orders)
+func (b *BybitAdapter) PlaceLimitOrder(ctx context.Context, params exchange.OrderParams) (*exchange.Order, error) {
+	// Convert our generic params to Bybit-specific params
+	bybitSide := convertOrderSide(params.Side)
+	
+	// Ensure price is provided for limit orders
+	if params.Price == "" {
+		return nil, &exchange.ExchangeError{
+			Code:    "MISSING_PRICE",
+			Message: "Price is required for limit orders",
+			IsRetryable: false,
+		}
+	}
+	
+	order, err := b.client.PlaceLimitOrder(ctx, params.Category, params.Symbol, bybitSide, params.Quantity, params.Price)
+	if err != nil {
+		return nil, b.convertError(err)
+	}
+
+	// Convert Bybit order to our standard format
+	result := &exchange.Order{
+		OrderID:       order.OrderID,
+		Symbol:        order.Symbol,
+		Side:          params.Side,
+		OrderType:     exchange.OrderTypeLimit,
+		Quantity:      params.Quantity,
+		Price:         params.Price,
+		CumExecQty:    "0", // Limit orders start with 0 executed
+		CumExecValue:  "0", // Limit orders start with 0 executed value
+		AvgPrice:      "0", // No average price until executed
+		OrderStatus:   string(order.OrderStatus),
+		CreatedTime:   order.CreatedTime,
+		UpdatedTime:   order.UpdatedTime,
+	}
+
+	return result, nil
+}
+
+// CancelOrder cancels an existing order
+func (b *BybitAdapter) CancelOrder(ctx context.Context, category, symbol, orderID string) error {
+	err := b.client.CancelOrder(ctx, category, symbol, orderID)
+	if err != nil {
+		return b.convertError(err)
+	}
+	return nil
+}
+
 // GetOrderStatus retrieves the status of an order
 func (b *BybitAdapter) GetOrderStatus(ctx context.Context, orderID string) (*exchange.OrderStatus, error) {
 	// This would require implementing GetOrder in the Bybit client
