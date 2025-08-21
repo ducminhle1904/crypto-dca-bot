@@ -1,0 +1,27 @@
+{
+  "symbol": "BTCUSDT",
+  "data_file": "",
+  "initial_balance": 2000.0,
+  "commission": 0.0005,
+  "window_size": 100,
+
+  "base_amount": 200.0,
+  "hedge_ratio": 0.6,
+  "stop_loss_pct": 0.04,
+  "take_profit_pct": 0.025,
+  "trailing_stop_pct": 0.015,
+  "max_drawdown_pct": 0.08,
+  "volatility_threshold": 0.012,
+  "time_between_entries": 20,
+
+  "hull_ma_period": 21,
+  "mfi_period": 14,
+  "mfi_oversold": 25,
+  "mfi_overbought": 75,
+  "keltner_period": 20,
+  "keltner_multiplier": 2.2,
+  "wavetrend_n1": 10,
+  "wavetrend_n2": 21,
+  "wavetrend_overbought": 55,
+  "wavetrend_oversold": -55
+}
