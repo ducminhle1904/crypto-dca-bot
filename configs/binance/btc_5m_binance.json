@@ -8,6 +8,7 @@
     "window_size": 80,
     "tp_percent": 0.08,
     "cycle": true,
+    "auto_tp_orders": true,
     "indicators": ["rsi", "macd", "bb"],
     "rsi": {
       "period": 14,

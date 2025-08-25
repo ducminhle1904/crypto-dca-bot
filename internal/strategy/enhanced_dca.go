@@ -52,7 +52,8 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	// Collect signals from all indicators
 	buySignals := 0
 	sellSignals := 0
-	totalStrength := 0.0
+	buyStrength := 0.0
+	sellStrength := 0.0
 
 	for _, indicator := range s.indicators {
 		// check the sufficiency of the data
@@ -72,10 +73,10 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 
 		if shouldBuy {
 			buySignals++
-			totalStrength += indicator.GetSignalStrength()
+			buyStrength += indicator.GetSignalStrength()
 		} else if shouldSell {
 			sellSignals++
-			totalStrength -= indicator.GetSignalStrength()
+			sellStrength += indicator.GetSignalStrength()
 		}
 	}
 
@@ -115,7 +116,16 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			}
 		}
 
-		amount := s.calculatePositionSize(totalStrength, confidence)
+		// Calculate net strength for buy decision (only use buy strength for positive values)
+		netStrength := buyStrength
+		if buySignals == 0 {
+			netStrength = 0.0
+		} else {
+			// Average strength per buy signal
+			netStrength = buyStrength / float64(buySignals)
+		}
+		
+		amount := s.calculatePositionSize(netStrength, confidence)
 		
 		// Update last entry price when we decide to buy
 		s.lastEntryPrice = currentPrice
@@ -125,7 +135,7 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			Action:     ActionBuy,
 			Amount:     amount,
 			Confidence: confidence,
-			Strength:   totalStrength,
+			Strength:   netStrength,
 			Reason:     "Buy signal consensus reached",
 		}, nil
 	}

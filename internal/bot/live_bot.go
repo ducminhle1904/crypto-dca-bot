@@ -44,6 +44,9 @@ type LiveBot struct {
 	// TP order management
 	activeTPOrders map[string]string // orderID -> quantity mapping
 	tpOrderMutex   sync.RWMutex      // Protect TP order map access
+	
+	// Position synchronization
+	positionMutex  sync.RWMutex      // Protect position data access
 }
 
 // NewLiveBot creates a new live trading bot instance
@@ -632,8 +635,10 @@ func (bot *LiveBot) updateTakeProfitOrders(newAveragePrice float64) error {
 		bot.logger.Info("❌ Cancelled old TP order: %s (qty: %s)", orderID, quantity)
 	}
 	
-	// Clear the map
-	bot.activeTPOrders = make(map[string]string)
+	// Clear the map properly instead of recreating
+	for k := range bot.activeTPOrders {
+		delete(bot.activeTPOrders, k)
+	}
 	
 	// Get current total position size
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
@@ -753,9 +758,11 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		bot.logger.LogTradeExecution(tradeType, order.OrderID, order.CumExecQty, order.AvgPrice, order.CumExecValue, bot.dcaLevel, bot.currentPosition, bot.averagePrice)
 		
 	} else if tradeType == "SELL" {
+		// Create dedicated context for cleanup operations
+		cleanupCtx := context.Background()
+		
 		// For sell trades, calculate realized P&L from position data before sync
-		ctx := context.Background()
-		if currentPrice, err := bot.exchange.GetLatestPrice(ctx, bot.symbol); err == nil {
+		if currentPrice, err := bot.exchange.GetLatestPrice(cleanupCtx, bot.symbol); err == nil {
 			if bot.averagePrice > 0 && currentPrice > 0 {
 				profitPercent := (currentPrice - bot.averagePrice) / bot.averagePrice * 100
 				
@@ -767,14 +774,17 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		// Clean up TP orders since position is closed
 		bot.tpOrderMutex.Lock()
 		for orderID := range bot.activeTPOrders {
-			// Cancel any remaining TP orders
-			if err := bot.exchange.CancelOrder(ctx, bot.category, bot.symbol, orderID); err != nil {
+			// Cancel any remaining TP orders with proper context
+			if err := bot.exchange.CancelOrder(cleanupCtx, bot.category, bot.symbol, orderID); err != nil {
 				bot.logger.LogWarning("TP Cleanup", "Failed to cancel TP order %s: %v", orderID, err)
 			} else {
 				bot.logger.Info("🧹 Cancelled TP order %s (position closed)", orderID)
 			}
 		}
-		bot.activeTPOrders = make(map[string]string)
+		// Clear map properly instead of recreating
+		for k := range bot.activeTPOrders {
+			delete(bot.activeTPOrders, k)
+		}
 		bot.tpOrderMutex.Unlock()
 		
 		// Log trade execution details

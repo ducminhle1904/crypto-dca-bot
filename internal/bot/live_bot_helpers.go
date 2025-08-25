@@ -18,6 +18,9 @@ import (
 
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
+	bot.positionMutex.Lock()
+	defer bot.positionMutex.Unlock()
+	
 	ctx := context.Background()
 	
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
