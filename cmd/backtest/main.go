@@ -38,6 +38,18 @@ const (
 	DefaultTPPercent      = 0.02 // 2%
 	DefaultMinOrderQty    = 0.01 // Default minimum order quantity (typical for BTCUSDT)
 	
+	// Multiple TP configuration
+	DefaultUseTPLevels = false           // Default to single TP mode
+	DefaultTPLevels    = 5               // Number of TP levels
+	DefaultTPQuantity  = 0.20            // 20% per level (1.0 / 5 levels)
+	
+	// TP level percentages (can be optimized)
+	DefaultTP1Percent = 0.02             // 2%
+	DefaultTP2Percent = 0.05             // 5%
+	DefaultTP3Percent = 0.10             // 10%
+	DefaultTP4Percent = 0.20             // 20%
+	DefaultTP5Percent = 0.50             // 50%
+	
 	// Default indicator parameters
 	DefaultRSIPeriod      = 14
 	DefaultRSIOversold    = 30
@@ -131,6 +143,12 @@ var (
 		WaveTrendN2     []int
 		WaveTrendOverbought []float64
 		WaveTrendOversold   []float64
+		// TP level optimization ranges
+		TP1Candidates    []float64
+		TP2Candidates    []float64
+		TP3Candidates    []float64
+		TP4Candidates    []float64
+		TP5Candidates    []float64
 	}{
 		Multipliers:     []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
 		TPCandidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
@@ -154,6 +172,11 @@ var (
 		WaveTrendN2:     []int{18, 21, 24, 28, 32, 35},
 		WaveTrendOverbought: []float64{50, 60, 70, 80},
 		WaveTrendOversold:   []float64{-80, -70, -60, -50},
+		TP1Candidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
+		TP2Candidates:    []float64{0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.12, 0.15, 0.18},
+		TP3Candidates:    []float64{0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45},
+		TP4Candidates:    []float64{0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80},
+		TP5Candidates:    []float64{0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0, 1.2, 1.5, 2.0},
 	}
 	
 	// Data cache for performance optimization
@@ -229,8 +252,10 @@ type BacktestConfig struct {
 	Indicators     []string `json:"indicators"`
 
 	// Take-profit configuration
-	TPPercent      float64 `json:"tp_percent"`
-    Cycle         bool    `json:"cycle"`
+	TPPercent      float64 `json:"tp_percent"`      // Single TP (backward compatibility)
+	UseTPLevels    bool    `json:"use_tp_levels"`   // Enable 5-level TP mode
+	TPLevels       []TPLevel `json:"tp_levels"`     // 5 TP levels configuration
+	Cycle          bool    `json:"cycle"`
 	
 	// Minimum lot size for realistic simulation (e.g., 0.01 for BTCUSDT)
 	MinOrderQty    float64 `json:"min_order_qty"`
@@ -252,6 +277,8 @@ type StrategyConfig struct {
 	Interval       string             `json:"interval"`
 	WindowSize     int                `json:"window_size"`
 	TPPercent      float64            `json:"tp_percent"`
+	UseTPLevels    bool               `json:"use_tp_levels"`
+	TPLevels       []TPLevel          `json:"tp_levels,omitempty"`
 	Cycle          bool               `json:"cycle"`
 	Indicators     []string           `json:"indicators"`
 	UseAdvancedCombo bool             `json:"use_advanced_combo"`
@@ -329,10 +356,21 @@ type KeltnerChannelsConfig struct {
 }
 
 type WaveTrendConfig struct {
-	N1          int     `json:"n1"`
-	N2          int     `json:"n2"`
-	Overbought  float64 `json:"overbought"`
-	Oversold    float64 `json:"oversold"`
+	N1         int     `json:"n1"`
+	N2         int     `json:"n2"`
+	Overbought float64 `json:"overbought"`
+	Oversold   float64 `json:"oversold"`
+}
+
+// TP level structure for multiple take profit system
+type TPLevel struct {
+	Level       int        `json:"level"`        // 1-5
+	Percent     float64    `json:"percent"`      // TP percentage (e.g., 0.02 for 2%)
+	Quantity    float64    `json:"quantity"`     // Always 0.20 (20%)
+	Hit         bool       `json:"hit"`          // Whether this level was triggered
+	HitTime     *time.Time `json:"hit_time"`     // When this level was hit
+	HitPrice    float64    `json:"hit_price"`    // Price when hit
+	PnL         float64    `json:"pnl"`          // PnL for this level
 }
 
 // convertIntervalToMinutes converts interval strings like "5m", "1h", "4h" to minute numbers
@@ -418,7 +456,8 @@ func main() {
 		maxMultiplier  = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
 		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
 		useAdvancedCombo = flag.Bool("advanced-combo", false, "Use advanced combo indicators (Hull MA, MFI, Keltner Channels, WaveTrend) instead of classic (RSI, MACD, BB, EMA)")
-		optimize       = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
+		useTPLevels     = flag.Bool("tp-levels", false, "Use 5-level take profit system instead of single TP")
+		optimize        = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
@@ -444,9 +483,31 @@ func main() {
 
 	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
+	
+	// Set TP configuration based on flags
+	if *useTPLevels {
+		cfg.UseTPLevels = true
+		cfg.TPLevels = createDefaultTPLevels()
+		log.Printf("TP Levels enabled via command line flag")
+	}
+	
 	// TP will be determined by optimization or use sensible default if not set
-	if !*optimize && cfg.TPPercent == 0 {
+	if !*optimize && cfg.TPPercent == 0 && !cfg.UseTPLevels {
 		cfg.TPPercent = DefaultTPPercent // Default 2% TP when not optimizing and TP not set
+	}
+	
+	// Log TP configuration
+	if cfg.UseTPLevels {
+		log.Printf("Using 5-level TP system")
+		if cfg.TPPercent > 0 {
+			log.Printf("Warning: TPPercent ignored when UseTPLevels is true")
+		}
+		log.Printf("TP Levels: %d levels, %.1f%% quantity per level", len(cfg.TPLevels), DefaultTPQuantity*100)
+		for i, tp := range cfg.TPLevels {
+			log.Printf("  Level %d: %.2f%% at %.2f%%", i+1, tp.Quantity*100, tp.Percent*100)
+		}
+	} else {
+		log.Printf("Using single TP at %.2f%%", cfg.TPPercent*100)
 	}
 
 	// Capture and parse trailing period window
@@ -504,7 +565,16 @@ func main() {
 		fmt.Printf("  Base Amount:      $%.2f\n", bestConfig.BaseAmount)
 		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
 		fmt.Printf("  Price Threshold:  %.2f%%\n", bestConfig.PriceThreshold*100)
-		fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
+		if bestConfig.UseTPLevels {
+			fmt.Printf("  Use TP Levels:    true\n")
+			fmt.Printf("  TP Levels:\n")
+			for i, tp := range bestConfig.TPLevels {
+				fmt.Printf("    Level %d: %.1f%% at %.2f%%\n", i+1, tp.Quantity*100, tp.Percent*100)
+			}
+		} else {
+			fmt.Printf("  Use TP Levels:    false\n")
+			fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
+		}
 		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
 		
 		if bestConfig.UseAdvancedCombo {
@@ -572,6 +642,16 @@ func main() {
 		} else {
 				logSuccess("Saved trades to: %s", stdTradesPath)
 			}
+		
+		// Log TP configuration in best config
+		if bestConfig.UseTPLevels {
+			logSuccess("Best config uses 5-level TP system:")
+			for i, tp := range bestConfig.TPLevels {
+				logSuccess("  Level %d: %.1f%% at %.2f%%", i+1, tp.Quantity*100, tp.Percent*100)
+			}
+		} else {
+			logSuccess("Best config uses single TP at %.2f%%", bestConfig.TPPercent*100)
+		}
 		} else {
 			logInfo("Console-only mode: Skipping file output")
 			fmt.Println("\nBest Config (JSON):")
@@ -694,6 +774,8 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		WaveTrendOversold:   DefaultWaveTrendOversold,
 		Indicators:     nil,
 		TPPercent:      0, // Default to 0 TP, will be set later if needed
+		UseTPLevels:    DefaultUseTPLevels, // Default to single TP mode
+		TPLevels:       createDefaultTPLevels(), // Default 5-level TP configuration
 		MinOrderQty:    DefaultMinOrderQty, // Default minimum order quantity
 	}
 	
@@ -737,6 +819,8 @@ func loadFromNestedConfig(data []byte, cfg *BacktestConfig) error {
 	cfg.PriceThreshold = strategy.PriceThreshold
 	cfg.WindowSize = strategy.WindowSize
 	cfg.TPPercent = strategy.TPPercent
+	cfg.UseTPLevels = strategy.UseTPLevels
+	cfg.TPLevels = strategy.TPLevels
 	cfg.Cycle = strategy.Cycle
 	cfg.Indicators = strategy.Indicators
 	cfg.UseAdvancedCombo = strategy.UseAdvancedCombo
@@ -825,6 +909,11 @@ func validateConfig(cfg *BacktestConfig) error {
 	
 	if cfg.TPPercent < 0 || cfg.TPPercent > MaxThreshold {
 		return fmt.Errorf("TP percent must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.TPPercent)
+	}
+	
+	// Validate TP configuration
+	if err := validateTPConfig(cfg); err != nil {
+		return err
 	}
 	
 	// Validate technical indicator parameters
@@ -1212,7 +1301,7 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 	// Create and run backtest engine
 	tp := cfg.TPPercent
 	if !cfg.Cycle { tp = 0 }
-	engine := backtest.NewBacktestEngine(cfg.InitialBalance, cfg.Commission, strat, tp, cfg.MinOrderQty)
+	engine := backtest.NewBacktestEngine(cfg.InitialBalance, cfg.Commission, strat, tp, cfg.MinOrderQty, cfg.UseTPLevels, convertTPLevels(cfg.TPLevels))
 	results := engine.Run(data, cfg.WindowSize)
 
 	// Update all metrics
@@ -1672,8 +1761,25 @@ func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Indi
 		
 		// TP candidates
 		if cfg.Cycle {
-			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
+			if cfg.UseTPLevels {
+				individual.config.UseTPLevels = true
+				individual.config.TPLevels = createDefaultTPLevels()
+				
+				// Optimize each TP level
+				individual.config.TPLevels[0].Percent = randomChoice(OptimizationRanges.TP1Candidates, rng)
+				individual.config.TPLevels[1].Percent = randomChoice(OptimizationRanges.TP2Candidates, rng)
+				individual.config.TPLevels[2].Percent = randomChoice(OptimizationRanges.TP3Candidates, rng)
+				individual.config.TPLevels[3].Percent = randomChoice(OptimizationRanges.TP4Candidates, rng)
+				individual.config.TPLevels[4].Percent = randomChoice(OptimizationRanges.TP5Candidates, rng)
+				
+				// Set TPPercent to 0 when using TP levels
+				individual.config.TPPercent = 0
+			} else {
+				individual.config.UseTPLevels = false
+				individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
+			}
 		} else {
+			individual.config.UseTPLevels = false
 			individual.config.TPPercent = 0
 		}
 		
@@ -1862,6 +1968,30 @@ func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Indi
 		}
 	}
 	
+	// Crossover TP levels if both parents use them
+	if parent1.config.UseTPLevels && parent2.config.UseTPLevels {
+		child.config.UseTPLevels = true
+		child.config.TPLevels = make([]TPLevel, len(parent1.config.TPLevels))
+		copy(child.config.TPLevels, parent1.config.TPLevels)
+		
+		// Crossover TP level percentages
+		for i := range child.config.TPLevels {
+			if rng.Float64() < 0.5 {
+				child.config.TPLevels[i].Percent = parent2.config.TPLevels[i].Percent
+			}
+		}
+	} else if parent1.config.UseTPLevels {
+		child.config.UseTPLevels = true
+		child.config.TPLevels = make([]TPLevel, len(parent1.config.TPLevels))
+		copy(child.config.TPLevels, parent1.config.TPLevels)
+	} else if parent2.config.UseTPLevels {
+		child.config.UseTPLevels = true
+		child.config.TPLevels = make([]TPLevel, len(parent2.config.TPLevels))
+		copy(child.config.TPLevels, parent2.config.TPLevels)
+	} else {
+		child.config.UseTPLevels = false
+	}
+	
 	return child
 }
 
@@ -1959,6 +2089,26 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand
 		individual.fitness = 0
 		individual.results = nil
 	}
+	
+	// Mutate TP levels if enabled
+	if individual.config.UseTPLevels {
+		for i := range individual.config.TPLevels {
+			if rng.Float64() < rate {
+				switch i {
+				case 0:
+					individual.config.TPLevels[i].Percent = randomChoice(OptimizationRanges.TP1Candidates, rng)
+				case 1:
+					individual.config.TPLevels[i].Percent = randomChoice(OptimizationRanges.TP2Candidates, rng)
+				case 2:
+					individual.config.TPLevels[i].Percent = randomChoice(OptimizationRanges.TP3Candidates, rng)
+				case 3:
+					individual.config.TPLevels[i].Percent = randomChoice(OptimizationRanges.TP4Candidates, rng)
+				case 4:
+					individual.config.TPLevels[i].Percent = randomChoice(OptimizationRanges.TP5Candidates, rng)
+				}
+			}
+		}
+	}
 }
 
 // Removed global rng - now passed as parameter to avoid race conditions
@@ -2011,6 +2161,8 @@ func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 			Interval:       interval,
 			WindowSize:     cfg.WindowSize,
 			TPPercent:      cfg.TPPercent,
+			UseTPLevels:    cfg.UseTPLevels,
+			TPLevels:       cfg.TPLevels,
 			Cycle:          cfg.Cycle,
 			Indicators:     cfg.Indicators,
 			UseAdvancedCombo:    cfg.UseAdvancedCombo,
@@ -2744,3 +2896,56 @@ func defaultOutputDir(symbol, interval string) string {
 	
 	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s", s, i))
 }
+
+// createDefaultTPLevels creates the default 5-level TP configuration
+func createDefaultTPLevels() []TPLevel {
+	return []TPLevel{
+		{Level: 1, Percent: DefaultTP1Percent, Quantity: DefaultTPQuantity},
+		{Level: 2, Percent: DefaultTP2Percent, Quantity: DefaultTPQuantity},
+		{Level: 3, Percent: DefaultTP3Percent, Quantity: DefaultTPQuantity},
+		{Level: 4, Percent: DefaultTP4Percent, Quantity: DefaultTPQuantity},
+		{Level: 5, Percent: DefaultTP5Percent, Quantity: DefaultTPQuantity},
+	}
+}
+
+// validateTPConfig validates the TP configuration
+func validateTPConfig(cfg *BacktestConfig) error {
+	if cfg.UseTPLevels {
+		if len(cfg.TPLevels) != DefaultTPLevels {
+			return fmt.Errorf("must have exactly %d TP levels, got %d", DefaultTPLevels, len(cfg.TPLevels))
+		}
+		
+		for i, tp := range cfg.TPLevels {
+			if tp.Quantity != DefaultTPQuantity {
+				return fmt.Errorf("TP level %d quantity must be %.2f, got %.2f", i+1, DefaultTPQuantity, tp.Quantity)
+			}
+			if tp.Percent <= 0 || tp.Percent > MaxThreshold {
+				return fmt.Errorf("TP level %d percent must be between 0 and %.2f, got %.4f", i+1, MaxThreshold, tp.Percent)
+			}
+		}
+	}
+	return nil
+}
+
+// convertTPLevels converts TPLevel from main package to backtest package
+func convertTPLevels(tpLevels []TPLevel) []backtest.TPLevel {
+	if tpLevels == nil {
+		return nil
+	}
+	
+	result := make([]backtest.TPLevel, len(tpLevels))
+	for i, tp := range tpLevels {
+		result[i] = backtest.TPLevel{
+			Level:    tp.Level,
+			Percent:  tp.Percent,
+			Quantity: tp.Quantity,
+			Hit:      tp.Hit,
+			HitTime:  tp.HitTime,
+			HitPrice: tp.HitPrice,
+			PnL:      tp.PnL,
+		}
+	}
+	return result
+}
+
+// convertTPLevels converts TPLevel from main package to backtest package
