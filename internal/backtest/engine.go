@@ -118,10 +118,8 @@ func NewBacktestEngine(
 	tpPercent float64,
 	// minOrderQty: minimum order quantity (e.g., 0.01 for BTCUSDT). 0 disables lot size constraints
 	minOrderQty float64,
-	// useTPLevels: enable 5-level TP mode
+	// useTPLevels: enable 5-level TP mode using progressive tpPercent levels
 	useTPLevels bool,
-	// tpLevels: 5 TP levels configuration
-	tpLevels []TPLevel,
 ) *BacktestEngine {
 	engine := &BacktestEngine{
 		initialBalance: initialBalance,
@@ -134,15 +132,25 @@ func NewBacktestEngine(
 		},
 		tpPercent:   tpPercent,
 		useTPLevels: useTPLevels,
-		tpLevels:    tpLevels,
 		minOrderQty: minOrderQty,
 		balance:     initialBalance,
 	}
 	
 	// Initialize TP level tracking
 	if useTPLevels {
+		// Auto-generate 5 TP levels based on tpPercent
+		engine.tpLevels = make([]TPLevel, 5)
+		for i := 0; i < 5; i++ {
+			engine.tpLevels[i] = TPLevel{
+				Level:    i + 1,
+				Percent:  tpPercent * float64(i+1) / 5.0, // Progressive: 20%, 40%, 60%, 80%, 100% of tpPercent
+				Quantity: 0.20, // Always 20% per level
+				Hit:      false,
+			}
+		}
+		
 		engine.cycleTPProgress = make(map[int]bool)
-		for i := range tpLevels {
+		for i := 0; i < 5; i++ {
 			engine.cycleTPProgress[i] = false
 		}
 	}
