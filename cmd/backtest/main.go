@@ -2248,7 +2248,16 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 		
 		// Strategy context calculations
 		cycleStart := cycleData[t.Cycle]
-		priceDropPct := ((cycleStart - t.EntryPrice) / cycleStart) * 100
+		var priceDropPct float64
+		if t.EntryTime.Equal(t.ExitTime) {
+			// For TP exits (synthetic trades), show profit relative to average entry
+			if t.EntryPrice > 0 {
+				priceDropPct = ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
+			}
+		} else {
+			// For DCA entries, show drop from cycle start
+			priceDropPct = ((cycleStart - t.EntryPrice) / cycleStart) * 100
+		}
 		
 		// Build enhanced row with proper formatting (rounded up values)
 		row := []string{
@@ -3087,9 +3096,10 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 			cyclePnL += exit.PnL
 			// Note: totalPnL already calculated from all trades above
 			
+			// Calculate price change relative to average entry price (correct for TP exits)
 			priceChange := 0.0
-			if cycleData.StartPrice > 0 {
-				priceChange = ((exit.ExitPrice - cycleData.StartPrice) / cycleData.StartPrice) * 100
+			if exit.EntryPrice > 0 { // exit.EntryPrice contains the average entry price for synthetic TP trades
+				priceChange = ((exit.ExitPrice - exit.EntryPrice) / exit.EntryPrice) * 100
 			}
 			
 			notes := fmt.Sprintf("TP Level %d Hit", exitNum+1)
