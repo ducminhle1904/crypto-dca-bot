@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -109,7 +110,7 @@ func TestCalculateProfitFactor_AllProfitableTrades(t *testing.T) {
 	}
 
 	profitFactor := results.CalculateProfitFactor()
-	assert.Equal(t, 0.0, profitFactor) // No losses, so profit factor is 0
+	assert.True(t, math.IsInf(profitFactor, 1)) // No losses with profits -> +Inf
 }
 
 // TestCalculateProfitFactor_AllLosingTrades tests profit factor with all losing trades
@@ -255,8 +256,8 @@ func TestMetrics_EdgeCases(t *testing.T) {
 				winningTrades int
 				losingTrades  int
 			}{
-				sharpeRatio:   0.0, // Zero volatility
-				profitFactor:  0.0, // No losses
+				sharpeRatio:   0.0,       // Zero volatility
+				profitFactor:  math.Inf(1), // No losses with profit -> +Inf
 				winRate:       100.0,
 				winningTrades: 1,
 				losingTrades:  0,

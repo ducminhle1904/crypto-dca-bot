@@ -17,7 +17,9 @@ type TPLevel struct {
 	Hit         bool       // Whether this level was triggered
 	HitTime     *time.Time // When this level was hit
 	HitPrice    float64    // Price when hit
-	PnL         float64    // PnL for this level
+	PnL         float64    // PnL for this level (net of sell commission)
+	SoldQty     float64    // Actual quantity sold at this TP level
+	SellCommission float64 // Actual commission paid on the partial sell
 }
 
 type BacktestEngine struct {
@@ -35,6 +37,9 @@ type BacktestEngine struct {
 	// Minimum lot size constraints for realistic simulation
 	minOrderQty    float64 // Minimum order quantity (e.g., 0.01 for BTCUSDT)
 	
+	// Current position (units) for equity/drawdown calc
+	position       float64
+	
 	// Current balance tracking
 	balance        float64 // Current balance during backtest
 	
@@ -46,11 +51,13 @@ type BacktestEngine struct {
 	cycleQtySum        float64
 	cycleCostSum         float64 // sum(entryPrice * qty) - net cost after commission
 	cycleGrossCostSum    float64 // sum(entryPrice * gross_qty) - gross cost before commission  
+	cycleGrossQtySum     float64 // sum of gross quantities (before commission), for avg gross entry
 	cycleCommissionSum   float64 // sum of commission paid in current cycle
 	
 	// Enhanced cycle tracking for multiple TPs
 	cycleTPProgress    map[int]bool  // Track which TP levels are hit
 	cycleRemainingQty  float64       // Remaining quantity after partial exits
+	cycleUnrealizedPnL float64       // Accumulated unrealized PnL from partial TP exits
 }
 
 type BacktestResults struct {
@@ -134,6 +141,7 @@ func NewBacktestEngine(
 		useTPLevels: useTPLevels,
 		minOrderQty: minOrderQty,
 		balance:     initialBalance,
+		position:    0,
 	}
 	
 	// Initialize TP level tracking
@@ -169,7 +177,7 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 
 	// Initialize balance and position
 	b.balance = b.initialBalance
-	position := 0.0
+	b.position = 0.0
 	maxBalance := b.balance
 
 	for i := windowSize; i < len(data); i++ {
@@ -203,9 +211,9 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 				}
 			}
 
-			// Calculate commission on original target amount (what strategy intended to invest)
-			commission := targetAmount * b.commission
-			totalCost := actualAmount + commission // Adjusted amount + commission on original
+			// Calculate commission on executed notional (after lot adjustment)
+			commission := actualAmount * b.commission
+			totalCost := actualAmount + commission
 			
 			// Check if we have enough balance for total cost (adjusted amount + commission)
 			if b.balance >= totalCost {
@@ -213,7 +221,7 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 				netAmount := actualAmount // The lot-adjusted amount becomes the net investment
 				actualQuantity := netAmount / currentPrice
 
-				position += actualQuantity
+				b.position += actualQuantity
 				b.balance -= totalCost // Deduct both adjusted amount and commission
 
 				// begin a new cycle if needed (only when TP enabled)
@@ -225,8 +233,10 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleQtySum = 0
 					b.cycleCostSum = 0
 					b.cycleGrossCostSum = 0
+					b.cycleGrossQtySum = 0
 					b.cycleCommissionSum = 0
 					b.cycleRemainingQty = 0
+					b.cycleUnrealizedPnL = 0
 					
 					// Reset TP level progress for new cycle
 					if b.useTPLevels {
@@ -236,6 +246,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 							b.tpLevels[i].HitTime = nil
 							b.tpLevels[i].HitPrice = 0
 							b.tpLevels[i].PnL = 0
+							b.tpLevels[i].SoldQty = 0
+							b.tpLevels[i].SellCommission = 0
 						}
 					}
 				}
@@ -255,10 +267,16 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleCostSum += currentPrice * actualQuantity
 					// Track gross cost (what we would have bought without commission)
 					grossQuantity := actualAmount / currentPrice
-					b.cycleGrossCostSum += currentPrice * grossQuantity  
+					b.cycleGrossCostSum += currentPrice * grossQuantity
+					b.cycleGrossQtySum += grossQuantity
 					// Track commission for this cycle
 					b.cycleCommissionSum += commission
 					trade.Cycle = b.currentCycleNumber
+					
+					// Reset TP levels when new DCA entry is added (recalculate and start from TP1)
+					if b.useTPLevels && b.cycleEntries > 1 {
+						b.resetTPLevelsForNewEntry()
+					}
 				}
 
 				b.results.Trades = append(b.results.Trades, trade)
@@ -266,7 +284,7 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		}
 
 		// Check and execute take profit orders
-		if b.cycleOpen && position > 0 {
+		if b.cycleOpen && b.position > 0 {
 			if b.useTPLevels {
 				b.checkAndExecuteMultipleTP(currentPrice, data[i].Timestamp)
 			} else if b.tpPercent > 0 {
@@ -275,7 +293,7 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		}
 
 		//Updating metrics (equity tracking)
-		currentValue := b.balance + (position * currentPrice)
+		currentValue := b.balance + (b.position * currentPrice)
 		if currentValue > maxBalance {
 			maxBalance = currentValue
 		}
@@ -292,6 +310,7 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	finalTime := data[len(data)-1].Timestamp
 
 	// For any remaining OPEN trades, compute unrealized PnL at final price
+	// Note: TP level partial exits are now handled as separate synthetic trades
 	for i := range b.results.Trades {
 		trade := &b.results.Trades[i]
 		if trade.ExitTime.IsZero() {
@@ -301,31 +320,53 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		}
 	}
 
-	// If a cycle is still open at the end, record it as incomplete
-	if b.tpPercent > 0 && b.cycleOpen && b.cycleQtySum > 0 {
+	// Add mark-to-market value of any remaining position to balance (no extra commission)
+	if b.position > 0 {
+		b.balance += b.position * finalPrice
+		b.position = 0
+	}
+
+	// If a cycle is still open at the end, record it as incomplete (both single TP and TP-levels)
+	if (b.tpPercent > 0 || b.useTPLevels) && b.cycleOpen && b.cycleQtySum > 0 {
 		avgEntry := b.cycleCostSum / b.cycleQtySum
-		target := avgEntry * (1.0 + b.tpPercent)
-		// Sum PnL for trades in current cycle (already set to final price above)
-		realized := 0.0
-		for _, t := range b.results.Trades {
-			if t.Cycle == b.currentCycleNumber {
-				realized += t.PnL
+		avgGrossEntry := 0.0
+		if b.cycleGrossQtySum > 0 { avgGrossEntry = b.cycleGrossCostSum / b.cycleGrossQtySum }
+		// Use accumulated unrealized PnL for incomplete cycles
+		realized := b.cycleUnrealizedPnL
+		partialExits := make([]PartialExit, 0)
+		if b.useTPLevels {
+			for i, tp := range b.tpLevels {
+				if tp.Hit {
+					partialExits = append(partialExits, PartialExit{
+						TPLevel:    i + 1,
+						Quantity:   tp.SoldQty,
+						Price:      tp.HitPrice,
+						Timestamp:  *tp.HitTime,
+						PnL:        tp.PnL,
+						Commission: tp.SellCommission,
+					})
+				}
 			}
 		}
-		avgGrossEntry := b.cycleGrossCostSum / (b.cycleGrossCostSum / finalPrice) // gross cost / gross qty
+		target := 0.0
+		if !b.useTPLevels && b.tpPercent > 0 { target = avgEntry * (1.0 + b.tpPercent) }
 		b.results.Cycles = append(b.results.Cycles, CycleSummary{
-			CycleNumber:     b.currentCycleNumber,
-			StartTime:       b.cycleStartTime,
-			EndTime:         finalTime,
-			Entries:         b.cycleEntries,
-			AvgEntry:        avgEntry,          // Net average entry
-			AvgGrossEntry:   avgGrossEntry,     // Gross average entry
-			TargetPrice:     target,
-			RealizedPnL:     realized,
-			TotalCost:       b.cycleCostSum,        // Net cost
-			TotalGrossCost:  b.cycleGrossCostSum,   // Gross cost
-			TotalCommission: b.cycleCommissionSum,  // Commission
-			Completed:       false,
+			CycleNumber:       b.currentCycleNumber,
+			StartTime:         b.cycleStartTime,
+			EndTime:           finalTime,
+			Entries:           b.cycleEntries,
+			AvgEntry:          avgEntry,          // Net average entry
+			AvgGrossEntry:     avgGrossEntry,     // Gross average entry
+			TargetPrice:       target,
+			RealizedPnL:       realized,
+			TotalCost:         b.cycleCostSum,        // Net cost
+			TotalGrossCost:    b.cycleGrossCostSum,   // Gross cost
+			TotalCommission:   b.cycleCommissionSum,  // Commission
+			Completed:         false,
+			TPLevelsHit:       len(partialExits),
+			PartialExits:      partialExits,
+			FinalExitPrice:    0,
+			TotalRealizedPnL:  realized,
 		})
 		// Keep CompletedCycles unchanged
 	}
@@ -386,10 +427,8 @@ func (b *BacktestResults) PrintCycleDetails() {
 		
 		totalCommission += cycle.TotalCommission
 	}
-	
 	fmt.Printf("Total Commission Paid: $%.2f\n", totalCommission)
 }
-
 // checkAndExecuteSingleTP handles single TP logic (original behavior)
 func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp time.Time) {
 	// compute weighted average entry price across OPEN trades (of current cycle)
@@ -409,6 +448,7 @@ func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp
 			proceeds := totalQty * currentPrice
 			sellCommission := proceeds * b.commission
 			b.balance += proceeds - sellCommission
+			b.position -= totalQty
 
 			// Proportionally assign sell commission and finalize open trades for this cycle
 			realized := 0.0
@@ -427,7 +467,8 @@ func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp
 			}
 
 			// finalize cycle summary
-			avgGrossEntry := b.cycleGrossCostSum / (b.cycleGrossCostSum / currentPrice) // gross cost / gross qty
+			avgGrossEntry := 0.0
+			if b.cycleGrossQtySum > 0 { avgGrossEntry = b.cycleGrossCostSum / b.cycleGrossQtySum }
 			b.results.Cycles = append(b.results.Cycles, CycleSummary{
 				CycleNumber:     b.currentCycleNumber,
 				StartTime:       b.cycleStartTime,
@@ -477,61 +518,81 @@ func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timesta
 	}
 }
 
-// executeTPLevel executes a single TP level
 func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64) {
-	tpLevel := &b.tpLevels[levelIndex]
-	
-	// Calculate quantity to sell (20% of original position)
-	sellQty := b.cycleQtySum * 0.20 // DefaultTPQuantity
-	
-	// Ensure we don't sell more than remaining
-	if sellQty > b.cycleRemainingQty {
-		sellQty = b.cycleRemainingQty
-	}
-	
-	// Execute partial exit
-	proceeds := sellQty * currentPrice
-	commission := proceeds * b.commission
-	pnl := (currentPrice - avgEntry) * sellQty - commission
-	
-	// Update TP level status
-	tpLevel.Hit = true
-	tpLevel.HitTime = &timestamp
-	tpLevel.HitPrice = currentPrice
-	tpLevel.PnL = pnl
-	
-	// Update cycle state
-	b.cycleRemainingQty -= sellQty
-	b.cycleTPProgress[levelIndex] = true
-	
-	b.balance += proceeds - commission
-	
-	// Record partial exit in trades
-	for idx := range b.results.Trades {
-		if b.results.Trades[idx].ExitTime.IsZero() && b.results.Trades[idx].Cycle == b.currentCycleNumber {
-			// Mark this trade as partially exited
-			b.results.Trades[idx].ExitTime = timestamp
-			b.results.Trades[idx].ExitPrice = currentPrice
-			b.results.Trades[idx].PnL = (currentPrice - b.results.Trades[idx].EntryPrice) * b.results.Trades[idx].Quantity - b.results.Trades[idx].Commission
-			break // Only mark one trade per TP level for now
-		}
-	}
+    tpLevel := &b.tpLevels[levelIndex]
+    
+    // Calculate quantity to sell
+    var sellQty float64
+    if levelIndex == 4 { // 5th and final TP level (0-indexed)
+        // Sell ALL remaining quantity to completely close the position
+        sellQty = b.cycleRemainingQty
+    } else {
+        // Sell 20% of remaining position for levels 1-4
+        sellQty = b.cycleRemainingQty * 0.20
+    }
+    
+    // Ensure we don't sell more than remaining (safety check)
+    if sellQty > b.cycleRemainingQty {
+        sellQty = b.cycleRemainingQty
+    }
+    
+    // Execute partial exit
+    proceeds := sellQty * currentPrice
+    commission := proceeds * b.commission
+    pnl := (currentPrice - avgEntry) * sellQty - commission
+    
+    // Update TP level status
+    tpLevel.Hit = true
+    tpLevel.HitTime = &timestamp
+    tpLevel.HitPrice = currentPrice
+    tpLevel.PnL = pnl
+    tpLevel.SoldQty = sellQty
+    tpLevel.SellCommission = commission
+    
+    // Update cycle state
+    b.cycleRemainingQty -= sellQty
+    b.cycleTPProgress[levelIndex] = true
+    b.cycleUnrealizedPnL += pnl  // Add PnL to cycle's unrealized PnL
+    
+    // Update position and balance
+    b.position -= sellQty
+    b.balance += proceeds - commission
+    
+    // CRITICAL FIX: Update individual trade exit data proportionally
+    b.updateTradeExitsForTPLevel(sellQty, currentPrice, timestamp, commission)
+}
+
+// updateTradeExitsForTPLevel creates synthetic trades for TP level partial exits
+func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPrice float64, timestamp time.Time, totalCommission float64) {
+    // For TP levels, we create a synthetic "exit trade" that represents the partial exit
+    // This is cleaner than trying to modify existing entry trades
+    
+    // Calculate average entry price for this partial exit
+    avgEntry := b.calculateCurrentAvgEntry()
+    
+    // Create a synthetic trade representing this partial exit
+    partialExitTrade := Trade{
+        EntryTime:  timestamp, // Use TP hit time as "entry" for the exit trade
+        ExitTime:   timestamp, // Same time for exit
+        EntryPrice: avgEntry,  // Use average entry as the "entry" price
+        ExitPrice:  currentPrice, // Current price as exit
+        Quantity:   sellQty,   // Quantity sold at this TP level
+        PnL:        (currentPrice - avgEntry) * sellQty - totalCommission, // PnL for this partial exit
+        Commission: totalCommission, // Commission for this partial exit
+        Cycle:      b.currentCycleNumber, // Current cycle
+    }
+    
+    // Add this synthetic trade to represent the partial exit
+    b.results.Trades = append(b.results.Trades, partialExitTrade)
 }
 
 // calculateCurrentAvgEntry calculates the current weighted average entry price
 func (b *BacktestEngine) calculateCurrentAvgEntry() float64 {
-	totalQty := 0.0
-	sumEntryCost := 0.0
-	for _, t := range b.results.Trades {
-		if t.ExitTime.IsZero() && t.Cycle == b.currentCycleNumber {
-			totalQty += t.Quantity
-			sumEntryCost += t.EntryPrice * t.Quantity
-		}
-	}
-	if totalQty > 0 {
-		return sumEntryCost / totalQty
-	}
-	return 0
+    // Use net cost basis across the cycle to avoid dependency on trade mutation
+    if b.cycleQtySum > 0 {
+        return b.cycleCostSum / b.cycleQtySum
+    }
+    return 0
 }
 
 // isCycleComplete checks if all TP levels are hit
@@ -551,45 +612,53 @@ func (b *BacktestEngine) isCycleComplete() bool {
 
 // completeCycle finalizes the cycle when all TPs are hit
 func (b *BacktestEngine) completeCycle(timestamp time.Time) {
-	// Create cycle summary with partial exits
-	partialExits := make([]PartialExit, 0)
-	totalRealizedPnL := 0.0
-	
-	for i, tp := range b.tpLevels {
-		if tp.Hit {
-			partialExits = append(partialExits, PartialExit{
-				TPLevel:    i + 1,
-				Quantity:   b.cycleQtySum * 0.20,
-				Price:      tp.HitPrice,
-				Timestamp:  *tp.HitTime,
-				PnL:        tp.PnL,
-				Commission: tp.PnL * b.commission, // Approximate commission
-			})
-			totalRealizedPnL += tp.PnL
-		}
-	}
-	
-	avgEntry := b.calculateCurrentAvgEntry()
-	avgGrossEntry := b.cycleGrossCostSum / (b.cycleGrossCostSum / avgEntry)
-	
-	b.results.Cycles = append(b.results.Cycles, CycleSummary{
-		CycleNumber:       b.currentCycleNumber,
-		StartTime:         b.cycleStartTime,
-		EndTime:           timestamp,
-		Entries:           b.cycleEntries,
-		AvgEntry:          avgEntry,
-		AvgGrossEntry:     avgGrossEntry,
-		TargetPrice:       0, // Not applicable for multiple TPs
-		RealizedPnL:       totalRealizedPnL,
-		TotalCost:         b.cycleCostSum,
-		TotalGrossCost:    b.cycleGrossCostSum,
-		TotalCommission:   b.cycleCommissionSum,
-		Completed:         true,
-		TPLevelsHit:       len(partialExits),
-		PartialExits:      partialExits,
-		FinalExitPrice:    partialExits[len(partialExits)-1].Price,
-		TotalRealizedPnL:  totalRealizedPnL,
-	})
+    // Create cycle summary with partial exits
+    partialExits := make([]PartialExit, 0)
+    totalRealizedPnL := 0.0
+    
+    for i, tp := range b.tpLevels {
+        if tp.Hit {
+            partialExits = append(partialExits, PartialExit{
+                TPLevel:    i + 1,
+                Quantity:   tp.SoldQty,
+                Price:      tp.HitPrice,
+                Timestamp:  *tp.HitTime,
+                PnL:        tp.PnL,
+                Commission: tp.SellCommission,
+            })
+            totalRealizedPnL += tp.PnL
+        }
+    }
+    
+    avgEntry := 0.0
+    if b.cycleQtySum > 0 { avgEntry = b.cycleCostSum / b.cycleQtySum }
+    avgGrossEntry := 0.0
+    if b.cycleGrossQtySum > 0 { avgGrossEntry = b.cycleGrossCostSum / b.cycleGrossQtySum }
+    
+    // Determine final exit price safely
+    finalExitPrice := 0.0
+    if len(partialExits) > 0 {
+        finalExitPrice = partialExits[len(partialExits)-1].Price
+    }
+
+    b.results.Cycles = append(b.results.Cycles, CycleSummary{
+        CycleNumber:       b.currentCycleNumber,
+        StartTime:         b.cycleStartTime,
+        EndTime:           timestamp,
+        Entries:           b.cycleEntries,
+        AvgEntry:          avgEntry,
+        AvgGrossEntry:     avgGrossEntry,
+        TargetPrice:       0, // Not applicable for multiple TPs
+        RealizedPnL:       b.cycleUnrealizedPnL, // Use accumulated unrealized PnL
+        TotalCost:         b.cycleCostSum,
+        TotalGrossCost:    b.cycleGrossCostSum,
+        TotalCommission:   b.cycleCommissionSum,
+        Completed:         true,
+        TPLevelsHit:       len(partialExits),
+        PartialExits:      partialExits,
+        FinalExitPrice:    finalExitPrice,
+        TotalRealizedPnL:  b.cycleUnrealizedPnL, // Use accumulated unrealized PnL
+    })
 	
 	b.results.CompletedCycles++
 	
@@ -597,16 +666,47 @@ func (b *BacktestEngine) completeCycle(timestamp time.Time) {
 	b.resetCycle()
 }
 
+// resetTPLevelsForNewEntry resets TP levels when new DCA entry is added to existing cycle
+func (b *BacktestEngine) resetTPLevelsForNewEntry() {
+    if !b.useTPLevels {
+        return
+    }
+    
+    // NOTE: We do NOT reverse position/balance changes from previous TP hits
+    // The profits remain as unrealized PnL and the partial exits stay in effect
+    // The synthetic trades for partial exits remain in the trades list
+    // We only reset the TP level status to start checking from TP1 again
+    
+    // Reset TP level status only (keep the profits as unrealized PnL)
+    for i := range b.tpLevels {
+        // Reset TP level state to allow hitting them again
+        b.cycleTPProgress[i] = false
+        b.tpLevels[i].Hit = false
+        b.tpLevels[i].HitTime = nil
+        b.tpLevels[i].HitPrice = 0
+        b.tpLevels[i].PnL = 0
+        b.tpLevels[i].SoldQty = 0
+        b.tpLevels[i].SellCommission = 0
+    }
+    
+    // Do NOT restore position or balance - the partial exits remain in effect
+    // Do NOT change cycleRemainingQty - it reflects the actual remaining position
+    // The cycleUnrealizedPnL already contains the profits from previous TP hits
+    // The synthetic trades for partial exits remain in the trades list for accurate reporting
+}
+
 // resetCycle resets the cycle state
 func (b *BacktestEngine) resetCycle() {
-	b.cycleOpen = false
-	b.cycleEntries = 0
-	b.cycleQtySum = 0
-	b.cycleCostSum = 0
-	b.cycleGrossCostSum = 0
-	b.cycleCommissionSum = 0
-	b.cycleRemainingQty = 0
-	
-	// Notify strategy that cycle is complete so it can reset state
-	b.strategy.OnCycleComplete()
+    b.cycleOpen = false
+    b.cycleEntries = 0
+    b.cycleQtySum = 0
+    b.cycleCostSum = 0
+    b.cycleGrossCostSum = 0
+    b.cycleGrossQtySum = 0
+    b.cycleCommissionSum = 0
+    b.cycleRemainingQty = 0
+    b.cycleUnrealizedPnL = 0
+    
+    // Notify strategy that cycle is complete so it can reset state
+    b.strategy.OnCycleComplete()
 }

@@ -2,11 +2,12 @@
   "strategy": {
     "symbol": "SUIUSDT",
     "base_amount": 40,
-    "max_multiplier": 4,
+    "max_multiplier": 1.8,
     "price_threshold": 0.01,
     "interval": "5m",
     "window_size": 100,
     "tp_percent": 0.045,
+    "use_tp_levels": true,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
     "use_advanced_combo": true,
@@ -14,19 +15,19 @@
       "period": 50
     },
     "mfi": {
-      "period": 22,
-      "oversold": 25,
-      "overbought": 70
+      "period": 10,
+      "oversold": 30,
+      "overbought": 85
     },
     "keltner_channels": {
-      "period": 50,
-      "multiplier": 2
+      "period": 15,
+      "multiplier": 3
     },
     "wavetrend": {
-      "n1": 15,
-      "n2": 32,
-      "overbought": 70,
-      "oversold": -70
+      "n1": 12,
+      "n2": 18,
+      "overbought": 60,
+      "oversold": -60
     }
   },
   "exchange": {

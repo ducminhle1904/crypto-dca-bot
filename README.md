@@ -10,12 +10,15 @@ A sophisticated cryptocurrency trading bot that implements an enhanced Dollar Co
 - Dynamic position sizing based on signal strength
 - Configurable base amounts, max multipliers, and price thresholds
 
-### 📊 **Advanced Backtesting & Optimization**
+### 📊 **Advanced Backtesting & Analytics**
 
-- Genetic algorithm for strategy parameter optimization
-- Support for multiple timeframes and market conditions
-- Detailed performance metrics and trade analysis
-- Outputs optimized configurations in a nested JSON format
+- **Single/Multi-Level Take Profit**: Default single TP at 4.5%, optional 5-level TP system
+- **Comprehensive Excel Reports**: 4 detailed sheets with professional analytics
+- **Cycle Analysis**: Sequential DCA cycle tracking with balance progression
+- **Performance Metrics**: Sharpe Ratio, Profit Factor, Max Drawdown, Win Rate
+- **Strategic Insights**: AI-powered recommendations and optimization tips
+- **Visual Analytics**: Color-coded performance indicators and trend analysis
+- **Historical Testing**: Support for multiple timeframes and market conditions
 
 ### arquitectura multi-intercambio
 
@@ -143,12 +146,33 @@ go run cmd/live-bot-v2/main.go -config configs/binance/btc_5m_binance.json -demo
 ### Running a Backtest
 
 ```bash
-# Run a backtest with optimization
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -optimize
+# Basic backtest with default settings
+go run cmd/backtest/main.go -symbol SUIUSDT -interval 5m
 
-# Use an optimized configuration for a backtest
-go run cmd/backtest/main.go -config results/BTCUSDT_1h/best.json
+# Backtest with custom parameters
+go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -balance 5000 -start "2024-01-01"
+
+# Run with optimization
+go run cmd/backtest/main.go -symbol ETHUSDT -interval 15m -optimize
+
+# Use a configuration file
+go run cmd/backtest/main.go -config configs/bybit/sui_5m_bybit.json
+
+# Enable multi-level TP system
+go run cmd/backtest/main.go -symbol SUIUSDT -interval 5m -tp-levels
 ```
+
+#### **Backtest Outputs**
+
+- **Console**: Real-time performance metrics and statistics
+- **Excel Report**: Professional 4-sheet analysis (`trades.xlsx`)
+  - **Trades**: Cycle-organized trade details
+  - **Cycles**: Balance tracking and capital usage analysis
+  - **Detailed Analysis**: Comprehensive performance insights
+  - **Timeline**: Chronological trading activity view
+- **Configuration**: Optimized parameters (`best.json`)
+
+For detailed backtesting documentation, see [`cmd/backtest/README.md`](cmd/backtest/README.md).
 
 ### Monitoring
 
