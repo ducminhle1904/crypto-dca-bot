@@ -195,16 +195,13 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 
 			// Apply minimum lot size constraint and step size (simulate real exchange behavior)
 			if b.minOrderQty > 0 {
-				// Round to nearest multiple of minOrderQty (step size)
-				multiplier := math.Round(quantity / b.minOrderQty)
-				
-				// Ensure at least 1 step (minimum quantity)
+				// Floor to step size to avoid overspending beyond targetAmount
+				multiplier := math.Floor(quantity / b.minOrderQty)
+				// If we can't afford even one step, skip this buy
 				if multiplier < 1 {
-					multiplier = 1
+					continue
 				}
-				
 				adjustedQuantity := multiplier * b.minOrderQty
-				
 				if adjustedQuantity != quantity {
 					quantity = adjustedQuantity
 					actualAmount = quantity * currentPrice
@@ -273,6 +270,10 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					b.cycleCommissionSum += commission
 					trade.Cycle = b.currentCycleNumber
 					
+					// Initialize absolute TP quantities on first entry of cycle
+					if b.useTPLevels && b.cycleEntries == 1 {
+						b.setTPLevelsQuantities(b.cycleRemainingQty)
+					}
 					// Reset TP levels when new DCA entry is added (recalculate and start from TP1)
 					if b.useTPLevels && b.cycleEntries > 1 {
 						b.resetTPLevelsForNewEntry()
@@ -521,17 +522,8 @@ func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timesta
 func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64) {
     tpLevel := &b.tpLevels[levelIndex]
     
-    // Calculate quantity to sell
-    var sellQty float64
-    if levelIndex == 4 { // 5th and final TP level (0-indexed)
-        // Sell ALL remaining quantity to completely close the position
-        sellQty = b.cycleRemainingQty
-    } else {
-        // Sell 20% of remaining position for levels 1-4
-        sellQty = b.cycleRemainingQty * 0.20
-    }
-    
-    // Ensure we don't sell more than remaining (safety check)
+    // Sell fixed absolute quantity defined at TP initialization/reset
+    sellQty := tpLevel.Quantity
     if sellQty > b.cycleRemainingQty {
         sellQty = b.cycleRemainingQty
     }
@@ -558,17 +550,14 @@ func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, ti
     b.position -= sellQty
     b.balance += proceeds - commission
     
-    // CRITICAL FIX: Update individual trade exit data proportionally
-    b.updateTradeExitsForTPLevel(sellQty, currentPrice, timestamp, commission)
+    // Create synthetic trade for this partial exit using the provided avgEntry
+    b.updateTradeExitsForTPLevel(sellQty, currentPrice, timestamp, commission, avgEntry)
 }
 
 // updateTradeExitsForTPLevel creates synthetic trades for TP level partial exits
-func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPrice float64, timestamp time.Time, totalCommission float64) {
+func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPrice float64, timestamp time.Time, totalCommission float64, avgEntry float64) {
     // For TP levels, we create a synthetic "exit trade" that represents the partial exit
     // This is cleaner than trying to modify existing entry trades
-    
-    // Calculate average entry price for this partial exit
-    avgEntry := b.calculateCurrentAvgEntry()
     
     // Create a synthetic trade representing this partial exit
     partialExitTrade := Trade{
@@ -693,6 +682,23 @@ func (b *BacktestEngine) resetTPLevelsForNewEntry() {
     // Do NOT change cycleRemainingQty - it reflects the actual remaining position
     // The cycleUnrealizedPnL already contains the profits from previous TP hits
     // The synthetic trades for partial exits remain in the trades list for accurate reporting
+
+    // Recompute absolute TP quantities based on the current remaining quantity
+    b.setTPLevelsQuantities(b.cycleRemainingQty)
+}
+
+// setTPLevelsQuantities sets each TP level's absolute quantity to 20% of baseQty
+func (b *BacktestEngine) setTPLevelsQuantities(baseQty float64) {
+    if !b.useTPLevels {
+        return
+    }
+    // Guard against negatives
+    if baseQty < 0 {
+        baseQty = 0
+    }
+    for i := range b.tpLevels {
+        b.tpLevels[i].Quantity = 0.20 * baseQty
+    }
 }
 
 // resetCycle resets the cycle state
