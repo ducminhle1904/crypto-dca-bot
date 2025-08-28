@@ -195,11 +195,11 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 
 			// Apply minimum lot size constraint and step size (simulate real exchange behavior)
 			if b.minOrderQty > 0 {
-				// Floor to step size to avoid overspending beyond targetAmount
-				multiplier := math.Floor(quantity / b.minOrderQty)
-				// If we can't afford even one step, skip this buy
+				// Round to nearest multiple of minOrderQty (step size)
+				multiplier := math.Round(quantity / b.minOrderQty)
+				// Ensure at least 1 step (minimum quantity)
 				if multiplier < 1 {
-					continue
+					multiplier = 1
 				}
 				adjustedQuantity := multiplier * b.minOrderQty
 				if adjustedQuantity != quantity {
