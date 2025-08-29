@@ -205,6 +205,16 @@ func (b *BinanceAdapter) GetOrderStatus(ctx context.Context, orderID string) (*e
 	}
 }
 
+// GetOpenOrders retrieves open orders for a symbol
+func (b *BinanceAdapter) GetOpenOrders(ctx context.Context, category, symbol string) ([]*exchange.Order, error) {
+	// This would require implementing GetOpenOrders in the Binance client
+	return nil, &exchange.ExchangeError{
+		Code:    "NOT_IMPLEMENTED",
+		Message: "GetOpenOrders not implemented for Binance yet",
+		IsRetryable: false,
+	}
+}
+
 // GetTradingConstraints retrieves trading constraints for a symbol
 func (b *BinanceAdapter) GetTradingConstraints(ctx context.Context, category, symbol string) (*exchange.TradingConstraints, error) {
 	// This would require getting symbol info from Binance API

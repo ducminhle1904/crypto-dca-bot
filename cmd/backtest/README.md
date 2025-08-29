@@ -1,15 +1,16 @@
 # 🚀 Enhanced DCA Backtesting Engine
 
-A sophisticated backtesting system for the Enhanced DCA (Dollar-Cost Averaging) strategy with multi-level Take Profit (TP) support, comprehensive analytics, and professional Excel reporting.
+A sophisticated backtesting system for the Enhanced DCA (Dollar-Cost Averaging) strategy with optional multi-level Take Profit (TP), robust walk-forward validation, comprehensive analytics, and professional Excel reporting.
 
 ## ✨ Features
 
 ### 🎯 **Advanced DCA Strategy Testing**
 
-- **Single Take Profit**: Default 4.5% TP system (sells entire position at target)
-- **Optional Multi-Level TP**: 5-level TP system available with `-tp-levels` flag
+- **Multi-Level Take Profit**: 5-level TP system (always enabled by default)
+- **Dynamic TP Levels**: Automatically derived from base TP percentage (20%, 40%, 60%, 80%, 100%)
 - **DCA Entry Logic**: Automatic averaging down when price drops below thresholds
 - **Cycle Management**: Sequential cycle processing with proper balance tracking
+- **Dynamic TP Filling**: If a candle reaches multiple TP levels, they are combined into one exit (no artificial splits)
 
 ### 📊 **Comprehensive Analytics**
 
@@ -20,17 +21,23 @@ A sophisticated backtesting system for the Enhanced DCA (Dollar-Cost Averaging) 
 
 ### 📈 **Professional Excel Reporting**
 
-- **4 Detailed Sheets**: Trades, Cycles, Detailed Analysis, Timeline
-- **Visual Insights**: Color-coded performance indicators and smart recommendations
-- **Balance Tracking**: Accurate capital usage and balance progression per cycle
-- **Strategic Recommendations**: AI-powered optimization suggestions
+- **3 Detailed Sheets**: Trades, Cycles, Detailed Analysis (Timeline removed)
+- **Visual Insights**: Color-coded price changes (entries in red, exits in green)
+- **Balance Tracking**: Running balance and balance change per event; per-cycle start/end balance
+- **TP Info**: Combined TP execution details shown inline in Trades
 
 ### 🔧 **Flexible Configuration**
 
 - **Multiple Timeframes**: 1m, 5m, 15m, 1h, 4h, 1d support
 - **Customizable Parameters**: DCA thresholds, TP levels, position sizing
-- **Commission Modeling**: Realistic trading costs and slippage simulation
+- **Commission Modeling**: Realistic trading costs
 - **Historical Data**: Comprehensive market data analysis
+
+### 🧪 **Walk-Forward Validation (WFV)**
+
+- **Holdout mode**: Split by ratio (e.g., 70% train, 30% test)
+- **Rolling mode**: Sliding train/test windows across time (e.g., 180d train, 60d test, 30d roll)
+- **Train/Test Reporting**: Optimize on train, report on unseen test
 
 ## 🚀 Quick Start
 
@@ -45,11 +52,14 @@ A sophisticated backtesting system for the Enhanced DCA (Dollar-Cost Averaging) 
 # Navigate to the backtest directory
 cd cmd/backtest
 
-# Run a basic backtest
+# Run a backtest (auto-resolves data from data/<exchange>/<category>/<symbol>/<interval>/candles.csv)
 go run main.go -symbol BTCUSDT -interval 5m
 
-# Run with custom date range
-go run main.go -symbol SUIUSDT -interval 5m -start "2024-01-01" -end "2024-12-31"
+# Limit to a trailing window (e.g., last 90 days)
+go run main.go -symbol SUIUSDT -interval 5m -period 90d
+
+# Use a specific data file (forces single-interval run)
+go run main.go -data "../../data/bybit/linear/BTCUSDT/60/candles.csv"
 
 # Use a specific configuration file
 go run main.go -config ../../configs/bybit/sui_5m_bybit.json
@@ -58,33 +68,57 @@ go run main.go -config ../../configs/bybit/sui_5m_bybit.json
 ### Advanced Options
 
 ```bash
-# Enable optimization mode
+# Enable optimization mode (GA)
 go run main.go -symbol BTCUSDT -interval 1h -optimize
 
-# Use multi-level TP system (5 levels)
-go run main.go -symbol SUIUSDT -interval 5m -tp-levels
+# Multi-level TP system is always enabled (5 levels, 20% each)
+go run main.go -symbol SUIUSDT -interval 5m
 
 # Custom balance and commission
-go run main.go -symbol ETHUSDT -interval 15m -balance 5000 -commission 0.001
+go run main.go -symbol ETHUSDT -interval 15m -balance 5000 -commission 0.0005
 
-# Specify output directory
-go run main.go -symbol ADAUSDT -interval 1h -output ./my_results
+# Run across all available intervals for a symbol
+go run main.go -symbol BTCUSDT -all-intervals -optimize
+
+# Walk-Forward Validation (holdout)
+go run main.go -symbol BTCUSDT -interval 1h -optimize -wf-enable -wf-split-ratio 0.7
+
+# Walk-Forward Validation (rolling)
+go run main.go -symbol BTCUSDT -interval 1h -optimize -wf-enable -wf-rolling -wf-train-days 180 -wf-test-days 60 -wf-roll-days 30
+
+# Console-only (skip file output)
+go run main.go -symbol ADAUSDT -interval 1h -console-only
 ```
 
 ## 📋 Command-Line Parameters
 
-| Parameter     | Description             | Default     | Example                |
-| ------------- | ----------------------- | ----------- | ---------------------- |
-| `-symbol`     | Trading pair symbol     | `BTCUSDT`   | `-symbol SUIUSDT`      |
-| `-interval`   | Timeframe for analysis  | `5m`        | `-interval 1h`         |
-| `-start`      | Start date (YYYY-MM-DD) | 30 days ago | `-start "2024-01-01"`  |
-| `-end`        | End date (YYYY-MM-DD)   | Today       | `-end "2024-12-31"`    |
-| `-balance`    | Initial balance         | `500`       | `-balance 10000`       |
-| `-commission` | Trading commission rate | `0.0006`    | `-commission 0.001`    |
-| `-tp-levels`  | Use 5-level TP system   | `false`     | `-tp-levels`           |
-| `-config`     | Configuration file path | -           | `-config config.json`  |
-| `-optimize`   | Enable optimization     | `false`     | `-optimize`            |
-| `-output`     | Output directory        | `./results` | `-output ./my_results` |
+| Parameter          | Description                                                                    | Default   | Example                                                  |
+| ------------------ | ------------------------------------------------------------------------------ | --------- | -------------------------------------------------------- |
+| `-config`          | Path to configuration file                                                     |           | `-config ../../configs/bybit/sui_5m_bybit.json`          |
+| `-data`            | Path to historical data file (overrides `-interval`)                           |           | `-data "../../data/bybit/linear/BTCUSDT/60/candles.csv"` |
+| `-data-root`       | Root folder containing `<EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv` | `data`    | `-data-root ./data`                                      |
+| `-symbol`          | Trading symbol                                                                 | `BTCUSDT` | `-symbol SUIUSDT`                                        |
+| `-interval`        | Data interval (e.g., `5m`, `1h`, `4h`, `1d`)                                   | `1h`      | `-interval 5m`                                           |
+| `-exchange`        | Exchange for data discovery                                                    | `bybit`   | `-exchange binance`                                      |
+| `-balance`         | Initial balance                                                                | `500`     | `-balance 10000`                                         |
+| `-commission`      | Trading fee (quote currency)                                                   | `0.0005`  | `-commission 0.001`                                      |
+| `-window`          | Indicator/window size for analysis                                             | `100`     | `-window 200`                                            |
+| `-base-amount`     | Base DCA order size                                                            | `40`      | `-base-amount 20`                                        |
+| `-max-multiplier`  | Maximum position multiplier                                                    | `3`       | `-max-multiplier 4`                                      |
+| `-price-threshold` | Min price drop % to add next DCA                                               | `0.02`    | `-price-threshold 0.015`                                 |
+| `-advanced-combo`  | Use Hull/MFI/Keltner/WaveTrend instead of RSI/MACD/BB/EMA                      | `false`   | `-advanced-combo`                                        |
+
+| `-optimize` | Enable GA optimization | `false` | `-optimize` |
+| `-all-intervals` | Discover and run all available intervals for the symbol | `false` | `-all-intervals` |
+| `-period` | Trailing window (e.g., `30d`, `180d`, `365d`, or `Nd`) | | `-period 90d` |
+| `-console-only` | Print results to console only (no files) | `false` | `-console-only` |
+| `-wf-enable` | Enable walk-forward validation | `false` | `-wf-enable` |
+| `-wf-split-ratio` | Train/test split ratio (holdout) | `0.7` | `-wf-split-ratio 0.8` |
+| `-wf-rolling` | Rolling WFV instead of holdout | `false` | `-wf-rolling` |
+| `-wf-train-days` | Training window size (rolling) | `180` | `-wf-train-days 120` |
+| `-wf-test-days` | Test window size (rolling) | `60` | `-wf-test-days 30` |
+| `-wf-roll-days` | Roll step size (rolling) | `30` | `-wf-roll-days 15` |
+| `-env` | Environment file for Bybit credentials | `.env` | `-env .env.local` |
 
 ## 📊 Output Files
 
@@ -121,17 +155,19 @@ Avg Cycle Duration: 49.2 hours
 
 #### **📈 Trades Sheet**
 
-- Cycle-organized trade listing
-- DCA entries and TP exits clearly separated
-- Price change tracking and cumulative costs
-- Visual indicators for trade types
+- Chronological events per cycle with a single unified view
+- Columns: Cycle, Type, Sequence, Timestamp, Price, Quantity, Commission, PnL, Price Change %, Running Balance, Balance Change, TP Info
+- Price Change %: red for entries (down-moves), green for exits (profits)
+- Running Balance updates on every event; Balance Change shows delta per row
+- Cycle header and cycle summary are seamless, summary includes start/end balance and cycle profit
+- TP Info shows combined TP fills when multiple levels are hit in the same candle
 
 #### **🔄 Cycles Sheet**
 
 - **Balance Tracking**: Before/after balance per cycle
 - **Capital Usage**: Amount and percentage of balance used
-- **Performance**: Duration, ROI, completion status
-- **Sequential Analysis**: Proper cycle progression
+- **Performance**: Duration, ROI
+- Status column removed; improved per-cycle summaries
 
 #### **🚀 Detailed Analysis Sheet**
 
@@ -141,11 +177,7 @@ Avg Cycle Duration: 49.2 hours
 - **TP Level Analysis**: Success rates per TP level
 - **Strategic Recommendations**: AI-powered optimization tips
 
-#### **📈 Timeline Sheet**
-
-- Chronological view of all trading activity
-- Running balance progression
-- Trade-by-trade analysis with timestamps
+> Note: The previous Timeline sheet has been removed. Its information is now consolidated in the Trades sheet (sequence, running balance, and cycle summaries).
 
 ### 3. **Configuration Files**
 
@@ -196,9 +228,9 @@ Avg Cycle Duration: 49.2 hours
 
 #### **Take Profit Settings**
 
-- `tp_percent`: Single TP percentage (default mode)
-- **Multi-level TP**: Use `-tp-levels` flag to enable 5-level system
-- **TP Levels**: Auto-generated from `tp_percent` (20%, 40%, 60%, 80%, 100%)
+- `tp_percent`: Base TP percentage for multi-level system (always enabled)
+- **5-Level TP System**: Automatically generates 5 levels from base TP (20%, 40%, 60%, 80%, 100%)
+- **Dynamic TP Filling**: If a candle reaches multiple TP thresholds, levels are combined into a single exit
 
 #### **Risk Management**
 
@@ -299,11 +331,24 @@ done
 # Step 1: Run optimization
 go run main.go -symbol SUIUSDT -interval 5m -optimize
 
-# Step 2: Use optimized config
-go run main.go -config ./results/SUIUSDT_5m/best.json
+# Step 2: Use optimized config (best.json)
+go run main.go -config ./results/SUIUSDT_5/best.json
 
 # Step 3: Test on different timeframes
-go run main.go -config ./results/SUIUSDT_5m/best.json -interval 15m
+go run main.go -config ./results/SUIUSDT_5/best.json -interval 15m
+```
+
+### **Walk-Forward Validation**
+
+```bash
+# Holdout WFV (70/30 split)
+go run main.go -symbol BTCUSDT -interval 1h -optimize -wf-enable -wf-split-ratio 0.7
+
+# Rolling WFV (180d train, 60d test, 30d roll)
+go run main.go -symbol BTCUSDT -interval 1h -optimize -wf-enable -wf-rolling -wf-train-days 180 -wf-test-days 60 -wf-roll-days 30
+
+# Combine with all-intervals scanning
+go run main.go -symbol BTCUSDT -all-intervals -optimize -wf-enable
 ```
 
 ### **Performance Analysis**

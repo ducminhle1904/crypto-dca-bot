@@ -39,7 +39,7 @@ const (
 	DefaultMinOrderQty    = 0.01 // Default minimum order quantity (typical for BTCUSDT)
 	
 	// Multiple TP configuration
-	DefaultUseTPLevels = false           // Default to single TP mode
+	DefaultUseTPLevels = true            // Default to multi-level TP mode
 	DefaultTPLevels    = 5               // Number of TP levels
 	DefaultTPQuantity  = 0.20            // 20% per level (1.0 / 5 levels)
 	
@@ -234,7 +234,7 @@ type BacktestConfig struct {
 	Indicators     []string `json:"indicators"`
 
 	// Take-profit configuration
-	TPPercent      float64 `json:"tp_percent"`      // Single TP (backward compatibility)
+	TPPercent      float64 `json:"tp_percent"`      // Base TP percentage for multi-level TP system
 	UseTPLevels    bool    `json:"use_tp_levels"`   // Enable 5-level TP mode
 	Cycle          bool    `json:"cycle"`
 	
@@ -436,16 +436,29 @@ func main() {
 		maxMultiplier  = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
 		priceThreshold = flag.Float64("price-threshold", DefaultPriceThreshold, "Minimum price drop % for next DCA entry (default: 2%)")
 		useAdvancedCombo = flag.Bool("advanced-combo", false, "Use advanced combo indicators (Hull MA, MFI, Keltner Channels, WaveTrend) instead of classic (RSI, MACD, BB, EMA)")
-		useTPLevels     = flag.Bool("tp-levels", false, "Use 5-level take profit system instead of single TP")
+
 		optimize        = flag.Bool("optimize", false, "Run parameter optimization using genetic algorithm")
 		allIntervals   = flag.Bool("all-intervals", false, "Scan data root for all intervals for the given symbol and run per-interval backtests/optimizations")
 		dataRoot       = flag.String("data-root", DefaultDataRoot, "Root folder containing <EXCHANGE>/<CATEGORY>/<SYMBOL>/<INTERVAL>/candles.csv")
 		periodStr      = flag.String("period", "", "Limit data to trailing window (e.g., 7d,30d,180d,365d or Nd)")
 		consoleOnly    = flag.Bool("console-only", false, "Only display results in console, do not write files (best.json, trades.xlsx)")
+		
+		// Walk-Forward Validation flags
+		wfEnable       = flag.Bool("wf-enable", false, "Enable walk-forward validation")
+		wfSplitRatio   = flag.Float64("wf-split-ratio", 0.7, "Train/test split ratio (0.7 = 70% train, 30% test)")
+		wfRolling      = flag.Bool("wf-rolling", false, "Use rolling walk-forward instead of simple holdout")
+		wfTrainDays    = flag.Int("wf-train-days", 180, "Training window size in days (for rolling WF)")
+		wfTestDays     = flag.Int("wf-test-days", 60, "Test window size in days (for rolling WF)")
+		wfRollDays     = flag.Int("wf-roll-days", 30, "Roll forward step size in days (for rolling WF)")
 		envFile        = flag.String("env", ".env", "Environment file path for Bybit API credentials")
 	)
 	
 	flag.Parse()
+	
+	// Test walk-forward flags to ensure they're accessible
+	if *wfEnable {
+		fmt.Printf("Walk-forward validation enabled\n")
+	}
 
 	// If configFile is set and does not contain a path, prepend "configs/"
     if *configFile != "" && !strings.ContainsAny(*configFile, "/\\") {
@@ -464,27 +477,20 @@ func main() {
 	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
 	
-	// Set TP configuration based on flags
-	if *useTPLevels {
-		cfg.UseTPLevels = true
-		log.Printf("TP Levels enabled via command line flag")
-	}
+	// Multi-level TP is now always enabled by default
+	cfg.UseTPLevels = true
 	
 	// TP will be determined by optimization or use sensible default if not set
-	if !*optimize && cfg.TPPercent == 0 {
-		cfg.TPPercent = DefaultTPPercent // Default 2% TP when not optimizing and TP not set
+	if cfg.TPPercent == 0 {
+		cfg.TPPercent = DefaultTPPercent // Default 2% TP when TP not set
 	}
 	
-	// Log TP configuration
-	if cfg.UseTPLevels {
-		log.Printf("Using 5-level TP system derived from TPPercent: %.2f%%", cfg.TPPercent*100)
-		log.Printf("TP Levels (20%% each):")
-		for i := 0; i < 5; i++ {
-			levelPct := cfg.TPPercent * float64(i+1) / 5.0
-			log.Printf("  Level %d: 20.00%% at %.2f%%", i+1, levelPct*100)
-		}
-	} else {
-		log.Printf("Using single TP at %.2f%%", cfg.TPPercent*100)
+	// Log TP configuration (multi-level TP is always enabled)
+	log.Printf("Using 5-level TP system derived from TPPercent: %.2f%%", cfg.TPPercent*100)
+	log.Printf("TP Levels (20%% each):")
+	for i := 0; i < 5; i++ {
+		levelPct := cfg.TPPercent * float64(i+1) / 5.0
+		log.Printf("  Level %d: 20.00%% at %.2f%%", i+1, levelPct*100)
 	}
 
 	// Capture and parse trailing period window
@@ -524,7 +530,16 @@ func main() {
 	}
 	
 	if *allIntervals {
-		runAcrossIntervals(cfg, *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly)
+		// Create walk-forward configuration
+		wfConfig := WalkForwardConfig{
+			Enable:     *wfEnable,
+			Rolling:    *wfRolling,
+			SplitRatio: *wfSplitRatio,
+			TrainDays:  *wfTrainDays,
+			TestDays:   *wfTestDays,
+			RollDays:   *wfRollDays,
+		}
+		runAcrossIntervals(cfg, *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly, wfConfig)
 		return
 	}
 	
@@ -532,7 +547,36 @@ func main() {
 		var bestResults *backtest.BacktestResults
 		var bestConfig BacktestConfig
 		
+		// Check if walk-forward validation is enabled
+		if *wfEnable {
+			// Load data for walk-forward validation
+			data, err := loadHistoricalDataCached(cfg.DataFile)
+			if err != nil {
+				log.Fatalf("Failed to load data for walk-forward validation: %v", err)
+			}
+			
+			if selectedPeriod > 0 {
+				data = filterDataByPeriod(data, selectedPeriod)
+			}
+			
+			// Create walk-forward configuration
+			wfConfig := WalkForwardConfig{
+				Enable:     *wfEnable,
+				Rolling:    *wfRolling,
+				SplitRatio: *wfSplitRatio,
+				TrainDays:  *wfTrainDays,
+				TestDays:   *wfTestDays,
+				RollDays:   *wfRollDays,
+			}
+			
+			// Run walk-forward validation
+			runWalkForwardValidation(cfg, data, wfConfig)
+			
+			// Still run regular optimization for comparison and output generation
 		bestResults, bestConfig = optimizeForInterval(cfg, selectedPeriod)
+		} else {
+			bestResults, bestConfig = optimizeForInterval(cfg, selectedPeriod)
+		}
 			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
 		
 		fmt.Println(strings.Repeat("=", 50))
@@ -542,16 +586,10 @@ func main() {
 		fmt.Printf("  Base Amount:      $%.2f\n", bestConfig.BaseAmount)
 		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
 		fmt.Printf("  Price Threshold:  %.2f%%\n", bestConfig.PriceThreshold*100)
-		if bestConfig.UseTPLevels {
-			fmt.Printf("  Use TP Levels:    true\n")
-			fmt.Printf("  TP Levels (derived from TPPercent %.2f%%):\n", bestConfig.TPPercent*100)
+		fmt.Printf("  TP Levels (5-level system, derived from TPPercent %.2f%%):\n", bestConfig.TPPercent*100)
 			for i := 0; i < 5; i++ {
 				levelPct := bestConfig.TPPercent * float64(i+1) / 5.0
 				fmt.Printf("    Level %d: 20.00%% at %.2f%%\n", i+1, levelPct*100)
-			}
-		} else {
-			fmt.Printf("  Use TP Levels:    false\n")
-			fmt.Printf("  TP Percent:       %.3f%%\n", bestConfig.TPPercent*100)
 		}
 		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
 		
@@ -621,15 +659,11 @@ func main() {
 				logSuccess("Saved trades to: %s", stdTradesPath)
 			}
 		
-		// Log TP configuration in best config
-		if bestConfig.UseTPLevels {
+		// Log TP configuration in best config (always 5-level TP)
 			logSuccess("Best config uses 5-level TP derived from TPPercent: %.2f%%", bestConfig.TPPercent*100)
 			for i := 0; i < 5; i++ {
 				levelPct := bestConfig.TPPercent * float64(i+1) / 5.0
 				logSuccess("  Level %d: 20.00%% at %.2f%%", i+1, levelPct*100)
-			}
-		} else {
-			logSuccess("Best config uses single TP at %.2f%%", bestConfig.TPPercent*100)
 		}
 		} else {
 			logInfo("Console-only mode: Skipping file output")
@@ -752,8 +786,8 @@ func loadConfig(configFile, dataFile, symbol string, balance, commission float64
 		WaveTrendOverbought: DefaultWaveTrendOverbought,
 		WaveTrendOversold:   DefaultWaveTrendOversold,
 		Indicators:     nil,
-		TPPercent:      0, // Default to 0 TP, will be set later if needed
-		UseTPLevels:    DefaultUseTPLevels, // Default to single TP mode
+		TPPercent:      DefaultTPPercent, // Default 2% TP for multi-level system
+		UseTPLevels:    DefaultUseTPLevels, // Default to multi-level TP mode
 		MinOrderQty:    DefaultMinOrderQty, // Default minimum order quantity
 	}
 	
@@ -984,7 +1018,7 @@ func validateConfig(cfg *BacktestConfig) error {
 	return nil
 }
 
-func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool) {
+func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool, wfConfig WalkForwardConfig) {
 	sym := strings.ToUpper(cfg.Symbol)
 	
 	// Find all available intervals for this symbol in the exchange
@@ -1056,7 +1090,28 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 		if optimize {
 			// propagate cycle preference
 			cfgCopy.Cycle = cfg.Cycle
+			
+			if wfConfig.Enable {
+				// Load data for walk-forward validation
+				data, err := loadHistoricalDataCached(cfgCopy.DataFile)
+				if err != nil {
+					log.Printf("Failed to load data for walk-forward validation: %v", err)
+					continue
+				}
+				
+				if selectedPeriod > 0 {
+					data = filterDataByPeriod(data, selectedPeriod)
+				}
+				
+				// Run walk-forward validation instead of regular optimization
+				runWalkForwardValidation(&cfgCopy, data, wfConfig)
+				
+				// For now, still run regular optimization to get results for comparison
+				// In production, you might want to use the WF results instead
 			res, bestCfg = optimizeForInterval(&cfgCopy, selectedPeriod)
+			} else {
+				res, bestCfg = optimizeForInterval(&cfgCopy, selectedPeriod)
+			}
 		} else {
 			res = runBacktest(&cfgCopy, selectedPeriod)
 			bestCfg = cfgCopy
@@ -1659,8 +1714,14 @@ func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*ba
 		populationSize, generations, mutationRate*100, crossoverRate*100)
 	logInfo("Using %d parallel workers for fitness evaluation", MaxParallelWorkers)
 
+	// Ensure base config has valid TP settings for optimization
+	if cfg.TPPercent == 0 {
+		cfg.TPPercent = DefaultTPPercent // Ensure valid TP for optimization base
+	}
+	cfg.UseTPLevels = true // Always use multi-level TP
+
 	// Initialize population
-			population := initializePopulation(cfg, populationSize, rng)
+	population := initializePopulation(cfg, populationSize, rng)
 	
 	var bestIndividual *Individual
 	var bestResults *backtest.BacktestResults
@@ -1736,10 +1797,10 @@ func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Indi
 		individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
 		individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
 		
-		// TP candidates - now both single and multi-level modes use TPPercent
+		// TP candidates - always use multi-level TP with TPPercent
 		if cfg.Cycle {
 			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
-			individual.config.UseTPLevels = cfg.UseTPLevels // Use flag value
+			individual.config.UseTPLevels = true // Always use multi-level TP
 		} else {
 			individual.config.UseTPLevels = false
 			individual.config.TPPercent = 0
@@ -2071,7 +2132,7 @@ func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 			Interval:       interval,
 			WindowSize:     cfg.WindowSize,
 			TPPercent:      cfg.TPPercent,
-			UseTPLevels:    cfg.UseTPLevels,
+			UseTPLevels:    true, // Always use multi-level TP
 			Cycle:          cfg.Cycle,
 			Indicators:     cfg.Indicators,
 			UseAdvancedCombo:    cfg.UseAdvancedCombo,
@@ -3000,11 +3061,12 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 	fx.SetColWidth(tradesSheet, "I", "I", 12)  // Price Change %
 	fx.SetColWidth(tradesSheet, "J", "J", 14)  // Running Balance
 	fx.SetColWidth(tradesSheet, "K", "K", 14)  // Balance Change
+	fx.SetColWidth(tradesSheet, "L", "L", 20)  // TP Info
 
-	// Write Enhanced Trades headers - includes balance tracking
+	// Write Enhanced Trades headers - includes balance tracking and TP descriptions
 	tradeHeaders := []string{
 		"Cycle", "Type", "Sequence", "Timestamp", "Price", "Quantity", 
-		"Commission", "PnL", "Price Change %", "Running Balance", "Balance Change",
+		"Commission", "PnL", "Price Change %", "Running Balance", "Balance Change", "TP Info",
 	}
 	for i, h := range tradeHeaders {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
@@ -3044,10 +3106,10 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 		
 		isEntry := !t.EntryTime.Equal(t.ExitTime)
 		
-		// Set cycle start price from first entry
+			// Set cycle start price from first entry
 		if isEntry && cycleMap[t.Cycle].StartPrice == 0 {
-			cycleMap[t.Cycle].StartPrice = t.EntryPrice
-		}
+				cycleMap[t.Cycle].StartPrice = t.EntryPrice
+			}
 		
 		// Add trade to cycle
 		cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
@@ -3112,7 +3174,29 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 				// TP exit - receive money  
 				balanceChange := (trade.Trade.ExitPrice*trade.Trade.Quantity - trade.Trade.Commission)
 				trade.BalanceChange = balanceChange
-				trade.Description = "TP Level Hit"
+				
+				// Determine how many TP levels this exit represents based on quantity
+				totalCycleQty := 0.0
+				for _, t := range cycle.ChronologicalTrades {
+					if t.IsEntry {
+						totalCycleQty += t.Trade.Quantity
+					}
+				}
+				
+				// Calculate what percentage of position this exit represents
+				exitPercentage := (trade.Trade.Quantity / totalCycleQty) * 100
+				
+				if exitPercentage >= 90 {
+					trade.Description = "TP Complete (100%)"
+				} else if exitPercentage >= 70 {
+					trade.Description = "TP Levels 1-4 (80%)"
+				} else if exitPercentage >= 50 {
+					trade.Description = "TP Levels 1-3 (60%)"
+				} else if exitPercentage >= 30 {
+					trade.Description = "TP Levels 1-2 (40%)"
+				} else {
+					trade.Description = "TP Level 1 (20%)"
+				}
 			}
 			
 			runningBalance += trade.BalanceChange
@@ -3182,7 +3266,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 		cyclePnL := 0.0
 		
 		// Simple cycle header without balance info (moved to summary)
-		cycleHeaderRange := fmt.Sprintf("A%d:K%d", row, row)
+		cycleHeaderRange := fmt.Sprintf("A%d:L%d", row, row)
 		fx.MergeCell(tradesSheet, cycleHeaderRange, "")
 		headerCell, _ := excelize.CoordinatesToCellName(1, row)
 		fx.SetCellValue(tradesSheet, headerCell, fmt.Sprintf("═══ CYCLE %d ═══", cycleNum))
@@ -3196,8 +3280,8 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 			// Calculate costs and PnL for summary
 			if enhancedTrade.IsEntry {
 				cost := trade.EntryPrice * trade.Quantity + trade.Commission
-				cycleCost += cost
-				totalCost += cost
+			cycleCost += cost
+			totalCost += cost
 			} else {
 				cyclePnL += trade.PnL
 			}
@@ -3239,6 +3323,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 				priceChange / 100,
 				enhancedTrade.BalanceAfter,
 				enhancedTrade.BalanceChange,
+				enhancedTrade.Description,
 			}
 			
 			writeEnhancedTradeRow(fx, tradesSheet, row, values, tradeStyle, currencyStyle, percentStyle, enhancedTrade.IsEntry, redPercentStyle, greenPercentStyle)
@@ -3273,7 +3358,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 		actualCycleProfit := cycleData.EndBalance - cycleData.StartBalance
 		
 		// Create seamless summary header with balance info
-		summaryHeaderRange := fmt.Sprintf("A%d:K%d", row, row)
+		summaryHeaderRange := fmt.Sprintf("A%d:L%d", row, row)
 		fx.MergeCell(tradesSheet, summaryHeaderRange, "")
 		summaryHeaderCell, _ := excelize.CoordinatesToCellName(1, row)
 		fx.SetCellValue(tradesSheet, summaryHeaderCell, fmt.Sprintf("📊 CYCLE %d SUMMARY - Balance: $%.2f → $%.2f | Profit: $%.2f | Entries: %d | Exits: %d", 
@@ -3298,7 +3383,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 		},
 	})
 	
-	finalSummaryRange := fmt.Sprintf("A%d:K%d", row, row)
+	finalSummaryRange := fmt.Sprintf("A%d:L%d", row, row)
 	fx.MergeCell(tradesSheet, finalSummaryRange, "")
 	finalSummaryCell, _ := excelize.CoordinatesToCellName(1, row)
 	// Count trades using the same logic as console (PartialExits if available)
@@ -3322,7 +3407,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 	
 	// Add AutoFilter to trades data
 	if row > 2 {
-		fx.AutoFilter(tradesSheet, fmt.Sprintf("A1:K%d", row-1), []excelize.AutoFilterOptions{})
+		fx.AutoFilter(tradesSheet, fmt.Sprintf("A1:L%d", row-1), []excelize.AutoFilterOptions{})
     }
 
 	// =========================
@@ -3548,6 +3633,402 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 	return fx.SaveAs(path)
 }
 
+// Walk-Forward Validation structures and functions
+type WalkForwardConfig struct {
+	Enable     bool
+	Rolling    bool
+	SplitRatio float64
+	TrainDays  int
+	TestDays   int
+	RollDays   int
+}
+
+type WalkForwardFold struct {
+	Train []types.OHLCV
+	Test  []types.OHLCV
+	TrainStart time.Time
+	TrainEnd   time.Time
+	TestStart  time.Time
+	TestEnd    time.Time
+}
+
+type WalkForwardResults struct {
+	TrainResults *backtest.BacktestResults
+	TestResults  *backtest.BacktestResults
+	BestConfig   BacktestConfig
+	Fold         int
+}
+
+// splitByRatio splits data into train/test by ratio
+func splitByRatio(data []types.OHLCV, ratio float64) ([]types.OHLCV, []types.OHLCV) {
+	if ratio <= 0 || ratio >= 1 {
+		return data, nil
+	}
+	
+	n := int(float64(len(data)) * ratio)
+	if n < 1 || n >= len(data) {
+		return data, nil
+	}
+	
+	return data[:n], data[n:]
+}
+
+// createRollingFolds creates rolling walk-forward folds
+func createRollingFolds(data []types.OHLCV, trainDays, testDays, rollDays int) []WalkForwardFold {
+	var folds []WalkForwardFold
+	
+	trainDur := time.Duration(trainDays) * 24 * time.Hour
+	testDur := time.Duration(testDays) * 24 * time.Hour
+	rollDur := time.Duration(rollDays) * 24 * time.Hour
+	
+	if len(data) < 100 {
+		return folds // Need minimum data
+	}
+	
+	start := 0
+	for {
+		// Find train window
+		trainEndTs := data[start].Timestamp.Add(trainDur)
+		trainEnd := start
+		for trainEnd < len(data) && data[trainEnd].Timestamp.Before(trainEndTs) {
+			trainEnd++
+		}
+		
+		// Find test window
+		testEndTs := trainEndTs.Add(testDur)
+		testEnd := trainEnd
+		for testEnd < len(data) && data[testEnd].Timestamp.Before(testEndTs) {
+			testEnd++
+		}
+		
+		// Check if we have enough data
+		trainSize := trainEnd - start
+		testSize := testEnd - trainEnd
+		
+		if trainSize < 50 || testSize < 10 {
+			break // Not enough data for this fold
+		}
+		
+		fold := WalkForwardFold{
+			Train:      data[start:trainEnd],
+			Test:       data[trainEnd:testEnd],
+			TrainStart: data[start].Timestamp,
+			TrainEnd:   data[trainEnd-1].Timestamp,
+			TestStart:  data[trainEnd].Timestamp,
+			TestEnd:    data[testEnd-1].Timestamp,
+		}
+		
+		folds = append(folds, fold)
+		
+		// Roll forward
+		nextStartTs := data[start].Timestamp.Add(rollDur)
+		nextStart := start
+		for nextStart < len(data) && data[nextStart].Timestamp.Before(nextStartTs) {
+			nextStart++
+		}
+		
+		if nextStart <= start {
+			nextStart = start + 1
+		}
+		if nextStart >= len(data) {
+			break
+		}
+		
+		start = nextStart
+	}
+	
+	return folds
+}
+
+// runWalkForwardValidation runs the complete walk-forward validation
+func runWalkForwardValidation(cfg *BacktestConfig, data []types.OHLCV, wfCfg WalkForwardConfig) {
+	fmt.Println("\n🔄 ================ WALK-FORWARD VALIDATION ================")
+	
+	if wfCfg.Rolling {
+		// Rolling walk-forward
+		fmt.Printf("Mode: Rolling Walk-Forward\n")
+		fmt.Printf("Train: %d days, Test: %d days, Roll: %d days\n", wfCfg.TrainDays, wfCfg.TestDays, wfCfg.RollDays)
+		
+		folds := createRollingFolds(data, wfCfg.TrainDays, wfCfg.TestDays, wfCfg.RollDays)
+		if len(folds) == 0 {
+			fmt.Println("❌ Not enough data for rolling walk-forward validation")
+			return
+		}
+		
+		fmt.Printf("Created %d folds\n\n", len(folds))
+		
+		var allResults []WalkForwardResults
+		
+		for i, fold := range folds {
+			fmt.Printf("📊 Fold %d/%d: Train %s → %s, Test %s → %s\n", 
+				i+1, len(folds),
+				fold.TrainStart.Format("2006-01-02"),
+				fold.TrainEnd.Format("2006-01-02"),
+				fold.TestStart.Format("2006-01-02"),
+				fold.TestEnd.Format("2006-01-02"))
+			
+			// Run GA on training data
+			trainResults, bestConfig := runGAOnData(cfg, fold.Train)
+			
+			// Test on out-of-sample data
+			testResults := runBacktestWithConfig(bestConfig, fold.Test)
+			
+			result := WalkForwardResults{
+				TrainResults: trainResults,
+				TestResults:  testResults,
+				BestConfig:   bestConfig,
+				Fold:         i + 1,
+			}
+			
+			allResults = append(allResults, result)
+			
+			fmt.Printf("  Train: %.2f%% return, %.2f%% drawdown\n", 
+				trainResults.TotalReturn*100, trainResults.MaxDrawdown*100)
+			fmt.Printf("  Test:  %.2f%% return, %.2f%% drawdown\n\n", 
+				testResults.TotalReturn*100, testResults.MaxDrawdown*100)
+		}
+		
+		// Print summary
+		printWalkForwardSummary(allResults)
+		
+	} else {
+		// Simple holdout validation
+		fmt.Printf("Mode: Simple Holdout\n")
+		fmt.Printf("Split: %.0f%% train, %.0f%% test\n", wfCfg.SplitRatio*100, (1-wfCfg.SplitRatio)*100)
+		
+		trainData, testData := splitByRatio(data, wfCfg.SplitRatio)
+		if len(testData) < 50 {
+			fmt.Println("❌ Not enough test data for validation")
+			return
+		}
+		
+		fmt.Printf("Train: %d candles (%s → %s)\n", 
+			len(trainData),
+			trainData[0].Timestamp.Format("2006-01-02"),
+			trainData[len(trainData)-1].Timestamp.Format("2006-01-02"))
+		fmt.Printf("Test:  %d candles (%s → %s)\n\n", 
+			len(testData),
+			testData[0].Timestamp.Format("2006-01-02"),
+			testData[len(testData)-1].Timestamp.Format("2006-01-02"))
+		
+		// Run GA on training data
+		fmt.Println("🧬 Running GA optimization on training data...")
+		trainResults, bestConfig := runGAOnData(cfg, trainData)
+		
+		// Test on out-of-sample data
+		fmt.Println("🧪 Testing optimized parameters on test data...")
+		testResults := runBacktestWithConfig(bestConfig, testData)
+		
+		// Print results
+		fmt.Println("\n📈 ================ WALK-FORWARD RESULTS ================")
+		fmt.Printf("TRAIN RESULTS:\n")
+		fmt.Printf("  Return:    %.2f%%\n", trainResults.TotalReturn*100)
+		fmt.Printf("  Drawdown:  %.2f%%\n", trainResults.MaxDrawdown*100)
+		fmt.Printf("  Trades:    %d\n", trainResults.TotalTrades)
+		
+		trainResults.UpdateMetrics()
+		fmt.Printf("  Sharpe:    %.2f\n", trainResults.SharpeRatio)
+		fmt.Printf("  ProfitFactor: %.2f\n", trainResults.ProfitFactor)
+		
+		fmt.Printf("\nTEST RESULTS (Out-of-Sample):\n")
+		fmt.Printf("  Return:    %.2f%%\n", testResults.TotalReturn*100)
+		fmt.Printf("  Drawdown:  %.2f%%\n", testResults.MaxDrawdown*100)
+		fmt.Printf("  Trades:    %d\n", testResults.TotalTrades)
+		
+		testResults.UpdateMetrics()
+		fmt.Printf("  Sharpe:    %.2f\n", testResults.SharpeRatio)
+		fmt.Printf("  ProfitFactor: %.2f\n", testResults.ProfitFactor)
+		
+		// Performance degradation analysis
+		returnDegradation := ((trainResults.TotalReturn - testResults.TotalReturn) / math.Max(0.01, math.Abs(trainResults.TotalReturn))) * 100
+		fmt.Printf("\n📊 ANALYSIS:\n")
+		fmt.Printf("  Return Degradation: %.1f%%\n", returnDegradation)
+		
+		if returnDegradation > 50 {
+			fmt.Printf("  ⚠️  HIGH OVERFITTING RISK - Test performance much worse than train\n")
+		} else if returnDegradation > 20 {
+			fmt.Printf("  ⚠️  MODERATE OVERFITTING - Some performance degradation\n")
+		} else if returnDegradation < -10 {
+			fmt.Printf("  ✅ ROBUST STRATEGY - Test performance better than train\n")
+		} else {
+			fmt.Printf("  ✅ GOOD GENERALIZATION - Consistent train/test performance\n")
+		}
+	}
+}
+
+// Helper function to run GA on specific data
+func runGAOnData(cfg *BacktestConfig, data []types.OHLCV) (*backtest.BacktestResults, BacktestConfig) {
+	// Create a temporary config for this data
+	tempCfg := *cfg
+	
+	// Use the existing GA optimization logic but with the provided data
+	// This reuses the existing optimizeForInterval logic
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
+	populationSize := GAPopulationSize
+	generations := GAGenerations
+	mutationRate := GAMutationRate
+	crossoverRate := GACrossoverRate
+	eliteSize := GAEliteSize
+	
+	// Ensure base config has valid TP settings for optimization
+	if tempCfg.TPPercent == 0 {
+		tempCfg.TPPercent = DefaultTPPercent // Ensure valid TP for optimization base
+	}
+	tempCfg.UseTPLevels = true // Always use multi-level TP
+
+	// Initialize population
+	population := initializePopulation(&tempCfg, populationSize, rng)
+	
+	var bestIndividual *Individual
+	var bestResults *backtest.BacktestResults
+	
+	for gen := 0; gen < generations; gen++ {
+		// Evaluate fitness for all individuals in parallel
+		evaluatePopulationParallelWithData(population, data)
+		
+		// Sort by fitness (descending)
+		sortPopulationByFitness(population)
+		
+		// Track best individual
+		if bestIndividual == nil || population[0].fitness > bestIndividual.fitness {
+			bestIndividual = &Individual{
+				config:  population[0].config,
+				fitness: population[0].fitness,
+				results: population[0].results,
+			}
+			bestResults = population[0].results
+		}
+		
+		// Create next generation
+		if gen < generations-1 {
+			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, &tempCfg, rng)
+		}
+	}
+	
+	return bestResults, bestIndividual.config
+}
+
+// Helper function to run backtest with specific config and data
+func runBacktestWithConfig(cfg BacktestConfig, data []types.OHLCV) *backtest.BacktestResults {
+	engine := backtest.NewBacktestEngine(
+		cfg.InitialBalance,
+		cfg.Commission,
+		createStrategy(&cfg),
+		cfg.TPPercent,
+		cfg.MinOrderQty,
+		cfg.UseTPLevels,
+	)
+	
+	return engine.Run(data, cfg.WindowSize)
+}
+
+// Helper function to evaluate population with specific data
+func evaluatePopulationParallelWithData(population []*Individual, data []types.OHLCV) {
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, MaxParallelWorkers)
+	
+	for i := range population {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			
+			individual := population[idx]
+			
+			// Create strategy from config
+			strategy := createStrategy(&individual.config)
+			
+			// Create engine using new structure
+			engine := backtest.NewBacktestEngine(
+				individual.config.InitialBalance,
+				individual.config.Commission,
+				strategy,
+				individual.config.TPPercent,
+				individual.config.MinOrderQty,
+				individual.config.UseTPLevels,
+			)
+			
+			// Run backtest
+			results := engine.Run(data, individual.config.WindowSize)
+			
+			// Store results
+			individual.results = results
+			individual.fitness = results.TotalReturn
+		}(i)
+	}
+	
+	wg.Wait()
+}
+
+// Print summary of rolling walk-forward results
+func printWalkForwardSummary(results []WalkForwardResults) {
+	fmt.Println("📊 ================ WALK-FORWARD SUMMARY ================")
+	
+	var trainReturns, testReturns []float64
+	var trainDrawdowns, testDrawdowns []float64
+	
+	for _, r := range results {
+		trainReturns = append(trainReturns, r.TrainResults.TotalReturn*100)
+		testReturns = append(testReturns, r.TestResults.TotalReturn*100)
+		trainDrawdowns = append(trainDrawdowns, r.TrainResults.MaxDrawdown*100)
+		testDrawdowns = append(testDrawdowns, r.TestResults.MaxDrawdown*100)
+	}
+	
+	// Calculate averages
+	avgTrainReturn := average(trainReturns)
+	avgTestReturn := average(testReturns)
+	avgTrainDD := average(trainDrawdowns)
+	avgTestDD := average(testDrawdowns)
+	
+	fmt.Printf("AVERAGE PERFORMANCE ACROSS %d FOLDS:\n", len(results))
+	fmt.Printf("  Train Return:    %.2f%% ± %.2f%%\n", avgTrainReturn, stdDev(trainReturns))
+	fmt.Printf("  Test Return:     %.2f%% ± %.2f%%\n", avgTestReturn, stdDev(testReturns))
+	fmt.Printf("  Train Drawdown:  %.2f%% ± %.2f%%\n", avgTrainDD, stdDev(trainDrawdowns))
+	fmt.Printf("  Test Drawdown:   %.2f%% ± %.2f%%\n", avgTestDD, stdDev(testDrawdowns))
+	
+	// Consistency analysis
+	returnDegradation := ((avgTrainReturn - avgTestReturn) / math.Max(0.01, math.Abs(avgTrainReturn))) * 100
+	fmt.Printf("\nCONSISTENCY ANALYSIS:\n")
+	fmt.Printf("  Return Degradation: %.1f%%\n", returnDegradation)
+	
+	if returnDegradation > 30 {
+		fmt.Printf("  ⚠️  HIGH OVERFITTING RISK - Strategy may not generalize well\n")
+	} else if returnDegradation > 15 {
+		fmt.Printf("  ⚠️  MODERATE OVERFITTING - Some performance degradation\n")
+	} else {
+		fmt.Printf("  ✅ ROBUST STRATEGY - Good generalization across time periods\n")
+	}
+}
+
+// Helper functions for statistics
+func average(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+func stdDev(values []float64) float64 {
+	if len(values) <= 1 {
+		return 0
+	}
+	
+	avg := average(values)
+	sumSquares := 0.0
+	for _, v := range values {
+		diff := v - avg
+		sumSquares += diff * diff
+	}
+	
+	return math.Sqrt(sumSquares / float64(len(values)-1))
+}
+
 // Removed global selectedPeriod - now passed as parameter to avoid race conditions
 
 func parseTrailingPeriod(s string) (time.Duration, bool) {
@@ -3599,12 +4080,10 @@ func defaultOutputDir(symbol, interval string) string {
 	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s", s, i))
 }
 
-// validateTPConfig validates the TP configuration
+// validateTPConfig validates the TP configuration (always multi-level TP)
 func validateTPConfig(cfg *BacktestConfig) error {
-    if cfg.UseTPLevels {
-        if cfg.TPPercent <= 0 || cfg.TPPercent > MaxThreshold {
-            return fmt.Errorf("when use_tp_levels is true, tp_percent must be within (0, %.2f], got %.4f", MaxThreshold, cfg.TPPercent)
-        }
+    if cfg.TPPercent <= 0 || cfg.TPPercent > MaxThreshold {
+        return fmt.Errorf("tp_percent must be within (0, %.2f], got %.4f", MaxThreshold, cfg.TPPercent)
     }
     return nil
 }

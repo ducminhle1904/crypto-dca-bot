@@ -29,6 +29,7 @@ type LiveBotConfig struct {
 type StrategyConfig struct {
 	// Core DCA parameters
 	Symbol         string  `json:"symbol"`          // Trading symbol (e.g., BTCUSDT)
+	Category       string  `json:"category"`        // Trading category (spot, linear, inverse)
 	BaseAmount     float64 `json:"base_amount"`     // Base DCA amount in USD
 	MaxMultiplier  float64 `json:"max_multiplier"`  // Maximum multiplier for DCA
 	PriceThreshold float64 `json:"price_threshold"` // Price drop threshold to trigger DCA
@@ -38,9 +39,15 @@ type StrategyConfig struct {
 	WindowSize int    `json:"window_size"` // Data window size for indicators
 	
 	// Take profit settings
-	TPPercent float64 `json:"tp_percent"` // Take profit percentage
+	TPPercent float64 `json:"tp_percent"` // Base take profit percentage for multi-level system
 	Cycle     bool    `json:"cycle"`      // Whether to cycle after take profit
 	AutoTPOrders bool  `json:"auto_tp_orders"` // Whether to place TP orders automatically after buys
+	UseTPLevels  bool  `json:"use_tp_levels"`  // Use 5-level TP system (always true by default)
+	TPLevels     int   `json:"tp_levels"`      // Number of TP levels (default 5)
+	TPQuantity   float64 `json:"tp_quantity"`  // Quantity per TP level (default 0.20 = 20%)
+	
+	// Order management settings
+	CancelOrphanedOrders bool `json:"cancel_orphaned_orders"` // Cancel existing orders on startup (default false)
 	
 	// Combo selection
 	UseAdvancedCombo bool `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
@@ -173,10 +180,23 @@ func (c *LiveBotConfig) setDefaults() error {
 		c.Strategy.PriceThreshold = 0.05 // 5% drop
 	}
 	if c.Strategy.TPPercent == 0 {
-		c.Strategy.TPPercent = 0.10 // 10% profit
+		c.Strategy.TPPercent = 0.02 // 2% profit (aligned with backtest default)
+	}
+	
+	// Multi-level TP defaults (always enabled)
+	c.Strategy.UseTPLevels = true // Always use multi-level TP
+	if c.Strategy.TPLevels == 0 {
+		c.Strategy.TPLevels = 5 // 5 levels by default
+	}
+	if c.Strategy.TPQuantity == 0 {
+		c.Strategy.TPQuantity = 0.20 // 20% per level (1.0 / 5 levels)
 	}
 	if c.Strategy.Interval == "" {
 		c.Strategy.Interval = "5m"
+	}
+	if c.Strategy.Category == "" {
+		// Default category based on exchange and symbol
+		c.Strategy.Category = determineDefaultCategory(c.Exchange.Name, c.Strategy.Symbol)
 	}
 
 
@@ -303,4 +323,20 @@ func (c *LiveBotConfig) validate() error {
 	return nil
 }
 
+// determineDefaultCategory determines the default trading category based on exchange and symbol
+func determineDefaultCategory(exchangeName, symbol string) string {
+	switch strings.ToLower(exchangeName) {
+	case "bybit":
+		// For Bybit, prefer linear futures for crypto pairs
+		if strings.Contains(symbol, "USDT") || strings.Contains(symbol, "USD") {
+			return "linear"
+		}
+		return "spot"
+	case "binance":
+		// For Binance, default to spot trading
+		return "spot"
+	default:
+		return "spot" // Safe default
+	}
+}
 

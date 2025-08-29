@@ -31,9 +31,9 @@ func (bot *LiveBot) syncPositionData() error {
 	// Look for our symbol position
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue := parseFloat(pos.PositionValue)
-			avgPrice := parseFloat(pos.AvgPrice)
-			positionSize := parseFloat(pos.Size)
+			positionValue, _ := parseFloat(pos.PositionValue)
+			avgPrice, _ := parseFloat(pos.AvgPrice)
+			positionSize, _ := parseFloat(pos.Size)
 			
 			if positionValue > 0 && avgPrice > 0 {
 				// Check if average price has changed (indicating new DCA entry)
@@ -61,8 +61,10 @@ func (bot *LiveBot) syncPositionData() error {
 					positionSize, positionValue, avgPrice, pos.UnrealisedPnl)
 				
 				// Update TP orders if price changed and auto TP is enabled
+				// Note: This is a fallback for position sync outside of trade execution
 				if priceChanged && bot.config.Strategy.AutoTPOrders {
-					if err := bot.updateTakeProfitOrders(avgPrice); err != nil {
+					log.Printf("🔄 Position sync detected price change - updating TP orders")
+					if err := bot.updateMultiLevelTPOrders(avgPrice); err != nil {
 						log.Printf("⚠️ Failed to update TP orders: %v", err)
 					}
 				}
@@ -97,7 +99,7 @@ func (bot *LiveBot) closeOpenPositions() error {
 	// Look for positions to close
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionSize := parseFloat(pos.Size)
+			positionSize, _ := parseFloat(pos.Size)
 			if positionSize <= 0 {
 				continue
 			}
@@ -107,7 +109,7 @@ func (bot *LiveBot) closeOpenPositions() error {
 			// Get current price for P&L calculation
 			currentPrice, err := bot.exchange.GetLatestPrice(ctx, bot.symbol)
 			if err != nil {
-				currentPrice = parseFloat(pos.MarkPrice) // Use mark price as fallback
+				currentPrice, _ = parseFloat(pos.MarkPrice) // Use mark price as fallback
 			}
 			
 			// Place market sell order to close entire position
@@ -125,8 +127,8 @@ func (bot *LiveBot) closeOpenPositions() error {
 			}
 			
 			// Calculate P&L based on real position data
-			avgPrice := parseFloat(pos.AvgPrice)
-			positionValue := parseFloat(pos.PositionValue)
+			avgPrice, _ := parseFloat(pos.AvgPrice)
+			positionValue, _ := parseFloat(pos.PositionValue)
 			saleValue := positionSize * currentPrice
 			profit := saleValue - positionValue
 			profitPercent := (profit / positionValue) * 100
@@ -425,34 +427,5 @@ func (bot *LiveBot) getTradingModeString() string {
 }
 
 // Helper functions
-
-// parseFloat safely parses a string to float64
-func parseFloat(s string) float64 {
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f
-	}
-	return 0
-}
-
-// determineTradingCategory determines the trading category based on exchange and symbol
-func determineTradingCategory(exchangeName, symbol string) string {
-	// This is a simple heuristic - in practice you might want more sophisticated logic
-	switch strings.ToLower(exchangeName) {
-	case "bybit":
-		// For Bybit, assume linear futures for crypto pairs
-		if strings.Contains(symbol, "USDT") || strings.Contains(symbol, "USD") {
-			return "linear"
-		}
-		return "spot"
-	case "binance":
-		// For Binance, determine based on symbol format
-		if strings.Contains(symbol, "USDT") || strings.Contains(symbol, "BUSD") {
-			return "spot" // Binance spot pairs
-		}
-		return "futures" // Binance futures
-	default:
-		return "spot" // Default fallback
-	}
-}
 
 
