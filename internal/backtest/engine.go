@@ -310,14 +310,56 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	finalPrice := data[len(data)-1].Close
 	finalTime := data[len(data)-1].Timestamp
 
-	// For any remaining OPEN trades, compute unrealized PnL at final price
-	// Note: TP level partial exits are now handled as separate synthetic trades
-	for i := range b.results.Trades {
-		trade := &b.results.Trades[i]
-		if trade.ExitTime.IsZero() {
-			trade.ExitTime = finalTime
-			trade.ExitPrice = finalPrice
-			trade.PnL = (finalPrice-trade.EntryPrice)*trade.Quantity - trade.Commission
+	// Safe finalization logic for remaining trades
+	if b.useTPLevels {
+		// In multi-TP mode, only create a final exit trade for the actual remaining position
+		// Don't auto-close original entry trades since they would show incorrect PnL
+		// (partial exits are already handled as synthetic trades)
+		if b.position > 0 {
+			// Create a single synthetic trade for the remaining position
+			avgEntry := 0.0
+			if b.cycleOpen && b.cycleQtySum > 0 {
+				avgEntry = b.cycleCostSum / b.cycleQtySum
+			} else {
+				// If no active cycle, calculate from all open entry trades
+				totalQty := 0.0
+				totalCost := 0.0
+				for _, trade := range b.results.Trades {
+					if trade.ExitTime.IsZero() && trade.Cycle > 0 { // Original entry trades have Cycle > 0
+						totalQty += trade.Quantity
+						totalCost += trade.EntryPrice * trade.Quantity
+					}
+				}
+				if totalQty > 0 {
+					avgEntry = totalCost / totalQty
+				}
+			}
+			
+			// Create final exit trade for remaining position (no commission on mark-to-market)
+			finalExitTrade := Trade{
+				EntryTime:  finalTime,
+				ExitTime:   finalTime,
+				EntryPrice: avgEntry,
+				ExitPrice:  finalPrice,
+				Quantity:   b.position,
+				PnL:        (finalPrice - avgEntry) * b.position, // No commission on final mark-to-market
+				Commission: 0.0,
+				Cycle:      b.currentCycleNumber,
+			}
+			b.results.Trades = append(b.results.Trades, finalExitTrade)
+		}
+		
+		// Don't auto-close original entry trades in multi-TP mode to avoid PnL inconsistencies
+		// The synthetic partial exit trades and final exit trade above represent the actual execution
+	} else {
+		// Original logic for single-TP or no-TP mode: auto-close remaining open trades
+		for i := range b.results.Trades {
+			trade := &b.results.Trades[i]
+			if trade.ExitTime.IsZero() {
+				trade.ExitTime = finalTime
+				trade.ExitPrice = finalPrice
+				trade.PnL = (finalPrice-trade.EntryPrice)*trade.Quantity - trade.Commission
+			}
 		}
 	}
 

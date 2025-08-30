@@ -608,9 +608,20 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 				for _, pos := range positions {
 					if pos.Symbol == bot.symbol && pos.Side == "Buy" {
 						bot.logger.Info("🎯 Setting up TP orders - Position Size: %s, Avg Price: $%.4f", pos.Size, avgPrice)
-						if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
-							bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
-						}
+						
+						// Add recovery mechanism for TP placement
+						func() {
+							defer func() {
+								if r := recover(); r != nil {
+									bot.logger.Error("TP placement panic recovered: %v", r)
+								}
+							}()
+							
+							if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
+								bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
+								// Continue execution - don't let TP failure stop the bot
+							}
+						}()
 						break
 					}
 				}
@@ -623,8 +634,28 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 
 // placeMultiLevelTPOrders places multiple take profit limit orders after a buy
 func (bot *LiveBot) placeMultiLevelTPOrders(totalQuantity string, avgEntryPrice float64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Use a longer timeout for placing multiple orders
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	
+	// Add a channel to handle timeout gracefully
+	done := make(chan error, 1)
+	
+	go func() {
+		done <- bot.placeMultiLevelTPOrdersInternal(ctx, totalQuantity, avgEntryPrice)
+	}()
+	
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		bot.logger.LogWarning("TP Placement Timeout", "TP order placement timed out after 60 seconds")
+		return fmt.Errorf("TP order placement timed out")
+	}
+}
+
+// placeMultiLevelTPOrdersInternal is the internal implementation
+func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQuantity string, avgEntryPrice float64) error {
 	
 	// Parse total quantity
 	totalQty, err := parseFloat(totalQuantity)
@@ -651,6 +682,14 @@ func (bot *LiveBot) placeMultiLevelTPOrders(totalQuantity string, avgEntryPrice 
 	
 	// Place TP orders for each level using pre-calculated quantities
 	for level := 1; level <= bot.config.Strategy.TPLevels; level++ {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			bot.logger.LogWarning("TP Placement", "Context cancelled during TP level %d placement", level)
+			return fmt.Errorf("context cancelled during TP placement")
+		default:
+		}
+		
 		// Get pre-calculated quantity for this level
 		levelQty := levelQuantities[level-1] // Array is 0-indexed
 		if levelQty <= 0 {
@@ -689,11 +728,18 @@ func (bot *LiveBot) placeMultiLevelTPOrders(totalQuantity string, avgEntryPrice 
 			Price:     formattedPrice,
 		}
 		
+		// Add extra timeout protection for TP order placement
+		bot.logger.Info("📤 Placing TP Level %d: %s %s at $%s (%.2f%%)", 
+			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100)
+		
 		tpOrder, err := bot.placeOrderWithRetry(orderParams, false) // false for limit order
 		if err != nil {
 			bot.logger.LogWarning("TP Level %d", "Failed to place TP order: %v", level, err)
+			skippedLevels++
 			continue
 		}
+		
+		bot.logger.Info("✅ TP Level %d placed successfully - Order ID: %s", level, tpOrder.OrderID)
 		
 		// Track the TP order
 		bot.tpOrderMutex.Lock()
@@ -904,9 +950,20 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		// Note: We do this in syncAfterTrade to ensure it happens after position sync
 		if bot.dcaLevel > 1 && bot.config.Strategy.AutoTPOrders {
 			bot.logger.Info("🔄 DCA Level %d detected - updating TP orders for new average price", bot.dcaLevel)
-			if err := bot.updateMultiLevelTPOrders(bot.averagePrice); err != nil {
-				bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
-			}
+			
+			// Add recovery mechanism for TP update
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						bot.logger.Error("TP update panic recovered: %v", r)
+					}
+				}()
+				
+				if err := bot.updateMultiLevelTPOrders(bot.averagePrice); err != nil {
+					bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
+					// Continue execution - don't let TP update failure stop the bot
+				}
+			}()
 		}
 		
 	} else if tradeType == "SELL" {
@@ -1241,32 +1298,59 @@ func (bot *LiveBot) placeOrderWithRetry(params exchange.OrderParams, isMarket bo
 	baseDelay := 1 * time.Second
 	
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		// Use a shorter timeout per attempt to prevent hanging
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		
-		var order *exchange.Order
-		var err error
+		// Create a channel to handle the order placement with timeout
+		orderChan := make(chan *exchange.Order, 1)
+		errChan := make(chan error, 1)
 		
-		if isMarket {
-			order, err = bot.exchange.PlaceMarketOrder(ctx, params)
-		} else {
-			order, err = bot.exchange.PlaceLimitOrder(ctx, params)
-		}
+		go func() {
+			var order *exchange.Order
+			var err error
+			
+			if isMarket {
+				order, err = bot.exchange.PlaceMarketOrder(ctx, params)
+			} else {
+				order, err = bot.exchange.PlaceLimitOrder(ctx, params)
+			}
+			
+			if err != nil {
+				errChan <- err
+			} else {
+				orderChan <- order
+			}
+		}()
 		
-		cancel()
-		
-		if err == nil {
+		// Wait for either success, error, or timeout
+		select {
+		case order := <-orderChan:
+			cancel()
 			return order, nil
-		}
-		
-		// Check if error is retryable
-		if exchangeErr, ok := err.(*exchange.ExchangeError); ok && !exchangeErr.IsRetryable {
-			return nil, fmt.Errorf("non-retryable error: %w", err)
-		}
-		
-		if attempt < maxRetries {
-			delay := time.Duration(attempt) * baseDelay
-			bot.logger.LogWarning("Order Retry", "Attempt %d/%d failed: %v. Retrying in %v", attempt, maxRetries, err, delay)
-			time.Sleep(delay)
+		case err := <-errChan:
+			cancel()
+			
+			// Check if error is retryable
+			if exchangeErr, ok := err.(*exchange.ExchangeError); ok && !exchangeErr.IsRetryable {
+				return nil, fmt.Errorf("non-retryable error: %w", err)
+			}
+			
+			if attempt < maxRetries {
+				delay := time.Duration(attempt) * baseDelay
+				bot.logger.LogWarning("Order Retry", "Attempt %d/%d failed: %v. Retrying in %v", attempt, maxRetries, err, delay)
+				time.Sleep(delay)
+			} else {
+				return nil, fmt.Errorf("failed after %d attempts, last error: %w", maxRetries, err)
+			}
+		case <-ctx.Done():
+			cancel()
+			if attempt < maxRetries {
+				delay := time.Duration(attempt) * baseDelay
+				bot.logger.LogWarning("Order Retry", "Attempt %d/%d timed out. Retrying in %v", attempt, maxRetries, delay)
+				time.Sleep(delay)
+			} else {
+				return nil, fmt.Errorf("order placement timed out after %d attempts", maxRetries)
+			}
 		}
 	}
 	

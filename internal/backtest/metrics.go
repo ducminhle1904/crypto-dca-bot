@@ -85,6 +85,11 @@ func (b *BacktestResults) CalculateProfitFactor() float64 {
             return 0
         }
         for _, trade := range b.Trades {
+            // Skip open entry trades in multi-TP mode: no exit time AND part of a cycle AND zero PnL
+            // This preserves test trades and other completed trades that may not have exit times set
+            if trade.ExitTime.IsZero() && trade.Cycle > 0 && trade.PnL == 0 {
+                continue
+            }
             pnl := trade.PnL
             if pnl > 0 {
                 totalProfit += pnl
@@ -127,11 +132,16 @@ func (b *BacktestResults) CalculateWinRate() float64 {
 			return 0
 		}
 		for _, trade := range b.Trades {
+			// Skip open entry trades in multi-TP mode: no exit time AND part of a cycle AND zero PnL
+			// This preserves test trades and other completed trades that may not have exit times set
+			if trade.ExitTime.IsZero() && trade.Cycle > 0 && trade.PnL == 0 {
+				continue
+			}
 			if trade.PnL > 0 {
 				wins++
 			}
+			total++
 		}
-		total = len(b.Trades)
 	}
 	if total == 0 {
 		return 0
@@ -160,14 +170,22 @@ func (b *BacktestResults) UpdateMetrics() {
 		b.WinningTrades = wins
 		b.LosingTrades = partialCount - wins
 	} else {
-		b.TotalTrades = len(b.Trades)
+		// Count only completed trades (those with exit times and non-zero PnL calculations)
+		completedTrades := 0
 		wins = 0
 		for _, trade := range b.Trades {
+			// Skip open entry trades in multi-TP mode: no exit time AND part of a cycle AND zero PnL
+			// This preserves test trades and other completed trades that may not have exit times set
+			if trade.ExitTime.IsZero() && trade.Cycle > 0 && trade.PnL == 0 {
+				continue
+			}
+			completedTrades++
 			if trade.PnL > 0 {
 				wins++
 			}
 		}
+		b.TotalTrades = completedTrades
 		b.WinningTrades = wins
-		b.LosingTrades = len(b.Trades) - wins
+		b.LosingTrades = completedTrades - wins
 	}
 }
