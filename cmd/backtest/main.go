@@ -1326,7 +1326,9 @@ func evaluatePopulationParallel(population []*Individual, data []types.OHLCV) {
 }
 
 // Parameter optimization functions
+// Note: This function will be replaced with pkg/optimization in future iterations
 func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, BacktestConfig) {
+	// TODO: Replace with optimization.OptimizeWithGA(cfg, cfg.DataFile, selectedPeriod)
 	// Create local RNG to avoid race conditions
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
@@ -1427,6 +1429,7 @@ func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*ba
 
 
 // Individual represents a candidate solution
+// Note: This struct has been moved to pkg/optimization/individual.go
 type Individual struct {
 	config  BacktestConfig
 	fitness float64
@@ -3282,6 +3285,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 }
 
 // Walk-Forward Validation structures and functions
+// Note: These structures have been moved to pkg/validation/interfaces.go
 type WalkForwardConfig struct {
 	Enable     bool
 	Rolling    bool
@@ -3389,7 +3393,9 @@ func createRollingFolds(data []types.OHLCV, trainDays, testDays, rollDays int) [
 }
 
 // runWalkForwardValidation runs the complete walk-forward validation
+// Note: This function will be replaced with pkg/validation in future iterations
 func runWalkForwardValidation(cfg *BacktestConfig, data []types.OHLCV, wfCfg WalkForwardConfig) {
+	// TODO: Replace with validation.RunWalkForwardValidation(cfg, data, validationConfig, optimizer, backtester)
 	fmt.Println("\n🔄 ================ WALK-FORWARD VALIDATION ================")
 	
 	if wfCfg.Rolling {
