@@ -21,9 +21,88 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/bybit"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
+	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 	"github.com/joho/godotenv"
 	"github.com/xuri/excelize/v2"
+)
+
+// convertDCAConfigToBacktestConfig converts the new DCAConfig to the old BacktestConfig for backward compatibility
+func convertDCAConfigToBacktestConfig(dcaCfg *config.DCAConfig) *BacktestConfig {
+	return &BacktestConfig{
+		DataFile:       dcaCfg.DataFile,
+		Symbol:         dcaCfg.Symbol,
+		Interval:       dcaCfg.Interval,
+		InitialBalance: dcaCfg.InitialBalance,
+		Commission:     dcaCfg.Commission,
+		WindowSize:     dcaCfg.WindowSize,
+		BaseAmount:     dcaCfg.BaseAmount,
+		MaxMultiplier:  dcaCfg.MaxMultiplier,
+		PriceThreshold: dcaCfg.PriceThreshold,
+		UseAdvancedCombo: dcaCfg.UseAdvancedCombo,
+		RSIPeriod:      dcaCfg.RSIPeriod,
+		RSIOversold:    dcaCfg.RSIOversold,
+		RSIOverbought:  dcaCfg.RSIOverbought,
+		MACDFast:       dcaCfg.MACDFast,
+		MACDSlow:       dcaCfg.MACDSlow,
+		MACDSignal:     dcaCfg.MACDSignal,
+		BBPeriod:       dcaCfg.BBPeriod,
+		BBStdDev:       dcaCfg.BBStdDev,
+		EMAPeriod:      dcaCfg.EMAPeriod,
+		HullMAPeriod:   dcaCfg.HullMAPeriod,
+		MFIPeriod:      dcaCfg.MFIPeriod,
+		MFIOversold:    dcaCfg.MFIOversold,
+		MFIOverbought:  dcaCfg.MFIOverbought,
+		KeltnerPeriod:  dcaCfg.KeltnerPeriod,
+		KeltnerMultiplier: dcaCfg.KeltnerMultiplier,
+		WaveTrendN1:    dcaCfg.WaveTrendN1,
+		WaveTrendN2:    dcaCfg.WaveTrendN2,
+		WaveTrendOverbought: dcaCfg.WaveTrendOverbought,
+		WaveTrendOversold:   dcaCfg.WaveTrendOversold,
+		Indicators:     dcaCfg.Indicators,
+		TPPercent:      dcaCfg.TPPercent,
+		UseTPLevels:    dcaCfg.UseTPLevels,
+		Cycle:          dcaCfg.Cycle,
+		MinOrderQty:    dcaCfg.MinOrderQty,
+	}
+}
+
+// CSVColumnMapping defines the column positions for different CSV formats
+type CSVColumnMapping struct {
+	TimestampCol int
+	OpenCol      int
+	HighCol      int
+	LowCol       int
+	CloseCol     int
+	VolumeCol    int
+	MinColumns   int
+	DateFormat   string
+}
+
+// Predefined CSV formats
+var (
+	DefaultCSVFormat = CSVColumnMapping{
+		TimestampCol: 0,
+		OpenCol:      1,
+		HighCol:      2,
+		LowCol:       3,
+		CloseCol:     4,
+		VolumeCol:    5,
+		MinColumns:   6,
+		DateFormat:   "2006-01-02 15:04:05",
+	}
+	
+	BybitCSVFormat = CSVColumnMapping{
+		TimestampCol: 0,
+		OpenCol:      1,
+		HighCol:      2,
+		LowCol:       3,
+		CloseCol:     4,
+		VolumeCol:    5,
+		MinColumns:   6,
+		DateFormat:   "2006-01-02 15:04:05",
+	}
 )
 
 // Constants for default configuration values
@@ -161,9 +240,7 @@ var (
 		WaveTrendOversold:   []float64{-80, -70, -60, -50},
 	}
 	
-	// Data cache for performance optimization
-	dataCache = make(map[string][]types.OHLCV)
-	dataCacheMutex sync.RWMutex
+	// Note: Data cache moved to pkg/data package
 )
 
 // Logging functions for better error reporting and debugging
@@ -354,73 +431,9 @@ type TPLevel struct {
 }
 
 // convertIntervalToMinutes converts interval strings like "5m", "1h", "4h" to minute numbers
-func convertIntervalToMinutes(interval string) string {
-	// If it's already just a number, return as-is
-	if _, err := strconv.Atoi(interval); err == nil {
-		return interval
-	}
-	
-	// Parse interval string
-	interval = strings.ToLower(strings.TrimSpace(interval))
-	
-	// Extract number and unit
-	if len(interval) < 2 {
-		return interval // Invalid format, return as-is
-	}
-	
-	numStr := interval[:len(interval)-1]
-	unit := interval[len(interval)-1:]
-	
-	num, err := strconv.Atoi(numStr)
-	if err != nil {
-		return interval // Invalid number, return as-is
-	}
-	
-	// Convert to minutes
-	switch unit {
-	case "m":
-		return strconv.Itoa(num)
-	case "h":
-		return strconv.Itoa(num * 60)
-	case "d":
-		return strconv.Itoa(num * 24 * 60)
-	case "w":
-		return strconv.Itoa(num * 7 * 24 * 60)
-	default:
-		return interval // Unknown unit, return as-is
-	}
-}
+// convertIntervalToMinutes moved to pkg/data package
 
-// findDataFile attempts to locate data files for a specific exchange
-// Structure: data/{exchange}/{category}/{symbol}/{interval}/candles.csv
-func findDataFile(dataRoot, exchange, symbol, interval string) string {
-	symbol = strings.ToUpper(symbol)
-	
-	// Convert interval to minutes (5m -> 5, 1h -> 60, etc.)
-	intervalMinutes := convertIntervalToMinutes(interval)
-	
-	// Define categories by exchange
-	var categories []string
-	switch strings.ToLower(exchange) {
-	case "bybit":
-		categories = []string{"spot", "linear", "inverse"}
-	case "binance":
-		categories = []string{"spot", "futures"}
-	default:
-		categories = []string{"spot", "futures", "linear", "inverse"}
-	}
-	
-	// Check each category for the exchange
-	for _, category := range categories {
-		path := filepath.Join(dataRoot, exchange, category, symbol, intervalMinutes, "candles.csv")
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	
-	// If no existing file found, return the preferred structure (first category for the exchange)
-	return filepath.Join(dataRoot, exchange, categories[0], symbol, intervalMinutes, "candles.csv")
-}
+// findDataFile moved to pkg/data package
 
 func main() {
 	var (
@@ -471,8 +484,18 @@ func main() {
 	}
 	
 	// Load configuration - cycle is always enabled, console output only
-	cfg := loadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, 
-		*windowSize, *baseAmount, *maxMultiplier, *priceThreshold, *useAdvancedCombo)
+	configManager := config.NewDCAConfigManager()
+	params := map[string]interface{}{
+		"base_amount":        *baseAmount,
+		"max_multiplier":     *maxMultiplier,
+		"price_threshold":    *priceThreshold,
+		"use_advanced_combo": *useAdvancedCombo,
+	}
+	cfgInterface, err := configManager.LoadConfig(*configFile, *dataFile, *symbol, *initialBalance, *commission, *windowSize, params)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+	cfg := cfgInterface.(*config.DCAConfig)
 
 	// Cycle is always enabled (this system always uses cycle mode)
 	cfg.Cycle = true
@@ -496,7 +519,7 @@ func main() {
 	// Capture and parse trailing period window
 	var selectedPeriod time.Duration
 	if s := strings.TrimSpace(*periodStr); s != "" {
-		if d, ok := parseTrailingPeriod(s); ok {
+		if d, ok := datamanager.ParseTrailingPeriod(s); ok {
 			selectedPeriod = d
 		}
 	}
@@ -520,11 +543,11 @@ func main() {
 			interval = cfg.Interval
 		}
 		
-		cfg.DataFile = findDataFile(*dataRoot, *exchange, sym, interval)
+		cfg.DataFile = datamanager.FindDataFile(*dataRoot, *exchange, sym, interval)
 	}
 	
 	// Fetch minimum order quantity from Bybit before backtesting
-	if err := fetchAndSetMinOrderQty(cfg); err != nil {
+	if err := fetchAndSetMinOrderQtyDCA(cfg); err != nil {
 		log.Printf("Warning: Could not fetch minimum order quantity from Bybit: %v", err)
 		log.Printf("Using default minimum order quantity: %.6f", cfg.MinOrderQty)
 	}
@@ -539,7 +562,7 @@ func main() {
 			TestDays:   *wfTestDays,
 			RollDays:   *wfRollDays,
 		}
-		runAcrossIntervals(cfg, *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly, wfConfig)
+		runAcrossIntervals(convertDCAConfigToBacktestConfig(cfg), *dataRoot, *exchange, *optimize, selectedPeriod, *consoleOnly, wfConfig)
 		return
 	}
 	
@@ -550,13 +573,13 @@ func main() {
 		// Check if walk-forward validation is enabled
 		if *wfEnable {
 			// Load data for walk-forward validation
-			data, err := loadHistoricalDataCached(cfg.DataFile)
+			data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 			if err != nil {
 				log.Fatalf("Failed to load data for walk-forward validation: %v", err)
 			}
 			
 			if selectedPeriod > 0 {
-				data = filterDataByPeriod(data, selectedPeriod)
+				data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 			}
 			
 			// Create walk-forward configuration
@@ -570,12 +593,12 @@ func main() {
 			}
 			
 			// Run walk-forward validation
-			runWalkForwardValidation(cfg, data, wfConfig)
+			runWalkForwardValidation(convertDCAConfigToBacktestConfig(cfg), data, wfConfig)
 			
 			// Still run regular optimization for comparison and output generation
-		bestResults, bestConfig = optimizeForInterval(cfg, selectedPeriod)
+		bestResults, bestConfig = optimizeForInterval(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
 		} else {
-			bestResults, bestConfig = optimizeForInterval(cfg, selectedPeriod)
+			bestResults, bestConfig = optimizeForInterval(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
 		}
 			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
 		
@@ -682,7 +705,7 @@ func main() {
 	}
 	
 	// Run single backtest
-	results := runBacktest(cfg, selectedPeriod)
+	results := runBacktest(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
 	
 	// Output results to console
 	outputConsole(results)
@@ -710,6 +733,44 @@ func loadEnvFile(envFile string) error {
 		return godotenv.Load(envFile)
 	}
 	return fmt.Errorf("env file %s not found", envFile)
+}
+
+func fetchAndSetMinOrderQtyDCA(cfg *config.DCAConfig) error {
+	// Create Bybit client to fetch instrument info
+	bybitConfig := bybit.Config{
+		APIKey:    os.Getenv("BYBIT_API_KEY"),
+		APISecret: os.Getenv("BYBIT_API_SECRET"),
+		Demo:      true, // Use demo mode for fetching instrument info (safer)
+	}
+
+	// Skip if no API credentials (use default)
+	if bybitConfig.APIKey == "" || bybitConfig.APISecret == "" {
+		log.Printf("No Bybit API credentials found, using default min_order_qty: %.6f", cfg.MinOrderQty)
+		return nil
+	}
+
+	bybitClient := bybit.NewClient(bybitConfig)
+	
+	// Determine category from data file path
+	category := "linear" // Default
+	if strings.Contains(cfg.DataFile, "spot") {
+		category = "spot"
+	} else if strings.Contains(cfg.DataFile, "inverse") {
+		category = "inverse"
+	}
+
+	// Fetch instrument constraints
+	ctx := context.Background()
+	minQty, _, _, err := bybitClient.GetInstrumentManager().GetQuantityConstraints(ctx, category, cfg.Symbol)
+	if err != nil {
+		return fmt.Errorf("failed to fetch instrument constraints for %s: %w", cfg.Symbol, err)
+	}
+
+	// Update config with fetched minimum order quantity
+	cfg.MinOrderQty = minQty
+	log.Printf("✅ Fetched minimum order quantity for %s: %.6f %s", cfg.Symbol, minQty, cfg.Symbol)
+	
+	return nil
 }
 
 func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
@@ -750,273 +811,11 @@ func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
 	return nil
 }
 
-func loadConfig(configFile, dataFile, symbol string, balance, commission float64,
-	windowSize int, baseAmount, maxMultiplier float64, priceThreshold float64, useAdvancedCombo bool) *BacktestConfig {
-	
-	cfg := &BacktestConfig{
-		DataFile:       dataFile,
-		Symbol:         symbol,
-		Interval:       "", // Will be set from command line flag if not specified in config
-		InitialBalance: balance,
-		Commission:     commission,
-		WindowSize:     windowSize,
-		BaseAmount:     baseAmount,
-		MaxMultiplier:  maxMultiplier,
-		PriceThreshold: priceThreshold,
-		UseAdvancedCombo:    useAdvancedCombo,
-		// Classic combo defaults
-		RSIPeriod:      DefaultRSIPeriod,
-		RSIOversold:    DefaultRSIOversold,
-		RSIOverbought:  DefaultRSIOverbought,
-		MACDFast:       DefaultMACDFast,
-		MACDSlow:       DefaultMACDSlow,
-		MACDSignal:     DefaultMACDSignal,
-		BBPeriod:       DefaultBBPeriod,
-		BBStdDev:       DefaultBBStdDev,
-		EMAPeriod:      DefaultEMAPeriod,
-		// Advanced combo defaults
-		HullMAPeriod:   DefaultHullMAPeriod,
-		MFIPeriod:      DefaultMFIPeriod,
-		MFIOversold:    DefaultMFIOversold,
-		MFIOverbought:  DefaultMFIOverbought,
-		KeltnerPeriod:  DefaultKeltnerPeriod,
-		KeltnerMultiplier: DefaultKeltnerMultiplier,
-		WaveTrendN1:    DefaultWaveTrendN1,
-		WaveTrendN2:    DefaultWaveTrendN2,
-		WaveTrendOverbought: DefaultWaveTrendOverbought,
-		WaveTrendOversold:   DefaultWaveTrendOversold,
-		Indicators:     nil,
-		TPPercent:      DefaultTPPercent, // Default 2% TP for multi-level system
-		UseTPLevels:    DefaultUseTPLevels, // Default to multi-level TP mode
-		MinOrderQty:    DefaultMinOrderQty, // Default minimum order quantity
-	}
-	
-	// Load from config file if provided
-	if configFile != "" {
-		data, err := os.ReadFile(configFile)
-		if err != nil {
-			log.Printf("Warning: Could not read config file: %v", err)
-		} else {
-			// Try to load as nested config first, then fall back to flat config
-			if err := loadFromNestedConfig(data, cfg); err != nil {
-				// Fall back to flat config loading for backward compatibility
-				if err := json.Unmarshal(data, cfg); err != nil {
-					log.Printf("Warning: Could not parse config file as nested or flat format: %v", err)
-				}
-			}
-		}
-	}
-	
-	// Validate configuration parameters
-	if err := validateConfig(cfg); err != nil {
-		log.Fatalf("Configuration validation failed: %v", err)
-	}
-	
-	return cfg
-}
+// Note: loadConfig moved to pkg/config package
 
-// loadFromNestedConfig loads configuration from nested JSON format into flat BacktestConfig
-func loadFromNestedConfig(data []byte, cfg *BacktestConfig) error {
-	var nestedCfg NestedConfig
-	if err := json.Unmarshal(data, &nestedCfg); err != nil {
-		return err
-	}
+// Note: loadFromNestedConfig moved to pkg/config package
 
-	// Map strategy fields
-	strategy := nestedCfg.Strategy
-	cfg.Symbol = strategy.Symbol
-	cfg.Interval = strategy.Interval
-	cfg.BaseAmount = strategy.BaseAmount
-	cfg.MaxMultiplier = strategy.MaxMultiplier
-	cfg.PriceThreshold = strategy.PriceThreshold
-	cfg.WindowSize = strategy.WindowSize
-	cfg.TPPercent = strategy.TPPercent
-	cfg.UseTPLevels = strategy.UseTPLevels
-	cfg.Cycle = strategy.Cycle
-	cfg.Indicators = strategy.Indicators
-	cfg.UseAdvancedCombo = strategy.UseAdvancedCombo
-
-	// Map indicator-specific configurations
-	if strategy.UseAdvancedCombo {
-		// Advanced combo parameters
-		if strategy.HullMA != nil {
-			cfg.HullMAPeriod = strategy.HullMA.Period
-		}
-		if strategy.MFI != nil {
-			cfg.MFIPeriod = strategy.MFI.Period
-			cfg.MFIOversold = strategy.MFI.Oversold
-			cfg.MFIOverbought = strategy.MFI.Overbought
-		}
-		if strategy.KeltnerChannels != nil {
-			cfg.KeltnerPeriod = strategy.KeltnerChannels.Period
-			cfg.KeltnerMultiplier = strategy.KeltnerChannels.Multiplier
-		}
-		if strategy.WaveTrend != nil {
-			cfg.WaveTrendN1 = strategy.WaveTrend.N1
-			cfg.WaveTrendN2 = strategy.WaveTrend.N2
-			cfg.WaveTrendOverbought = strategy.WaveTrend.Overbought
-			cfg.WaveTrendOversold = strategy.WaveTrend.Oversold
-		}
-	} else {
-		// Classic combo parameters
-		if strategy.RSI != nil {
-			cfg.RSIPeriod = strategy.RSI.Period
-			cfg.RSIOversold = strategy.RSI.Oversold
-			cfg.RSIOverbought = strategy.RSI.Overbought
-		}
-		if strategy.MACD != nil {
-			cfg.MACDFast = strategy.MACD.FastPeriod
-			cfg.MACDSlow = strategy.MACD.SlowPeriod
-			cfg.MACDSignal = strategy.MACD.SignalPeriod
-		}
-		if strategy.BollingerBands != nil {
-			cfg.BBPeriod = strategy.BollingerBands.Period
-			cfg.BBStdDev = strategy.BollingerBands.StdDev
-		}
-		if strategy.EMA != nil {
-			cfg.EMAPeriod = strategy.EMA.Period
-		}
-	}
-
-	// Map risk parameters
-	if nestedCfg.Risk.InitialBalance > 0 {
-		cfg.InitialBalance = nestedCfg.Risk.InitialBalance
-	}
-	if nestedCfg.Risk.Commission > 0 {
-		cfg.Commission = nestedCfg.Risk.Commission
-	}
-	if nestedCfg.Risk.MinOrderQty > 0 {
-		cfg.MinOrderQty = nestedCfg.Risk.MinOrderQty
-	}
-
-	return nil
-}
-
-// validateConfig performs basic validation on configuration parameters
-func validateConfig(cfg *BacktestConfig) error {
-	if cfg.InitialBalance <= 0 {
-		return fmt.Errorf("initial balance must be positive, got: %.2f", cfg.InitialBalance)
-	}
-	
-	if cfg.Commission < 0 || cfg.Commission > MaxCommission {
-		return fmt.Errorf("commission must be between 0 and %.2f (0-100%%), got: %.4f", MaxCommission, cfg.Commission)
-	}
-	
-	if cfg.BaseAmount <= 0 {
-		return fmt.Errorf("base amount must be positive, got: %.2f", cfg.BaseAmount)
-	}
-	
-	if cfg.MaxMultiplier <= MinMultiplier {
-		return fmt.Errorf("max multiplier must be greater than %.1f, got: %.2f", MinMultiplier, cfg.MaxMultiplier)
-	}
-	
-	if cfg.WindowSize <= 0 {
-		return fmt.Errorf("window size must be positive, got: %d", cfg.WindowSize)
-	}
-	
-	if cfg.PriceThreshold < 0 || cfg.PriceThreshold > MaxThreshold {
-		return fmt.Errorf("price threshold must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.PriceThreshold)
-	}
-	
-	if cfg.TPPercent < 0 || cfg.TPPercent > MaxThreshold {
-		return fmt.Errorf("TP percent must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.TPPercent)
-	}
-	
-	// Validate TP configuration
-	if err := validateTPConfig(cfg); err != nil {
-		return err
-	}
-	
-	// Validate technical indicator parameters
-	if cfg.RSIPeriod < MinRSIPeriod {
-		return fmt.Errorf("RSI period must be at least %d, got: %d", MinRSIPeriod, cfg.RSIPeriod)
-	}
-	
-	if cfg.RSIOversold <= 0 || cfg.RSIOversold >= MaxRSIValue {
-		return fmt.Errorf("RSI oversold must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.RSIOversold)
-	}
-	
-	if cfg.RSIOverbought <= 0 || cfg.RSIOverbought >= MaxRSIValue {
-		return fmt.Errorf("RSI overbought must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.RSIOverbought)
-	}
-	
-	if cfg.RSIOversold >= cfg.RSIOverbought {
-		return fmt.Errorf("RSI oversold (%.1f) must be less than overbought (%.1f)", cfg.RSIOversold, cfg.RSIOverbought)
-	}
-	
-	if cfg.MACDFast < MinMACDPeriod || cfg.MACDSlow < MinMACDPeriod || cfg.MACDSignal < MinMACDPeriod {
-		return fmt.Errorf("MACD periods must be at least %d, got: fast=%d, slow=%d, signal=%d", MinMACDPeriod, cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
-	}
-	
-	if cfg.MACDFast >= cfg.MACDSlow {
-		return fmt.Errorf("MACD fast period (%d) must be less than slow period (%d)", cfg.MACDFast, cfg.MACDSlow)
-	}
-	
-	if cfg.BBPeriod < MinBBPeriod {
-		return fmt.Errorf("bollinger Bands period must be at least %d, got: %d", MinBBPeriod, cfg.BBPeriod)
-	}
-	
-	if cfg.BBStdDev <= 0 {
-		return fmt.Errorf("bollinger Bands standard deviation must be positive, got: %.2f", cfg.BBStdDev)
-	}
-	
-	if cfg.EMAPeriod < MinEMAPeriod {
-		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
-	}
-	
-	// Validate advanced combo indicator parameters
-	if cfg.UseAdvancedCombo {
-		if cfg.HullMAPeriod < MinHullMAPeriod {
-			return fmt.Errorf("Hull MA period must be at least %d, got: %d", MinHullMAPeriod, cfg.HullMAPeriod)
-		}
-		
-		if cfg.MFIPeriod < MinMFIPeriod {
-			return fmt.Errorf("MFI period must be at least %d, got: %d", MinMFIPeriod, cfg.MFIPeriod)
-		}
-		
-		if cfg.MFIOversold <= 0 || cfg.MFIOversold >= MaxRSIValue {
-			return fmt.Errorf("MFI oversold must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.MFIOversold)
-		}
-		
-		if cfg.MFIOverbought <= 0 || cfg.MFIOverbought >= MaxRSIValue {
-			return fmt.Errorf("MFI overbought must be between 0 and %d, got: %.1f", MaxRSIValue, cfg.MFIOverbought)
-		}
-		
-		if cfg.MFIOversold >= cfg.MFIOverbought {
-			return fmt.Errorf("MFI oversold (%.1f) must be less than overbought (%.1f)", cfg.MFIOversold, cfg.MFIOverbought)
-		}
-		
-		if cfg.KeltnerPeriod < MinKeltnerPeriod {
-			return fmt.Errorf("Keltner period must be at least %d, got: %d", MinKeltnerPeriod, cfg.KeltnerPeriod)
-		}
-		
-		if cfg.KeltnerMultiplier <= 0 {
-			return fmt.Errorf("Keltner multiplier must be positive, got: %.2f", cfg.KeltnerMultiplier)
-		}
-		
-		if cfg.WaveTrendN1 < MinWaveTrendPeriod {
-			return fmt.Errorf("WaveTrend N1 must be at least %d, got: %d", MinWaveTrendPeriod, cfg.WaveTrendN1)
-		}
-		
-		if cfg.WaveTrendN2 < MinWaveTrendPeriod {
-			return fmt.Errorf("WaveTrend N2 must be at least %d, got: %d", MinWaveTrendPeriod, cfg.WaveTrendN2)
-		}
-		
-		if cfg.WaveTrendN1 >= cfg.WaveTrendN2 {
-			return fmt.Errorf("WaveTrend N1 (%d) must be less than N2 (%d)", cfg.WaveTrendN1, cfg.WaveTrendN2)
-		}
-		
-		if cfg.WaveTrendOversold >= cfg.WaveTrendOverbought {
-			return fmt.Errorf("WaveTrend oversold (%.1f) must be less than overbought (%.1f)", cfg.WaveTrendOversold, cfg.WaveTrendOverbought)
-		}
-	}
-	
-	if cfg.MinOrderQty < 0 {
-		return fmt.Errorf("minimum order quantity must be non-negative, got: %.6f", cfg.MinOrderQty)
-	}
-	
-	return nil
-}
+// Note: validateConfig moved to pkg/config package
 
 func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool, wfConfig WalkForwardConfig) {
 	sym := strings.ToUpper(cfg.Symbol)
@@ -1074,7 +873,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 
 	for _, interval := range availableIntervals {
 		// Use findDataFile to get the correct path for this interval
-		candlesPath := findDataFile(dataRoot, exchange, sym, interval)
+		candlesPath := datamanager.FindDataFile(dataRoot, exchange, sym, interval)
 		if _, err := os.Stat(candlesPath); err != nil { continue }
 
 		cfgCopy := *cfg
@@ -1093,14 +892,14 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 			
 			if wfConfig.Enable {
 				// Load data for walk-forward validation
-				data, err := loadHistoricalDataCached(cfgCopy.DataFile)
+				data, err := datamanager.LoadHistoricalDataCached(cfgCopy.DataFile)
 				if err != nil {
 					log.Printf("Failed to load data for walk-forward validation: %v", err)
 					continue
 				}
 				
 				if selectedPeriod > 0 {
-					data = filterDataByPeriod(data, selectedPeriod)
+					data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 				}
 				
 				// Run walk-forward validation instead of regular optimization
@@ -1267,7 +1066,7 @@ func runBacktest(cfg *BacktestConfig, selectedPeriod time.Duration) *backtest.Ba
 	log.Println("=" + strings.Repeat("=", 40))
 	
 	// Load historical data
-	data, err := loadHistoricalDataCached(cfg.DataFile)
+	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
 		log.Fatalf("Failed to load data: %v", err)
 	}
@@ -1278,7 +1077,7 @@ func runBacktest(cfg *BacktestConfig, selectedPeriod time.Duration) *backtest.Ba
 	
 	// Apply trailing period filter if set
 	if selectedPeriod > 0 {
-		data = filterDataByPeriod(data, selectedPeriod)
+		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 		if len(data) == 0 {
 			log.Fatalf("No data remaining after applying period filter of %v", selectedPeriod)
 		}
@@ -1457,172 +1256,7 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 	return dca
 }
 
-// loadHistoricalDataCached loads data with caching to improve performance
-func loadHistoricalDataCached(filename string) ([]types.OHLCV, error) {
-	// Check cache first
-	dataCacheMutex.RLock()
-	if cachedData, exists := dataCache[filename]; exists {
-		dataCacheMutex.RUnlock()
-		logInfo("Using cached data for %s (%d records)", filepath.Base(filename), len(cachedData))
-		return cachedData, nil
-	}
-	dataCacheMutex.RUnlock()
-
-	// Load data if not in cache
-	logProgress("Loading historical data from %s", filepath.Base(filename))
-	data, err := loadHistoricalData(filename)
-	if err != nil {
-		logError("Failed to load data from %s: %v", filepath.Base(filename), err)
-		return nil, err
-	}
-
-	// Store in cache
-	dataCacheMutex.Lock()
-	dataCache[filename] = data
-	dataCacheMutex.Unlock()
-	
-	logSuccess("Loaded and cached data from %s (%d records)", filepath.Base(filename), len(data))
-	return data, nil
-}
-
-func loadHistoricalData(filename string) ([]types.OHLCV, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		// If file doesn't exist, generate sample data
-		if os.IsNotExist(err) {
-			log.Println("⚠️  Historical data file not found, generating sample data...")
-			return generateSampleData(), nil
-		}
-		return nil, err
-	}
-	defer file.Close()
-	
-	reader := csv.NewReader(file)
-	
-	// Skip header
-	if _, err := reader.Read(); err != nil {
-		return nil, err
-	}
-	
-	var data []types.OHLCV
-	
-	lineNum := 1 // Start from 1 since we already read header
-	for {
-		record, err := reader.Read()
-		if err != nil {
-			if err.Error() == "EOF" {
-			break
-		}
-			return nil, fmt.Errorf("error reading CSV at line %d: %v", lineNum, err)
-		}
-		lineNum++
-		
-		// Expected format: timestamp,open,high,low,close,volume
-		if len(record) < 6 {
-			logWarning("Insufficient columns at line %d, skipping", lineNum)
-			continue
-		}
-		
-		// Parse timestamp with proper error handling
-		timestamp, err := time.Parse("2006-01-02 15:04:05", record[0])
-		if err != nil {
-			logWarning("Invalid timestamp '%s' at line %d, skipping: %v", record[0], lineNum, err)
-			continue
-		}
-		
-		// Parse price data with proper error handling
-		open, err := strconv.ParseFloat(record[1], 64)
-		if err != nil {
-			logWarning("Invalid open price '%s' at line %d, skipping: %v", record[1], lineNum, err)
-			continue
-		}
-		
-		high, err := strconv.ParseFloat(record[2], 64)
-		if err != nil {
-			logWarning("Invalid high price '%s' at line %d, skipping: %v", record[2], lineNum, err)
-			continue
-		}
-		
-		low, err := strconv.ParseFloat(record[3], 64)
-		if err != nil {
-			logWarning("Invalid low price '%s' at line %d, skipping: %v", record[3], lineNum, err)
-			continue
-		}
-		
-		close, err := strconv.ParseFloat(record[4], 64)
-		if err != nil {
-			logWarning("Invalid close price '%s' at line %d, skipping: %v", record[4], lineNum, err)
-			continue
-		}
-		
-		volume, err := strconv.ParseFloat(record[5], 64)
-		if err != nil {
-			logWarning("Invalid volume '%s' at line %d, skipping: %v", record[5], lineNum, err)
-			continue
-		}
-		
-		// Basic data validation
-		if open <= 0 || high <= 0 || low <= 0 || close <= 0 {
-			logWarning("Invalid price data (negative or zero) at line %d, skipping", lineNum)
-			continue
-		}
-		
-		if high < open || high < close || high < low {
-			logWarning("High price is lower than other prices at line %d, skipping", lineNum)
-			continue
-		}
-		
-		if low > open || low > close || low > high {
-			logWarning("Low price is higher than other prices at line %d, skipping", lineNum)
-			continue
-		}
-		
-		data = append(data, types.OHLCV{
-			Timestamp: timestamp,
-			Open:      open,
-			High:      high,
-			Low:       low,
-			Close:     close,
-			Volume:    volume,
-		})
-	}
-	
-	return data, nil
-}
-
-func generateSampleData() []types.OHLCV {
-	// Generate 365 days of sample data
-	data := make([]types.OHLCV, 365*24) // Hourly data
-	startTime := time.Now().AddDate(-1, 0, 0)
-	basePrice := 30000.0
-	
-	for i := range data {
-		// Simulate price movements
-		volatility := 0.02
-		trend := float64(i) * 0.1 // Slight upward trend
-		randomWalk := (rand.Float64() - 0.5) * basePrice * volatility
-		
-		price := basePrice + trend + randomWalk
-		
-		// Ensure price stays positive
-		if price < basePrice*0.5 {
-			price = basePrice * 0.5
-		}
-		
-		data[i] = types.OHLCV{
-			Timestamp: startTime.Add(time.Duration(i) * time.Hour),
-			Open:      price * (1 + (rand.Float64()-0.5)*0.01),
-			High:      price * (1 + rand.Float64()*0.02),
-			Low:       price * (1 - rand.Float64()*0.02),
-			Close:     price,
-			Volume:    rand.Float64() * 1000000,
-		}
-		
-		basePrice = price
-	}
-	
-	return data
-}
+// Note: Data loading functions moved to pkg/data package
 
 func outputConsole(results *backtest.BacktestResults) {
 	fmt.Println("\n" + strings.Repeat("=", 50))
@@ -1632,14 +1266,30 @@ func outputConsole(results *backtest.BacktestResults) {
 	fmt.Printf("💰 Initial Balance:    $%.2f\n", results.StartBalance)
 	fmt.Printf("💰 Final Balance:      $%.2f\n", results.EndBalance)
 	fmt.Printf("📈 Total Return:       %.2f%%\n", results.TotalReturn*100)
+	fmt.Printf("📈 Annualized Return:  %.2f%%\n", results.AnnualizedReturn*100)
 	fmt.Printf("📉 Max Drawdown:       %.2f%%\n", results.MaxDrawdown*100)
-	fmt.Printf("📊 Sharpe Ratio:       %.2f\n", results.SharpeRatio)
+	fmt.Printf("📉 Max Intra-Cycle DD: %.2f%%\n", results.MaxIntraCycleDD*100)
+	fmt.Printf("📊 Sharpe Ratio:       %.2f (Ann: %.2f)\n", results.SharpeRatio, results.AnnualizedSharpe)
+	fmt.Printf("📊 Sortino Ratio:      %.2f\n", results.SortinoRatio)
+	fmt.Printf("📊 Calmar Ratio:       %.2f\n", results.CalmarRatio)
 	fmt.Printf("💹 Profit Factor:      %.2f\n", results.ProfitFactor)
 	fmt.Printf("🔄 Total Trades:       %d\n", results.TotalTrades)
-	fmt.Printf("✅ Winning Trades:     %d (%.1f%%)\n", results.WinningTrades, 
-		float64(results.WinningTrades)/float64(results.TotalTrades)*100)
-	fmt.Printf("❌ Losing Trades:      %d (%.1f%%)\n", results.LosingTrades,
-		float64(results.LosingTrades)/float64(results.TotalTrades)*100)
+	
+	// Avoid division by zero
+	winRate := 0.0
+	loseRate := 0.0
+	if results.TotalTrades > 0 {
+		winRate = float64(results.WinningTrades) / float64(results.TotalTrades) * 100
+		loseRate = float64(results.LosingTrades) / float64(results.TotalTrades) * 100
+	}
+	
+	fmt.Printf("✅ Winning Trades:     %d (%.1f%%)\n", results.WinningTrades, winRate)
+	fmt.Printf("❌ Losing Trades:      %d (%.1f%%)\n", results.LosingTrades, loseRate)
+	fmt.Printf("🎯 Max Exposure:       %.1f%%\n", results.MaxExposure*100)
+	fmt.Printf("🎯 Avg Exposure:       %.1f%%\n", results.AvgExposure*100)
+	fmt.Printf("🎯 Max Cycle Exposure: %.1f%%\n", results.MaxCycleExposure*100)
+	fmt.Printf("🎯 Avg Cycle Exposure: %.1f%%\n", results.AvgCycleExposure*100)
+	fmt.Printf("🔄 Total Turnover:     %.2fx\n", results.TotalTurnover)
 	
 	// Note: Combo information is already displayed at the start of the backtest
 	// in the runBacktestWithData function
@@ -1681,7 +1331,7 @@ func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*ba
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
 	// Preload data once for performance
-	data, err := loadHistoricalDataCached(cfg.DataFile)
+	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
 		log.Fatalf("Failed to load data for optimization: %v", err)
 	}
@@ -1691,7 +1341,7 @@ func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*ba
 	}
 	
 	if selectedPeriod > 0 {
-		data = filterDataByPeriod(data, selectedPeriod)
+		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 		if len(data) == 0 {
 			log.Fatalf("No data remaining for optimization after applying period filter of %v", selectedPeriod)
 		}
@@ -3455,9 +3105,7 @@ func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
 	
 	// Sort cycles by cycle number to process them sequentially
 	var sortedCycles []backtest.CycleSummary
-		for _, c := range results.Cycles {
-		sortedCycles = append(sortedCycles, c)
-	}
+	sortedCycles = append(sortedCycles, results.Cycles...)
 	
 	// Sort cycles by cycle number
 	for i := 0; i < len(sortedCycles)-1; i++ {
@@ -4080,10 +3728,4 @@ func defaultOutputDir(symbol, interval string) string {
 	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s", s, i))
 }
 
-// validateTPConfig validates the TP configuration (always multi-level TP)
-func validateTPConfig(cfg *BacktestConfig) error {
-    if cfg.TPPercent <= 0 || cfg.TPPercent > MaxThreshold {
-        return fmt.Errorf("tp_percent must be within (0, %.2f], got %.4f", MaxThreshold, cfg.TPPercent)
-    }
-    return nil
-}
+// Note: validateTPConfig moved to pkg/config package

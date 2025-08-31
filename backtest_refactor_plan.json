@@ -1,274 +1,484 @@
 {
-  "name": "Backtest System Refactor Plan",
-  "version": "1.0.0",
-  "last_updated": "2025-08-31",
-  "goals": [
-    "Modularize the backtest system into composable packages",
-    "Create clear extension points for strategies, policies, data sources, metrics, and reporters",
-    "Reduce cmd/backtest/main.go to a thin CLI wrapper",
-    "Improve testability, performance, and observability",
-    "Maintain backward compatibility with current flags and outputs during transition"
-  ],
-  "non_goals": [
-    "Rewrite trading strategies themselves",
-    "Change current output formats (best.json, trades.xlsx) in the short term",
-    "Introduce external dependencies for orchestration (e.g., Kafka)"
-  ],
-  "target_layout": {
-    "internal/backtest/engine": "Core backtest runner (pure logic, no I/O)",
-    "internal/backtest/datasource": "CSV, API, cache, multi-interval discovery",
-    "internal/backtest/strategy": "Strategy wiring + adapters to indicators",
-    "internal/backtest/policy": "Pluggable policies (threshold, TP, sizing, slippage)",
-    "internal/backtest/risk": "Commission, leverage, constraints",
-    "internal/backtest/optimizer": "GA/grid search, parameter spaces, constraints",
-    "internal/backtest/wf": "Walk-forward validation",
-    "internal/backtest/metrics": "Calculators and aggregations (DD, Sharpe, PF, etc.)",
-    "internal/backtest/report": "Console/JSON/Excel/CSV writers",
-    "internal/backtest/results": "Result types and aggregations, serialization",
-    "internal/backtest/config": "Typed config, validation, defaults, migration",
-    "internal/backtest/registry": "Registries + factories for plugins",
-    "internal/backtest/types.go": "Common types (OHLCV, Trade, Order, Cycle, RunOptions)",
-    "cmd/backtest/main.go": "Thin CLI with subcommands (run|optimize|sweep|wf|report)"
-  },
-  "phases": [
-    {
-      "id": 1,
-      "name": "Extract core engine",
-      "objectives": [
-        "Move the backtest loop to a pure engine with no I/O",
-        "Unify position accounting and warmup handling",
-        "Return structured Results instead of printing"
-      ],
-      "tasks": [
-        "Create internal/backtest/engine with Engine, EngineConfig, Run(ctx, EngineConfig, DataProvider, Strategy, ...Policy)",
-        "Move existing loop logic from cmd/backtest/main.go into engine",
-        "Introduce typed events (Entry, Exit, TPFill, Fee) and equity tracking",
-        "Isolate warmup window handling and minimum data requirements",
-        "Ensure Engine has no logging or file writes"
-      ],
-      "deliverables": [
-        "Engine package compiling with unit tests",
-        "Adapter layer in cmd linking flags → EngineConfig"
-      ],
-      "acceptance_criteria": [
-        "Backtests produce identical metrics to baseline",
-        "No direct I/O inside engine",
-        "Engine covered by unit tests for core steps"
-      ],
-      "dependencies": [],
-      "risks": ["Behavioral drift if accounting semantics change"],
-      "effort": "M"
+  "refactor_plan": {
+    "title": "Crypto DCA Bot Backtest Refactoring Plan",
+    "version": "1.0",
+    "created_date": "2024-01-XX",
+    "status": "planned",
+    "current_issues": [
+      "Massive main.go file (4147 lines)",
+      "Mixed responsibilities in single file",
+      "Hard to reuse for different bot types",
+      "Difficult to test individual components",
+      "Genetic Algorithm and optimization tightly coupled to DCA logic",
+      "Configuration management scattered throughout",
+      "Reporting logic embedded in main flow"
+    ],
+    "goals": [
+      "Reduce main.go to <200 lines",
+      "Create reusable components for 80% of logic",
+      "Enable easy addition of new bot types",
+      "Improve testability and maintainability",
+      "Separate concerns properly",
+      "Create clean interfaces between components"
+    ],
+    "target_structure": {
+      "pkg": {
+        "config": {
+          "description": "Configuration management and validation",
+          "files": [
+            "manager.go",
+            "interfaces.go",
+            "dca_config.go",
+            "grid_config.go",
+            "validation.go",
+            "conversion.go"
+          ],
+          "interfaces": ["ConfigManager", "Config", "Validator"],
+          "responsibilities": [
+            "Load configuration from files",
+            "Validate configuration parameters",
+            "Convert between flat and nested formats",
+            "Handle different bot type configs"
+          ]
+        },
+        "optimization": {
+          "description": "Parameter optimization algorithms",
+          "files": [
+            "interfaces.go",
+            "genetic_algorithm.go",
+            "grid_search.go",
+            "bayesian.go",
+            "evaluator.go",
+            "population.go",
+            "crossover.go",
+            "mutation.go"
+          ],
+          "interfaces": ["Optimizer", "Evaluator", "Individual"],
+          "responsibilities": [
+            "Run genetic algorithm optimization",
+            "Provide different optimization strategies",
+            "Evaluate fitness of parameter sets",
+            "Handle parallel evaluation"
+          ]
+        },
+        "validation": {
+          "description": "Validation and testing methods",
+          "files": [
+            "interfaces.go",
+            "walk_forward.go",
+            "cross_validation.go",
+            "monte_carlo.go",
+            "holdout.go"
+          ],
+          "interfaces": ["Validator", "ValidationResult"],
+          "responsibilities": [
+            "Walk-forward validation",
+            "Cross-validation",
+            "Monte Carlo simulation",
+            "Out-of-sample testing"
+          ]
+        },
+        "reporting": {
+          "description": "Output generation and formatting",
+          "files": [
+            "interfaces.go",
+            "console.go",
+            "excel.go",
+            "csv.go",
+            "json.go",
+            "html.go",
+            "chain.go"
+          ],
+          "interfaces": ["Reporter", "ReporterChain"],
+          "responsibilities": [
+            "Generate console output",
+            "Create Excel reports with analysis",
+            "Export CSV trade data",
+            "Generate JSON results",
+            "Chain multiple reporters"
+          ]
+        },
+        "data": {
+          "description": "Data loading and management",
+          "files": [
+            "interfaces.go",
+            "csv_provider.go",
+            "database_provider.go",
+            "api_provider.go",
+            "cached_provider.go",
+            "validation.go",
+            "filters.go"
+          ],
+          "interfaces": ["DataProvider", "DataCache", "DataFilter"],
+          "responsibilities": [
+            "Load data from various sources",
+            "Cache data for performance",
+            "Filter data by time periods",
+            "Validate data integrity"
+          ]
+        },
+        "orchestrator": {
+          "description": "Main coordination and workflow",
+          "files": ["orchestrator.go", "workflow.go", "interval_runner.go"],
+          "interfaces": ["Orchestrator", "Workflow"],
+          "responsibilities": [
+            "Coordinate all components",
+            "Run single backtests",
+            "Run multi-interval analysis",
+            "Handle optimization and validation flows"
+          ]
+        }
+      },
+      "cmd": {
+        "dca-backtest": {
+          "description": "DCA-specific backtest runner",
+          "files": ["main.go", "flags.go"],
+          "size_estimate": "150-200 lines"
+        },
+        "grid-backtest": {
+          "description": "Future: Grid bot backtest runner",
+          "files": ["main.go", "flags.go"],
+          "size_estimate": "150-200 lines",
+          "status": "future"
+        },
+        "momentum-backtest": {
+          "description": "Future: Momentum bot backtest runner",
+          "files": ["main.go", "flags.go"],
+          "size_estimate": "150-200 lines",
+          "status": "future"
+        },
+        "common": {
+          "description": "Shared CLI utilities",
+          "files": ["flags.go", "utils.go", "version.go"]
+        }
+      },
+      "internal": {
+        "backtest": {
+          "status": "keep_as_is",
+          "description": "Already well-structured",
+          "note": "Current backtest engine is good"
+        },
+        "strategy": {
+          "status": "expand",
+          "description": "Expand interface for new bot types",
+          "changes": [
+            "Add grid strategy",
+            "Add momentum strategy",
+            "Enhance interface if needed"
+          ]
+        },
+        "indicators": {
+          "status": "keep_as_is",
+          "description": "Already well-structured"
+        }
+      }
     },
-    {
-      "id": 2,
-      "name": "Define extension interfaces",
-      "objectives": ["Create stable contracts for extensibility"],
-      "tasks": [
-        "Define DataProvider (Load(symbol, interval, period) → []OHLCV)",
-        "Define Strategy (Analyze(window) → Action, Reason, Meta)",
-        "Define policies: ThresholdPolicy, TakeProfitPolicy, PositionSizingPolicy, SlippageModel, RiskConstraints",
-        "Define Metric interface (Compute(Trades, Equity) → MetricValue)",
-        "Define Reporter interface (Write(Results, Dest))",
-        "Define ParameterSpace for optimizer"
-      ],
-      "deliverables": [
-        "Interfaces with default implementations (current behavior)",
-        "Examples and docs for adding new plugins"
-      ],
-      "acceptance_criteria": [
-        "Engine compiles and runs with default implementations",
-        "Interfaces have clear docs and examples"
-      ],
-      "dependencies": [1],
-      "risks": ["Interface churn if not thought through"],
-      "effort": "M"
+    "implementation_phases": [
+      {
+        "phase": 1,
+        "title": "Extract Core Packages",
+        "status": "planned",
+        "estimated_time": "2-3 days",
+        "priority": "high",
+        "tasks": [
+          {
+            "task": "Create pkg/config package",
+            "description": "Move all configuration logic from main.go",
+            "files_to_move": [
+              "BacktestConfig struct",
+              "NestedConfig struct",
+              "loadConfig function",
+              "validateConfig function",
+              "convertToNestedConfig function"
+            ],
+            "lines_moved": "~400 lines",
+            "dependencies": []
+          },
+          {
+            "task": "Create pkg/data package",
+            "description": "Move data loading and management",
+            "files_to_move": [
+              "loadHistoricalData functions",
+              "filterDataByPeriod function",
+              "Data caching logic",
+              "CSV parsing logic"
+            ],
+            "lines_moved": "~300 lines",
+            "dependencies": []
+          }
+        ]
+      },
+      {
+        "phase": 2,
+        "title": "Extract Complex Logic",
+        "status": "planned",
+        "estimated_time": "3-4 days",
+        "priority": "high",
+        "dependencies": ["phase_1"],
+        "tasks": [
+          {
+            "task": "Create pkg/optimization package",
+            "description": "Move entire GA optimization system",
+            "files_to_move": [
+              "Individual struct",
+              "initializePopulation function",
+              "evaluatePopulationParallel function",
+              "createNextGeneration function",
+              "crossover/mutation functions",
+              "optimizeForInterval function"
+            ],
+            "lines_moved": "~800 lines",
+            "complexity": "high"
+          },
+          {
+            "task": "Create pkg/validation package",
+            "description": "Move walk-forward validation",
+            "files_to_move": [
+              "WalkForwardConfig struct",
+              "runWalkForwardValidation function",
+              "createRollingFolds function",
+              "All WF helper functions"
+            ],
+            "lines_moved": "~400 lines",
+            "complexity": "medium"
+          }
+        ]
+      },
+      {
+        "phase": 3,
+        "title": "Extract Reporting",
+        "status": "planned",
+        "estimated_time": "2-3 days",
+        "priority": "medium",
+        "dependencies": ["phase_1"],
+        "tasks": [
+          {
+            "task": "Create pkg/reporting package",
+            "description": "Move all output generation",
+            "files_to_move": [
+              "outputConsole function",
+              "writeTradesXLSX function",
+              "writeTradesCSV function",
+              "printBestConfigJSON function",
+              "All Excel generation logic"
+            ],
+            "lines_moved": "~1000 lines",
+            "complexity": "medium"
+          }
+        ]
+      },
+      {
+        "phase": 4,
+        "title": "Create Orchestrator",
+        "status": "planned",
+        "estimated_time": "2-3 days",
+        "priority": "high",
+        "dependencies": ["phase_1", "phase_2", "phase_3"],
+        "tasks": [
+          {
+            "task": "Create pkg/orchestrator package",
+            "description": "Move main coordination logic",
+            "files_to_move": [
+              "runAcrossIntervals function",
+              "Main workflow logic",
+              "Component coordination"
+            ],
+            "lines_moved": "~400 lines",
+            "complexity": "high"
+          }
+        ]
+      },
+      {
+        "phase": 5,
+        "title": "Create Bot-Specific Commands",
+        "status": "planned",
+        "estimated_time": "1-2 days",
+        "priority": "medium",
+        "dependencies": ["phase_4"],
+        "tasks": [
+          {
+            "task": "Create cmd/dca-backtest/main.go",
+            "description": "DCA-specific command runner",
+            "lines_new": "~200 lines",
+            "complexity": "low"
+          },
+          {
+            "task": "Reduce original main.go",
+            "description": "Minimal coordinator using orchestrator",
+            "lines_remaining": "~200 lines",
+            "lines_removed": "~3900 lines"
+          }
+        ]
+      }
+    ],
+    "current_main_go_breakdown": {
+      "total_lines": 4147,
+      "sections": {
+        "imports_constants": {
+          "lines": "1-205",
+          "count": 205,
+          "action": "split_across_packages"
+        },
+        "configuration": {
+          "lines": "206-1057",
+          "count": 852,
+          "action": "move_to_pkg_config",
+          "target": "pkg/config/"
+        },
+        "data_loading": {
+          "lines": "1498-1667",
+          "count": 170,
+          "action": "move_to_pkg_data",
+          "target": "pkg/data/"
+        },
+        "genetic_algorithm": {
+          "lines": "1708-2149",
+          "count": 442,
+          "action": "move_to_pkg_optimization",
+          "target": "pkg/optimization/"
+        },
+        "walk_forward": {
+          "lines": "3694-4088",
+          "count": 395,
+          "action": "move_to_pkg_validation",
+          "target": "pkg/validation/"
+        },
+        "reporting": {
+          "lines": "2414-3693",
+          "count": 1280,
+          "action": "move_to_pkg_reporting",
+          "target": "pkg/reporting/"
+        },
+        "main_flow": {
+          "lines": "463-743",
+          "count": 281,
+          "action": "move_to_pkg_orchestrator",
+          "target": "pkg/orchestrator/"
+        },
+        "utilities": {
+          "lines": "scattered",
+          "count": 562,
+          "action": "distribute_to_relevant_packages"
+        }
+      }
     },
-    {
-      "id": 3,
-      "name": "Config and factories",
-      "objectives": [
-        "Centralize config with validation and defaults",
-        "Create factories for constructing components from config"
+    "testing_strategy": {
+      "unit_tests": [
+        "pkg/config: Test config loading and validation",
+        "pkg/optimization: Test GA components in isolation",
+        "pkg/validation: Test walk-forward logic",
+        "pkg/data: Test data loading and filtering",
+        "pkg/reporting: Test output generation"
       ],
-      "tasks": [
-        "Move config to internal/backtest/config with typed structs",
-        "Implement defaults + validation with actionable errors",
-        "Add migration that maps current flags/JSON → new config",
-        "Implement factories: NewStrategy, NewPolicies, NewDataProvider, NewReporter"
+      "integration_tests": [
+        "Test full DCA backtest workflow",
+        "Test optimization + validation pipeline",
+        "Test multi-interval analysis"
       ],
-      "deliverables": ["Config package and factories used by CLI"],
-      "acceptance_criteria": [
-        "Existing flags and configs still work",
-        "Validation errors are clear and actionable"
-      ],
-      "dependencies": [1, 2],
-      "risks": ["Silent behavior changes if defaults differ"],
-      "effort": "M"
+      "benchmark_tests": [
+        "Compare performance before/after refactor",
+        "Test parallel optimization performance"
+      ]
     },
-    {
-      "id": 4,
-      "name": "CLI rework (thin wrapper)",
-      "objectives": ["Make CLI a thin layer over engine and factories"],
-      "tasks": [
-        "Introduce subcommands (run|optimize|sweep|wf|report)",
-        "Map flags → config builder → engine/factories",
-        "Keep current top-level flags working for backward compatibility"
+    "migration_checklist": {
+      "before_starting": [
+        "Create feature branch for refactor",
+        "Backup current working version",
+        "Create comprehensive test suite for current functionality",
+        "Document current CLI interface"
       ],
-      "deliverables": [
-        "New CLI with subcommands and help text",
-        "Backward-compatible flag handling"
+      "during_refactor": [
+        "Maintain backward compatibility in CLI",
+        "Keep tests passing after each phase",
+        "Update documentation as components move",
+        "Validate output remains identical"
       ],
-      "acceptance_criteria": [
-        "cmd/backtest/main.go ≤ 300 LoC",
-        "All existing flows still work via compatibility path"
-      ],
-      "dependencies": [1, 2, 3],
-      "risks": ["User confusion during transition if docs are lacking"],
-      "effort": "S"
+      "after_completion": [
+        "Run full test suite",
+        "Performance benchmarking",
+        "Update README and documentation",
+        "Create examples for new bot types"
+      ]
     },
-    {
-      "id": 5,
-      "name": "Results and reporting",
-      "objectives": [
-        "Decouple results from presentation",
-        "Enable multiple output formats without engine changes"
+    "future_extensions": {
+      "new_bot_types": [
+        {
+          "name": "Grid Trading Bot",
+          "strategy": "Place buy/sell orders at regular intervals",
+          "config_additions": ["grid_size", "grid_levels", "grid_range"],
+          "effort": "Low - just implement Strategy interface"
+        },
+        {
+          "name": "Momentum Trading Bot",
+          "strategy": "Buy on momentum, sell on reversal",
+          "config_additions": ["momentum_threshold", "reversal_signals"],
+          "effort": "Low - just implement Strategy interface"
+        },
+        {
+          "name": "Mean Reversion Bot",
+          "strategy": "Buy oversold, sell overbought conditions",
+          "config_additions": ["reversion_levels", "holding_period"],
+          "effort": "Low - just implement Strategy interface"
+        }
       ],
-      "tasks": [
-        "Define results.Result (equity curve, trades, cycles, pnl, metadata)",
-        "Console, JSON (best.json), Excel (4-sheet), CSV writers",
-        "Add aggregators for multi-interval runs"
+      "optimization_methods": [
+        "Bayesian Optimization",
+        "Particle Swarm Optimization",
+        "Differential Evolution",
+        "Hyperband"
       ],
-      "deliverables": [
-        "Report package with pluggable writers",
-        "Aggregated summaries for -all-intervals"
+      "validation_methods": [
+        "K-Fold Cross Validation",
+        "Time Series Cross Validation",
+        "Purged Cross Validation",
+        "Monte Carlo Simulation"
       ],
-      "acceptance_criteria": [
-        "Current outputs preserved by default",
-        "Reporters can be extended without touching engine"
-      ],
-      "dependencies": [1, 2],
-      "risks": [],
-      "effort": "M"
+      "reporting_formats": [
+        "Interactive HTML Dashboard",
+        "PDF Reports",
+        "Real-time WebSocket Updates",
+        "Slack/Discord Notifications"
+      ]
     },
-    {
-      "id": 6,
-      "name": "Optimizer and walk-forward",
-      "objectives": [
-        "Unify optimization and WF under consistent APIs",
-        "Improve reproducibility and metrics reporting"
-      ],
-      "tasks": [
-        "optimizer.Run(ctx, Engine, ParameterSpace, Budget) → BestConfig, Result",
-        "wf.Validate(ctx, Data, SplitConfig, Engine) → WFReport",
-        "Record seeds for reproducibility; expose metrics and traces"
-      ],
-      "deliverables": ["Optimizer and WF packages with examples"],
-      "acceptance_criteria": [
-        "Same/better best results compared to baseline",
-        "WF and optimizer compatible with reporters"
-      ],
-      "dependencies": [1, 2, 3, 5],
-      "risks": ["Search-space explosion; must add budgets and constraints"],
-      "effort": "M/L"
+    "risks_and_mitigations": {
+      "risks": [
+        {
+          "risk": "Breaking existing functionality",
+          "probability": "medium",
+          "impact": "high",
+          "mitigation": "Comprehensive test suite and gradual migration"
+        },
+        {
+          "risk": "Performance degradation",
+          "probability": "low",
+          "impact": "medium",
+          "mitigation": "Benchmark before/after, maintain parallel evaluation"
+        },
+        {
+          "risk": "Increased complexity",
+          "probability": "medium",
+          "impact": "low",
+          "mitigation": "Clear interfaces and good documentation"
+        }
+      ]
     },
-    {
-      "id": 7,
-      "name": "Performance improvements",
-      "objectives": ["Speed up multi-interval runs and reduce memory usage"],
-      "tasks": [
-        "Worker pool for -all-intervals with bounded concurrency",
-        "Data cache abstraction (TTL + memory cap); reuse klines across runs",
-        "Incremental indicators and sliding windows",
-        "Optional streaming data provider (chunked CSV/API)",
-        "Context cancellation and progress hooks"
-      ],
-      "deliverables": [
-        "Faster -all-intervals and optimizer runs",
-        "Profiling docs and benchmarks"
-      ],
-      "acceptance_criteria": [
-        "≥30% speedup on -all-intervals vs baseline",
-        "Stable memory profile on long runs"
-      ],
-      "dependencies": [1, 2, 5],
-      "risks": ["Concurrency bugs; add tests and bounds"],
-      "effort": "M"
-    },
-    {
-      "id": 8,
-      "name": "Observability and developer experience",
-      "objectives": ["Add structured logs, progress, and traces for long runs"],
-      "tasks": [
-        "Structured logging with run IDs",
-        "Progress callbacks (percent, ETA, current interval/phase)",
-        "Trace optimizer iterations and WF folds",
-        "Deterministic seeds; stamp run metadata",
-        "Debug levels and dry-run mode"
-      ],
-      "deliverables": ["Logging/tracing utilities and examples"],
-      "acceptance_criteria": [
-        "Operators can track progress and reproduce runs"
-      ],
-      "dependencies": [1, 5, 6],
-      "risks": [],
-      "effort": "S/M"
-    },
-    {
-      "id": 9,
-      "name": "Testing strategy",
-      "objectives": ["Ensure correctness and prevent regressions"],
-      "tasks": [
-        "Unit tests for policies, metrics, engine steps",
-        "Contract tests for Strategy, DataProvider, Reporter",
-        "Golden tests for JSON/Excel outputs",
-        "Scenario datasets (bull/bear/chop) with expectations",
-        "Benchmarks: engine loop, indicators, optimizer"
-      ],
-      "deliverables": ["Automated test suite with CI checks"],
-      "acceptance_criteria": [
-        ">80% coverage on engine/policies",
-        "Golden outputs stable across runs"
-      ],
-      "dependencies": [1, 2, 5],
-      "risks": ["Flaky tests without deterministic seeds"],
-      "effort": "M"
+    "success_metrics": {
+      "code_quality": {
+        "main_go_lines": "<200 (from 4147)",
+        "package_cohesion": "High - single responsibility",
+        "test_coverage": ">80%",
+        "cyclomatic_complexity": "<10 per function"
+      },
+      "reusability": {
+        "new_bot_effort": "<1 day to add new bot type",
+        "component_reuse": ">80% of logic reusable",
+        "interface_stability": "No breaking changes to Strategy interface"
+      },
+      "performance": {
+        "optimization_speed": "No degradation vs current",
+        "memory_usage": "No significant increase",
+        "startup_time": "<1 second for CLI"
+      }
     }
-  ],
-  "immediate_wins": [
-    "Extract engine and report modules out of cmd/backtest/main.go",
-    "Introduce DataProvider and Reporter interfaces with CSV/console impls",
-    "Add worker pool for -all-intervals",
-    "Move config defaults/validation into internal/backtest/config"
-  ],
-  "extension_points": [
-    "New ThresholdPolicy implementations (ATR, Adaptive, BB, Keltner)",
-    "Custom PositionSizingPolicy (Kelly, volatility targeting)",
-    "Pluggable SlippageModel (percent, orderbook depth)",
-    "Additional Metrics (Calmar, Sortino, turnover, exposure)",
-    "Extra Reporters (HTML/PDF summary)"
-  ],
-  "compatibility": {
-    "strategy": "Maintain current outputs and flags while introducing new modules",
-    "migration": "Map legacy flags to new config; keep JSON/Excel outputs stable",
-    "feature_flags": [
-      "enable_new_engine",
-      "enable_new_reporters",
-      "enable_optimizer_v2"
-    ]
-  },
-  "acceptance_criteria": [
-    "cmd/backtest/main.go ≤ 300 LoC",
-    "Engine has no I/O (pure)",
-    "Green regression on current use-cases",
-    "-all-intervals faster with concurrency and caching",
-    "Clear developer guide: how to add a policy/metric/reporter"
-  ],
-  "milestones": [
-    { "name": "Engine extracted", "phase": 1 },
-    { "name": "Interfaces published", "phase": 2 },
-    { "name": "Config + factories", "phase": 3 },
-    { "name": "Thin CLI", "phase": 4 },
-    { "name": "Reporters + results", "phase": 5 },
-    { "name": "Optimizer + WF", "phase": 6 }
-  ]
+  }
 }

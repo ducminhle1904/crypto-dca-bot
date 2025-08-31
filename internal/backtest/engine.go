@@ -58,6 +58,12 @@ type BacktestEngine struct {
 	cycleTPProgress    map[int]bool  // Track which TP levels are hit
 	cycleRemainingQty  float64       // Remaining quantity after partial exits
 	cycleUnrealizedPnL float64       // Accumulated unrealized PnL from partial TP exits
+	
+	// Enhanced drawdown and exposure tracking
+	peakEquity         float64       // Peak equity for drawdown calculation
+	maxCycleExposure   float64       // Maximum exposure within current cycle
+	currentExposure    float64       // Current exposure level
+	exposureHistory    []float64     // Historical exposure levels
 }
 
 type BacktestResults struct {
@@ -74,6 +80,19 @@ type BacktestResults struct {
 	// Cycle summaries
 	Cycles            []CycleSummary
 	CompletedCycles   int
+	// Enhanced metrics
+	EquityCurve       []EquityPoint
+	SortinoRatio      float64
+	CalmarRatio       float64
+	AnnualizedReturn  float64
+	AnnualizedSharpe  float64
+	MaxExposure       float64
+	AvgExposure       float64
+	TotalTurnover     float64
+	// Enhanced drawdown metrics
+	MaxIntraCycleDD   float64       // Maximum drawdown within a single cycle
+	AvgCycleExposure  float64       // Average exposure per cycle
+	MaxCycleExposure  float64       // Maximum exposure within any cycle
 }
 
 type Trade struct {
@@ -117,6 +136,17 @@ type PartialExit struct {
 	Commission float64   `json:"commission"`
 }
 
+// EquityPoint represents a point in the equity curve
+type EquityPoint struct {
+	Timestamp time.Time `json:"timestamp"`
+	Balance   float64   `json:"balance"`
+	Position  float64   `json:"position"`
+	Price     float64   `json:"price"`
+	Equity    float64   `json:"equity"`
+	Exposure  float64   `json:"exposure"`  // Position value / total equity
+	PnL       float64   `json:"pnl"`      // Running PnL from start
+}
+
 func NewBacktestEngine(
 	initialBalance float64,
 	commission float64,
@@ -136,12 +166,18 @@ func NewBacktestEngine(
 			StartBalance: initialBalance,
 			Trades:       make([]Trade, 0),
 			Cycles:       make([]CycleSummary, 0),
+			EquityCurve:  make([]EquityPoint, 0),
 		},
 		tpPercent:   tpPercent,
 		useTPLevels: useTPLevels,
 		minOrderQty: minOrderQty,
 		balance:     initialBalance,
 		position:    0,
+		// Initialize enhanced tracking
+		peakEquity:       initialBalance,
+		maxCycleExposure: 0,
+		currentExposure:  0,
+		exposureHistory:  make([]float64, 0),
 	}
 	
 	// Initialize TP level tracking
@@ -179,6 +215,11 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	b.balance = b.initialBalance
 	b.position = 0.0
 	maxBalance := b.balance
+	
+	// Initialize enhanced tracking
+	b.peakEquity = b.initialBalance
+	b.exposureHistory = make([]float64, 0)
+	cyclePeakEquity := b.initialBalance
 
 	for i := windowSize; i < len(data); i++ {
 		// get a data window for analysis
@@ -299,11 +340,62 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 			maxBalance = currentValue
 		}
 
+		// Enhanced peak tracking
+		if currentValue > b.peakEquity {
+			b.peakEquity = currentValue
+		}
+		
+		// Track cycle peak equity for intra-cycle drawdown
+		if b.cycleOpen {
+			if currentValue > cyclePeakEquity {
+				cyclePeakEquity = currentValue
+			}
+			
+			// Calculate intra-cycle drawdown
+			if cyclePeakEquity > 0 {
+				intraCycleDD := (cyclePeakEquity - currentValue) / cyclePeakEquity
+				if intraCycleDD > b.results.MaxIntraCycleDD {
+					b.results.MaxIntraCycleDD = intraCycleDD
+				}
+			}
+		} else {
+			// Reset cycle peak when starting new cycle
+			cyclePeakEquity = currentValue
+		}
+
 		//Calculating the drawdown
 		drawdown := (maxBalance - currentValue) / maxBalance
 		if drawdown > b.results.MaxDrawdown {
 			b.results.MaxDrawdown = drawdown
 		}
+
+		// Track equity curve and exposure
+		exposure := 0.0
+		if currentValue > 0 {
+			exposure = (b.position * currentPrice) / currentValue
+		}
+		
+		// Update exposure tracking
+		b.currentExposure = exposure
+		b.exposureHistory = append(b.exposureHistory, exposure)
+		
+		// Track cycle exposure
+		if b.cycleOpen && exposure > b.maxCycleExposure {
+			b.maxCycleExposure = exposure
+		}
+		
+		runningPnL := currentValue - b.initialBalance
+		
+		equityPoint := EquityPoint{
+			Timestamp: data[i].Timestamp,
+			Balance:   b.balance,
+			Position:  b.position,
+			Price:     currentPrice,
+			Equity:    currentValue,
+			Exposure:  exposure,
+			PnL:       runningPnL,
+		}
+		b.results.EquityCurve = append(b.results.EquityCurve, equityPoint)
 	}
 
 	//Final calculations
@@ -418,6 +510,16 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	b.results.EndBalance = b.balance
 	b.results.TotalReturn = (b.balance - b.initialBalance) / b.initialBalance
 	b.results.TotalTrades = len(b.results.Trades)
+	
+	// Calculate enhanced metrics from tracking data
+	b.results.MaxCycleExposure = b.maxCycleExposure
+	if len(b.exposureHistory) > 0 {
+		totalExposure := 0.0
+		for _, exp := range b.exposureHistory {
+			totalExposure += exp
+		}
+		b.results.AvgCycleExposure = totalExposure / float64(len(b.exposureHistory))
+	}
 
 	return b.results
 }
@@ -754,6 +856,9 @@ func (b *BacktestEngine) resetCycle() {
     b.cycleCommissionSum = 0
     b.cycleRemainingQty = 0
     b.cycleUnrealizedPnL = 0
+    
+    // Reset cycle exposure tracking
+    b.maxCycleExposure = 0
     
     // Notify strategy that cycle is complete so it can reset state
     b.strategy.OnCycleComplete()
