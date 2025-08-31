@@ -146,6 +146,104 @@ func (c *DCAConfig) SetIndicators(indicators []string) {
 	c.Indicators = indicators
 }
 
+// Methods required by optimization.BacktestConfig interface
+func (c *DCAConfig) GetCycle() bool {
+	return c.Cycle
+}
+
+func (c *DCAConfig) GetTPPercent() float64 {
+	return c.TPPercent
+}
+
+func (c *DCAConfig) GetUseAdvancedCombo() bool {
+	return c.UseAdvancedCombo
+}
+
+// Mutation methods for optimization
+func (c *DCAConfig) SetMaxMultiplier(val float64) {
+	c.MaxMultiplier = val
+}
+
+func (c *DCAConfig) SetTPPercent(val float64) {
+	c.TPPercent = val
+}
+
+func (c *DCAConfig) SetPriceThreshold(val float64) {
+	c.PriceThreshold = val
+}
+
+func (c *DCAConfig) SetHullMAPeriod(val int) {
+	c.HullMAPeriod = val
+}
+
+func (c *DCAConfig) SetMFIPeriod(val int) {
+	c.MFIPeriod = val
+}
+
+func (c *DCAConfig) SetMFIOversold(val float64) {
+	c.MFIOversold = val
+}
+
+func (c *DCAConfig) SetMFIOverbought(val float64) {
+	c.MFIOverbought = val
+}
+
+func (c *DCAConfig) SetKeltnerPeriod(val int) {
+	c.KeltnerPeriod = val
+}
+
+func (c *DCAConfig) SetKeltnerMultiplier(val float64) {
+	c.KeltnerMultiplier = val
+}
+
+func (c *DCAConfig) SetWaveTrendN1(val int) {
+	c.WaveTrendN1 = val
+}
+
+func (c *DCAConfig) SetWaveTrendN2(val int) {
+	c.WaveTrendN2 = val
+}
+
+func (c *DCAConfig) SetWaveTrendOverbought(val float64) {
+	c.WaveTrendOverbought = val
+}
+
+func (c *DCAConfig) SetWaveTrendOversold(val float64) {
+	c.WaveTrendOversold = val
+}
+
+func (c *DCAConfig) SetRSIPeriod(val int) {
+	c.RSIPeriod = val
+}
+
+func (c *DCAConfig) SetRSIOversold(val float64) {
+	c.RSIOversold = val
+}
+
+func (c *DCAConfig) SetMACDFast(val int) {
+	c.MACDFast = val
+}
+
+func (c *DCAConfig) SetMACDSlow(val int) {
+	c.MACDSlow = val
+}
+
+func (c *DCAConfig) SetMACDSignal(val int) {
+	c.MACDSignal = val
+}
+
+func (c *DCAConfig) SetBBPeriod(val int) {
+	c.BBPeriod = val
+}
+
+func (c *DCAConfig) SetBBStdDev(val float64) {
+	c.BBStdDev = val
+}
+
+func (c *DCAConfig) SetEMAPeriod(val int) {
+	c.EMAPeriod = val
+}
+
 // NewDefaultDCAConfig creates a new DCA configuration with default values
 func NewDefaultDCAConfig() *DCAConfig {
 	return &DCAConfig{

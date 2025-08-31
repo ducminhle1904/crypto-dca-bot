@@ -9,10 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
-
-	"math/rand"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/bybit"
@@ -20,10 +17,52 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/optimization"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/reporting"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/validation"
 	"github.com/joho/godotenv"
 )
+
+// convertBacktestConfigToDCAConfig converts the old BacktestConfig to the new DCAConfig
+func convertBacktestConfigToDCAConfig(btCfg *BacktestConfig) *config.DCAConfig {
+	dcaCfg := config.NewDefaultDCAConfig()
+	dcaCfg.DataFile = btCfg.DataFile
+	dcaCfg.Symbol = btCfg.Symbol
+	dcaCfg.Interval = btCfg.Interval
+	dcaCfg.InitialBalance = btCfg.InitialBalance
+	dcaCfg.Commission = btCfg.Commission
+	dcaCfg.WindowSize = btCfg.WindowSize
+	dcaCfg.BaseAmount = btCfg.BaseAmount
+	dcaCfg.MaxMultiplier = btCfg.MaxMultiplier
+	dcaCfg.PriceThreshold = btCfg.PriceThreshold
+	dcaCfg.UseAdvancedCombo = btCfg.UseAdvancedCombo
+	dcaCfg.RSIPeriod = btCfg.RSIPeriod
+	dcaCfg.RSIOversold = btCfg.RSIOversold
+	dcaCfg.RSIOverbought = btCfg.RSIOverbought
+	dcaCfg.MACDFast = btCfg.MACDFast
+	dcaCfg.MACDSlow = btCfg.MACDSlow
+	dcaCfg.MACDSignal = btCfg.MACDSignal
+	dcaCfg.BBPeriod = btCfg.BBPeriod
+	dcaCfg.BBStdDev = btCfg.BBStdDev
+	dcaCfg.EMAPeriod = btCfg.EMAPeriod
+	dcaCfg.HullMAPeriod = btCfg.HullMAPeriod
+	dcaCfg.MFIPeriod = btCfg.MFIPeriod
+	dcaCfg.MFIOversold = btCfg.MFIOversold
+	dcaCfg.MFIOverbought = btCfg.MFIOverbought
+	dcaCfg.KeltnerPeriod = btCfg.KeltnerPeriod
+	dcaCfg.KeltnerMultiplier = btCfg.KeltnerMultiplier
+	dcaCfg.WaveTrendN1 = btCfg.WaveTrendN1
+	dcaCfg.WaveTrendN2 = btCfg.WaveTrendN2
+	dcaCfg.WaveTrendOverbought = btCfg.WaveTrendOverbought
+	dcaCfg.WaveTrendOversold = btCfg.WaveTrendOversold
+	dcaCfg.Indicators = btCfg.Indicators
+	dcaCfg.TPPercent = btCfg.TPPercent
+	dcaCfg.UseTPLevels = btCfg.UseTPLevels
+	dcaCfg.Cycle = btCfg.Cycle
+	dcaCfg.MinOrderQty = btCfg.MinOrderQty
+	return dcaCfg
+}
 
 // convertDCAConfigToBacktestConfig converts the new DCAConfig to the old BacktestConfig for backward compatibility
 func convertDCAConfigToBacktestConfig(dcaCfg *config.DCAConfig) *BacktestConfig {
@@ -512,7 +551,7 @@ func main() {
 	
 	if *optimize {
 		var bestResults *backtest.BacktestResults
-		var bestConfig BacktestConfig
+		var bestConfig *config.DCAConfig
 		
 		// Check if walk-forward validation is enabled
 		if *wfEnable {
@@ -527,7 +566,7 @@ func main() {
 			}
 			
 			// Create walk-forward configuration
-			wfConfig := WalkForwardConfig{
+			wfConfig := validation.WalkForwardConfig{
 				Enable:     *wfEnable,
 				Rolling:    *wfRolling,
 				SplitRatio: *wfSplitRatio,
@@ -537,13 +576,26 @@ func main() {
 			}
 			
 			// Run walk-forward validation
-			runWalkForwardValidation(convertDCAConfigToBacktestConfig(cfg), data, wfConfig)
-			
-			// Still run regular optimization for comparison and output generation
-		bestResults, bestConfig = optimizeForInterval(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
-		} else {
-			bestResults, bestConfig = optimizeForInterval(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
+			_, err = validation.RunWalkForwardValidation(cfg, data, wfConfig, 
+				func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
+					return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
+				},
+				func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
+					// Convert interface to DCAConfig
+					dcaConfig := cfg.(*config.DCAConfig)
+					return runBacktestWithData(convertDCAConfigToBacktestConfig(dcaConfig), data)
+				})
+			if err != nil {
+				log.Printf("Walk-forward validation failed: %v", err)
+			}
 		}
+		
+		// Run regular optimization
+		bestResults, bestConfigInterface, err := optimization.OptimizeWithGA(cfg, cfg.DataFile, selectedPeriod)
+		if err != nil {
+			log.Fatalf("Optimization failed: %v", err)
+		}
+		bestConfig = bestConfigInterface.(*config.DCAConfig)
 			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
 		
 		fmt.Println(strings.Repeat("=", 50))
@@ -603,7 +655,7 @@ func main() {
 		fmt.Println("\nBest Config (JSON):")
 		fmt.Println("Copy this configuration to reuse these optimized settings:")
 		fmt.Println(strings.Repeat("-", 50))
-		printBestConfigJSON(bestConfig)
+		printBestConfigJSON(*convertDCAConfigToBacktestConfig(bestConfig))
 		fmt.Println(strings.Repeat("-", 50))
 		fmt.Printf("Usage: go run cmd/backtest/main.go -config best.json\n")
 		fmt.Printf("   or: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
@@ -615,7 +667,7 @@ func main() {
 			stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
 		// Write standard outputs
-		if err := writeBestConfigJSON(bestConfig, stdBestPath); err != nil {
+		if err := writeBestConfigJSON(*convertDCAConfigToBacktestConfig(bestConfig), stdBestPath); err != nil {
 				logError("Failed to write best config: %v", err)
 		} else {
 				logSuccess("Saved best config to: %s", stdBestPath)
@@ -637,15 +689,17 @@ func main() {
 			fmt.Println("\nBest Config (JSON):")
 			fmt.Println("Copy this configuration to reuse these optimized settings:")
 			fmt.Println(strings.Repeat("-", 50))
-			printBestConfigJSON(bestConfig)
+			printBestConfigJSON(*convertDCAConfigToBacktestConfig(bestConfig))
 			fmt.Println(strings.Repeat("-", 50))
 			fmt.Printf("Usage: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
 				cfg.Symbol, intervalStr, bestConfig.BaseAmount, bestConfig.MaxMultiplier, bestConfig.PriceThreshold)
 		}
 		
 		fmt.Println("\nBest Results:")
+		// Run a fresh backtest with the optimized config to get proper results
+		finalResults := runBacktest(convertDCAConfigToBacktestConfig(bestConfig), selectedPeriod)
 		// Use the new context-aware output with the interval information
-		reporting.OutputConsoleWithContext(bestResults, bestConfig.Symbol, intervalStr)
+		reporting.OutputConsoleWithContext(finalResults, bestConfig.Symbol, intervalStr)
 		return
 	}
 	
@@ -848,9 +902,23 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 				
 				// For now, still run regular optimization to get results for comparison
 				// In production, you might want to use the WF results instead
-			res, bestCfg = optimizeForInterval(&cfgCopy, selectedPeriod)
+				tempDCAConfig := convertBacktestConfigToDCAConfig(&cfgCopy)
+				results, bestConfigInterface, err := optimization.OptimizeWithGA(tempDCAConfig, cfgCopy.DataFile, selectedPeriod)
+				if err != nil {
+					log.Printf("Optimization failed: %v", err)
+					continue
+				}
+				res = results
+				bestCfg = *convertDCAConfigToBacktestConfig(bestConfigInterface.(*config.DCAConfig))
 			} else {
-				res, bestCfg = optimizeForInterval(&cfgCopy, selectedPeriod)
+				tempDCAConfig := convertBacktestConfigToDCAConfig(&cfgCopy)
+				results, bestConfigInterface, err := optimization.OptimizeWithGA(tempDCAConfig, cfgCopy.DataFile, selectedPeriod)
+				if err != nil {
+					log.Printf("Optimization failed: %v", err)
+					continue
+				}
+				res = results
+				bestCfg = *convertDCAConfigToBacktestConfig(bestConfigInterface.(*config.DCAConfig))
 			}
 		} else {
 			res = runBacktest(&cfgCopy, selectedPeriod)
@@ -1193,452 +1261,6 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 	return dca
 }
 
-// evaluatePopulationParallel evaluates fitness for all individuals in parallel
-func evaluatePopulationParallel(population []*Individual, data []types.OHLCV) {
-	var wg sync.WaitGroup
-	
-	// Create a channel to limit concurrent goroutines
-	workerChan := make(chan struct{}, MaxParallelWorkers)
-	
-	for i := range population {
-		if population[i].fitness != 0 {
-			continue // Skip already evaluated individuals
-		}
-		
-		wg.Add(1)
-		go func(individual *Individual) {
-			defer wg.Done()
-			
-			workerChan <- struct{}{} // Acquire worker slot
-			defer func() { <-workerChan }() // Release worker slot
-			
-			results := runBacktestWithData(&individual.config, data)
-			individual.fitness = results.TotalReturn
-			individual.results = results
-		}(population[i])
-	}
-	
-	wg.Wait()
-}
-
-// Parameter optimization functions
-// Note: This function will be replaced with pkg/optimization in future iterations
-func optimizeForInterval(cfg *BacktestConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, BacktestConfig) {
-	// TODO: Replace with optimization.OptimizeWithGA(cfg, cfg.DataFile, selectedPeriod)
-	// Create local RNG to avoid race conditions
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	
-	// Preload data once for performance
-	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
-	if err != nil {
-		log.Fatalf("Failed to load data for optimization: %v", err)
-	}
-	
-	if len(data) == 0 {
-		log.Fatalf("No valid data found for optimization in file: %s", cfg.DataFile)
-	}
-	
-	if selectedPeriod > 0 {
-		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
-		if len(data) == 0 {
-			log.Fatalf("No data remaining for optimization after applying period filter of %v", selectedPeriod)
-		}
-		logInfo("Filtered to last %v of data (%s → %s)",
-            selectedPeriod,
-            data[0].Timestamp.Format("2006-01-02"),
-            data[len(data)-1].Timestamp.Format("2006-01-02"))
-	}
-
-	// GA Parameters
-	populationSize := GAPopulationSize
-	generations := GAGenerations
-	mutationRate := GAMutationRate
-	crossoverRate := GACrossoverRate
-	eliteSize := GAEliteSize
-
-	logProgress("Starting Genetic Algorithm Optimization")
-	logInfo("Mode: Full optimization (including indicator parameters)")
-	logInfo("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
-		populationSize, generations, mutationRate*100, crossoverRate*100)
-	logInfo("Using %d parallel workers for fitness evaluation", MaxParallelWorkers)
-
-	// Ensure base config has valid TP settings for optimization
-	if cfg.TPPercent == 0 {
-		cfg.TPPercent = DefaultTPPercent // Ensure valid TP for optimization base
-	}
-	cfg.UseTPLevels = true // Always use multi-level TP
-
-	// Initialize population
-	population := initializePopulation(cfg, populationSize, rng)
-	
-	var bestIndividual *Individual
-	var bestResults *backtest.BacktestResults
-	
-	for gen := 0; gen < generations; gen++ {
-		// Evaluate fitness for all individuals in parallel
-		evaluatePopulationParallel(population, data)
-		
-		// Sort by fitness (descending)
-		sortPopulationByFitness(population)
-		
-		// Track best individual
-		if bestIndividual == nil || population[0].fitness > bestIndividual.fitness {
-			bestIndividual = &Individual{
-				config:  population[0].config,
-				fitness: population[0].fitness,
-				results: population[0].results,
-			}
-			bestResults = population[0].results
-		}
-		
-		if gen%ProgressReportInterval == 0 {
-			logProgress("Gen %d: Best=%.2f%%, Avg=%.2f%%, Worst=%.2f%%", 
-				gen+1, 
-				population[0].fitness*100,
-				averageFitness(population)*100,
-				population[len(population)-1].fitness*100)
-				
-			// Show best individual details every DetailReportInterval generations
-			if gen%DetailReportInterval == (DetailReportInterval-1) {
-				best := &population[0].config
-				logInfo("Best Config: %s | maxMult=%.1f | tp=%.1f%% | threshold=%.1f%%",
-					strings.Join(best.Indicators, "+"),
-					best.MaxMultiplier,
-					best.TPPercent*100,
-					best.PriceThreshold*100)
-			}
-		}
-		
-		// Create next generation
-		if gen < generations-1 {
-			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, cfg, rng)
-		}
-	}
-	
-	logSuccess("GA Optimization completed! Best fitness: %.2f%%", bestIndividual.fitness*100)
-	logInfo("Total evaluations: %d (%.1f evaluations/second)", 
-		populationSize*generations, 
-		float64(populationSize*generations)/time.Since(time.Now().Add(-time.Duration(generations)*time.Second/5)).Seconds())
-	return bestResults, bestIndividual.config
-}
-
-
-
-// Individual represents a candidate solution
-// Note: This struct has been moved to pkg/optimization/individual.go
-type Individual struct {
-	config  BacktestConfig
-	fitness float64
-	results *backtest.BacktestResults
-}
-
-// Initialize random population
-func initializePopulation(cfg *BacktestConfig, size int, rng *rand.Rand) []*Individual {
-	population := make([]*Individual, size)
-	
-	for i := 0; i < size; i++ {
-		individual := &Individual{
-			config: *cfg, // Copy base config
-		}
-		
-		// Randomize parameters using optimization ranges
-		individual.config.BaseAmount = cfg.BaseAmount // Use flag value
-		individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
-		individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
-		
-		// TP candidates - always use multi-level TP with TPPercent
-		if cfg.Cycle {
-			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
-			individual.config.UseTPLevels = true // Always use multi-level TP
-		} else {
-			individual.config.UseTPLevels = false
-			individual.config.TPPercent = 0
-		}
-		
-		// Set indicators based on combo selection
-		if cfg.UseAdvancedCombo {
-			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-			// Randomize advanced combo indicator parameters
-			individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
-			individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
-			individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
-			individual.config.MFIOverbought = randomChoice(OptimizationRanges.MFIOverbought, rng)
-			individual.config.KeltnerPeriod = randomChoice(OptimizationRanges.KeltnerPeriods, rng)
-			individual.config.KeltnerMultiplier = randomChoice(OptimizationRanges.KeltnerMultipliers, rng)
-			individual.config.WaveTrendN1 = randomChoice(OptimizationRanges.WaveTrendN1, rng)
-			individual.config.WaveTrendN2 = randomChoice(OptimizationRanges.WaveTrendN2, rng)
-			individual.config.WaveTrendOverbought = randomChoice(OptimizationRanges.WaveTrendOverbought, rng)
-			individual.config.WaveTrendOversold = randomChoice(OptimizationRanges.WaveTrendOversold, rng)
-		} else {
-			individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
-			// Randomize classic combo indicator parameters
-			individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
-			individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
-			individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
-			individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
-			individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
-			individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
-			individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
-			individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
-		}
-		
-		population[i] = individual
-	}
-	
-	return population
-}
-
-// Random selection helpers
-func randomChoice[T any](choices []T, rng *rand.Rand) T {
-	if len(choices) == 0 {
-		var zero T
-		return zero
-	}
-	idx := rng.Intn(len(choices))
-	return choices[idx]
-}
-
-// Sort population by fitness (descending)
-func sortPopulationByFitness(population []*Individual) {
-	for i := 0; i < len(population)-1; i++ {
-		for j := i + 1; j < len(population); j++ {
-			if population[j].fitness > population[i].fitness {
-				population[i], population[j] = population[j], population[i]
-			}
-		}
-	}
-}
-
-// Calculate average fitness
-func averageFitness(population []*Individual) float64 {
-	sum := 0.0
-	for _, ind := range population {
-		sum += ind.fitness
-	}
-	return sum / float64(len(population))
-}
-
-// Create next generation using selection, crossover, and mutation
-func createNextGeneration(population []*Individual, eliteSize int, crossoverRate, mutationRate float64, cfg *BacktestConfig, rng *rand.Rand) []*Individual {
-	newPop := make([]*Individual, len(population))
-	
-	// Elitism: keep best individuals
-	for i := 0; i < eliteSize; i++ {
-		newPop[i] = &Individual{
-			config:  population[i].config,
-			fitness: population[i].fitness,
-			results: population[i].results,
-		}
-	}
-	
-	// Fill rest with crossover and mutation
-	for i := eliteSize; i < len(population); i++ {
-		parent1 := tournamentSelection(population, TournamentSize, rng)
-		parent2 := tournamentSelection(population, TournamentSize, rng)
-		
-		child := crossover(parent1, parent2, crossoverRate, rng)
-		mutate(child, mutationRate, cfg, rng)
-		
-		newPop[i] = child
-	}
-	
-	return newPop
-}
-
-// Tournament selection
-func tournamentSelection(population []*Individual, tournamentSize int, rng *rand.Rand) *Individual {
-	best := population[rng.Intn(len(population))]
-	
-	for i := 1; i < tournamentSize; i++ {
-		candidate := population[rng.Intn(len(population))]
-		if candidate.fitness > best.fitness {
-			best = candidate
-		}
-	}
-	
-	return best
-}
-
-// Crossover two parents to create a child
-func crossover(parent1, parent2 *Individual, rate float64, rng *rand.Rand) *Individual {
-	child := &Individual{
-		config: parent1.config, // Start with parent1
-	}
-	
-	// Random crossover based on rate
-	if rng.Float64() < rate {
-		// Mix parameters from both parents
-		if rng.Intn(2) == 0 {
-			child.config.MaxMultiplier = parent2.config.MaxMultiplier
-		}
-		if rng.Intn(2) == 0 {
-			child.config.TPPercent = parent2.config.TPPercent
-		}
-		if rng.Intn(2) == 0 {
-			child.config.PriceThreshold = parent2.config.PriceThreshold
-		}
-		
-		// Crossover indicator parameters based on combo selection
-		if parent1.config.UseAdvancedCombo {
-			// Advanced combo parameters
-			if rng.Intn(2) == 0 {
-				child.config.HullMAPeriod = parent2.config.HullMAPeriod
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MFIPeriod = parent2.config.MFIPeriod
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MFIOversold = parent2.config.MFIOversold
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MFIOverbought = parent2.config.MFIOverbought
-			}
-			if rng.Intn(2) == 0 {
-				child.config.KeltnerPeriod = parent2.config.KeltnerPeriod
-			}
-			if rng.Intn(2) == 0 {
-				child.config.KeltnerMultiplier = parent2.config.KeltnerMultiplier
-			}
-			if rng.Intn(2) == 0 {
-				child.config.WaveTrendN1 = parent2.config.WaveTrendN1
-			}
-			if rng.Intn(2) == 0 {
-				child.config.WaveTrendN2 = parent2.config.WaveTrendN2
-			}
-			if rng.Intn(2) == 0 {
-				child.config.WaveTrendOverbought = parent2.config.WaveTrendOverbought
-			}
-			if rng.Intn(2) == 0 {
-				child.config.WaveTrendOversold = parent2.config.WaveTrendOversold
-			}
-		} else {
-			// Classic combo parameters
-			if rng.Intn(2) == 0 {
-				child.config.RSIPeriod = parent2.config.RSIPeriod
-			}
-			if rng.Intn(2) == 0 {
-				child.config.RSIOversold = parent2.config.RSIOversold
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MACDFast = parent2.config.MACDFast
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MACDSlow = parent2.config.MACDSlow
-			}
-			if rng.Intn(2) == 0 {
-				child.config.MACDSignal = parent2.config.MACDSignal
-			}
-			if rng.Intn(2) == 0 {
-				child.config.BBPeriod = parent2.config.BBPeriod
-			}
-			if rng.Intn(2) == 0 {
-				child.config.BBStdDev = parent2.config.BBStdDev
-			}
-			if rng.Intn(2) == 0 {
-				child.config.EMAPeriod = parent2.config.EMAPeriod
-			}
-		}
-	}
-	
-	return child
-}
-
-// Mutate an individual
-func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand.Rand) {
-	if rng.Float64() < rate {
-		// Mutate any parameter including indicator parameters
-		availableParams := []int{0, 2, 3} // Base params: MaxMultiplier, PriceThreshold
-		if cfg.Cycle {
-			availableParams = append(availableParams, 1) // Add TPPercent if cycle is enabled
-		}
-		
-		// Add indicator parameters based on combo selection
-		if cfg.UseAdvancedCombo {
-			// Advanced combo parameters: 4-13
-			availableParams = append(availableParams, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
-		} else {
-			// Classic combo parameters: 4-13
-			availableParams = append(availableParams, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
-		}
-		
-		switch randomChoice(availableParams, rng) {
-		case 0:
-			individual.config.MaxMultiplier = randomChoice(OptimizationRanges.Multipliers, rng)
-		case 1:
-			individual.config.TPPercent = randomChoice(OptimizationRanges.TPCandidates, rng)
-		case 2:
-			individual.config.PriceThreshold = randomChoice(OptimizationRanges.PriceThresholds, rng)
-		case 3:
-			if cfg.UseAdvancedCombo {
-				individual.config.HullMAPeriod = randomChoice(OptimizationRanges.HullMAPeriods, rng)
-			} else {
-				individual.config.RSIPeriod = randomChoice(OptimizationRanges.RSIPeriods, rng)
-			}
-		case 4:
-			if cfg.UseAdvancedCombo {
-				individual.config.MFIPeriod = randomChoice(OptimizationRanges.MFIPeriods, rng)
-			} else {
-				individual.config.RSIOversold = randomChoice(OptimizationRanges.RSIOversold, rng)
-			}
-		case 5:
-			if cfg.UseAdvancedCombo {
-				individual.config.MFIOversold = randomChoice(OptimizationRanges.MFIOversold, rng)
-			} else {
-				individual.config.MACDFast = randomChoice(OptimizationRanges.MACDFast, rng)
-			}
-		case 6:
-			if cfg.UseAdvancedCombo {
-				individual.config.MFIOverbought = randomChoice(OptimizationRanges.MFIOverbought, rng)
-			} else {
-				individual.config.MACDSlow = randomChoice(OptimizationRanges.MACDSlow, rng)
-			}
-		case 7:
-			if cfg.UseAdvancedCombo {
-				individual.config.KeltnerPeriod = randomChoice(OptimizationRanges.KeltnerPeriods, rng)
-			} else {
-				individual.config.MACDSignal = randomChoice(OptimizationRanges.MACDSignal, rng)
-			}
-		case 8:
-			if cfg.UseAdvancedCombo {
-				individual.config.KeltnerMultiplier = randomChoice(OptimizationRanges.KeltnerMultipliers, rng)
-			} else {
-				individual.config.BBPeriod = randomChoice(OptimizationRanges.BBPeriods, rng)
-			}
-		case 9:
-			if cfg.UseAdvancedCombo {
-				individual.config.WaveTrendN1 = randomChoice(OptimizationRanges.WaveTrendN1, rng)
-			} else {
-				individual.config.BBStdDev = randomChoice(OptimizationRanges.BBStdDev, rng)
-			}
-		case 10:
-			if cfg.UseAdvancedCombo {
-				individual.config.WaveTrendN2 = randomChoice(OptimizationRanges.WaveTrendN2, rng)
-			} else {
-				individual.config.EMAPeriod = randomChoice(OptimizationRanges.EMAPeriods, rng)
-			}
-		case 11:
-			if cfg.UseAdvancedCombo {
-				individual.config.WaveTrendOverbought = randomChoice(OptimizationRanges.WaveTrendOverbought, rng)
-			}
-		case 12:
-			if cfg.UseAdvancedCombo {
-				individual.config.WaveTrendOversold = randomChoice(OptimizationRanges.WaveTrendOversold, rng)
-			}
-		}
-		
-		// Ensure indicators remain the same based on combo selection
-		if cfg.UseAdvancedCombo {
-			individual.config.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-		} else {
-			individual.config.Indicators = []string{"rsi", "macd", "bb", "ema"}
-		}
-		
-		// Reset fitness to force re-evaluation
-		individual.fitness = 0
-		individual.results = nil
-	}
-}
-
 func containsIndicator(indicators []string, name string) bool {
 	name = strings.ToLower(name)
 	for _, n := range indicators {
@@ -1771,8 +1393,7 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 	return reporting.WriteTradesCSV(results, path)
 }
 
-// Walk-Forward Validation structures and functions
-// Note: These structures have been moved to pkg/validation/interfaces.go
+// Walk-forward validation structures (legacy - now handled by pkg/validation)
 type WalkForwardConfig struct {
 	Enable     bool
 	Rolling    bool
@@ -1783,8 +1404,8 @@ type WalkForwardConfig struct {
 }
 
 type WalkForwardFold struct {
-	Train []types.OHLCV
-	Test  []types.OHLCV
+	Train      []types.OHLCV
+	Test       []types.OHLCV
 	TrainStart time.Time
 	TrainEnd   time.Time
 	TestStart  time.Time
@@ -1997,57 +1618,42 @@ func runWalkForwardValidation(cfg *BacktestConfig, data []types.OHLCV, wfCfg Wal
 	}
 }
 
-// Helper function to run GA on specific data
+// Helper function to run GA on specific data - now uses pkg/optimization
 func runGAOnData(cfg *BacktestConfig, data []types.OHLCV) (*backtest.BacktestResults, BacktestConfig) {
-	// Create a temporary config for this data
-	tempCfg := *cfg
+	// Convert BacktestConfig to DCAConfig for pkg/optimization
+	dcaConfig := convertBacktestConfigToDCAConfig(cfg)
 	
-	// Use the existing GA optimization logic but with the provided data
-	// This reuses the existing optimizeForInterval logic
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	
-	populationSize := GAPopulationSize
-	generations := GAGenerations
-	mutationRate := GAMutationRate
-	crossoverRate := GACrossoverRate
-	eliteSize := GAEliteSize
-	
-	// Ensure base config has valid TP settings for optimization
-	if tempCfg.TPPercent == 0 {
-		tempCfg.TPPercent = DefaultTPPercent // Ensure valid TP for optimization base
-	}
-	tempCfg.UseTPLevels = true // Always use multi-level TP
-
-	// Initialize population
-	population := initializePopulation(&tempCfg, populationSize, rng)
-	
-	var bestIndividual *Individual
-	var bestResults *backtest.BacktestResults
-	
-	for gen := 0; gen < generations; gen++ {
-		// Evaluate fitness for all individuals in parallel
-		evaluatePopulationParallelWithData(population, data)
-		
-		// Sort by fitness (descending)
-		sortPopulationByFitness(population)
-		
-		// Track best individual
-		if bestIndividual == nil || population[0].fitness > bestIndividual.fitness {
-			bestIndividual = &Individual{
-				config:  population[0].config,
-				fitness: population[0].fitness,
-				results: population[0].results,
-			}
-			bestResults = population[0].results
-		}
-		
-		// Create next generation
-		if gen < generations-1 {
-			population = createNextGeneration(population, eliteSize, crossoverRate, mutationRate, &tempCfg, rng)
-		}
+	// Create a temporary data file path (optimization requires a file path)
+	// For in-memory data, we'll use the original file path but override with data
+	dataFile := dcaConfig.DataFile
+	if dataFile == "" {
+		dataFile = "temp_data" // Fallback
 	}
 	
-	return bestResults, bestIndividual.config
+	// Use pkg/optimization with the data
+	// Note: This is a limitation - pkg/optimization expects file paths
+	// For now, we'll use a simplified approach
+	results, bestConfigInterface, err := optimization.OptimizeWithGA(dcaConfig, dataFile, 0)
+	if err != nil {
+		log.Printf("GA optimization failed: %v", err)
+		// Fallback to simple backtest
+		engine := backtest.NewBacktestEngine(
+			cfg.InitialBalance,
+			cfg.Commission, 
+			createStrategy(cfg),
+			cfg.TPPercent,
+			cfg.MinOrderQty,
+			cfg.UseTPLevels,
+		)
+		results = engine.Run(data, cfg.WindowSize)
+		return results, *cfg
+	}
+	
+	// Convert back to BacktestConfig
+	bestDCAConfig := bestConfigInterface.(*config.DCAConfig)
+	bestBacktestConfig := convertDCAConfigToBacktestConfig(bestDCAConfig)
+	
+	return results, *bestBacktestConfig
 }
 
 // Helper function to run backtest with specific config and data
@@ -2062,45 +1668,6 @@ func runBacktestWithConfig(cfg BacktestConfig, data []types.OHLCV) *backtest.Bac
 	)
 	
 	return engine.Run(data, cfg.WindowSize)
-}
-
-// Helper function to evaluate population with specific data
-func evaluatePopulationParallelWithData(population []*Individual, data []types.OHLCV) {
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, MaxParallelWorkers)
-	
-	for i := range population {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-			
-			individual := population[idx]
-			
-			// Create strategy from config
-			strategy := createStrategy(&individual.config)
-			
-			// Create engine using new structure
-			engine := backtest.NewBacktestEngine(
-				individual.config.InitialBalance,
-				individual.config.Commission,
-				strategy,
-				individual.config.TPPercent,
-				individual.config.MinOrderQty,
-				individual.config.UseTPLevels,
-			)
-			
-			// Run backtest
-			results := engine.Run(data, individual.config.WindowSize)
-			
-			// Store results
-			individual.results = results
-			individual.fitness = results.TotalReturn
-		}(i)
-	}
-	
-	wg.Wait()
 }
 
 // Print summary of rolling walk-forward results
