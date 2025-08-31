@@ -1,0 +1,274 @@
+{
+  "name": "Backtest System Refactor Plan",
+  "version": "1.0.0",
+  "last_updated": "2025-08-31",
+  "goals": [
+    "Modularize the backtest system into composable packages",
+    "Create clear extension points for strategies, policies, data sources, metrics, and reporters",
+    "Reduce cmd/backtest/main.go to a thin CLI wrapper",
+    "Improve testability, performance, and observability",
+    "Maintain backward compatibility with current flags and outputs during transition"
+  ],
+  "non_goals": [
+    "Rewrite trading strategies themselves",
+    "Change current output formats (best.json, trades.xlsx) in the short term",
+    "Introduce external dependencies for orchestration (e.g., Kafka)"
+  ],
+  "target_layout": {
+    "internal/backtest/engine": "Core backtest runner (pure logic, no I/O)",
+    "internal/backtest/datasource": "CSV, API, cache, multi-interval discovery",
+    "internal/backtest/strategy": "Strategy wiring + adapters to indicators",
+    "internal/backtest/policy": "Pluggable policies (threshold, TP, sizing, slippage)",
+    "internal/backtest/risk": "Commission, leverage, constraints",
+    "internal/backtest/optimizer": "GA/grid search, parameter spaces, constraints",
+    "internal/backtest/wf": "Walk-forward validation",
+    "internal/backtest/metrics": "Calculators and aggregations (DD, Sharpe, PF, etc.)",
+    "internal/backtest/report": "Console/JSON/Excel/CSV writers",
+    "internal/backtest/results": "Result types and aggregations, serialization",
+    "internal/backtest/config": "Typed config, validation, defaults, migration",
+    "internal/backtest/registry": "Registries + factories for plugins",
+    "internal/backtest/types.go": "Common types (OHLCV, Trade, Order, Cycle, RunOptions)",
+    "cmd/backtest/main.go": "Thin CLI with subcommands (run|optimize|sweep|wf|report)"
+  },
+  "phases": [
+    {
+      "id": 1,
+      "name": "Extract core engine",
+      "objectives": [
+        "Move the backtest loop to a pure engine with no I/O",
+        "Unify position accounting and warmup handling",
+        "Return structured Results instead of printing"
+      ],
+      "tasks": [
+        "Create internal/backtest/engine with Engine, EngineConfig, Run(ctx, EngineConfig, DataProvider, Strategy, ...Policy)",
+        "Move existing loop logic from cmd/backtest/main.go into engine",
+        "Introduce typed events (Entry, Exit, TPFill, Fee) and equity tracking",
+        "Isolate warmup window handling and minimum data requirements",
+        "Ensure Engine has no logging or file writes"
+      ],
+      "deliverables": [
+        "Engine package compiling with unit tests",
+        "Adapter layer in cmd linking flags → EngineConfig"
+      ],
+      "acceptance_criteria": [
+        "Backtests produce identical metrics to baseline",
+        "No direct I/O inside engine",
+        "Engine covered by unit tests for core steps"
+      ],
+      "dependencies": [],
+      "risks": ["Behavioral drift if accounting semantics change"],
+      "effort": "M"
+    },
+    {
+      "id": 2,
+      "name": "Define extension interfaces",
+      "objectives": ["Create stable contracts for extensibility"],
+      "tasks": [
+        "Define DataProvider (Load(symbol, interval, period) → []OHLCV)",
+        "Define Strategy (Analyze(window) → Action, Reason, Meta)",
+        "Define policies: ThresholdPolicy, TakeProfitPolicy, PositionSizingPolicy, SlippageModel, RiskConstraints",
+        "Define Metric interface (Compute(Trades, Equity) → MetricValue)",
+        "Define Reporter interface (Write(Results, Dest))",
+        "Define ParameterSpace for optimizer"
+      ],
+      "deliverables": [
+        "Interfaces with default implementations (current behavior)",
+        "Examples and docs for adding new plugins"
+      ],
+      "acceptance_criteria": [
+        "Engine compiles and runs with default implementations",
+        "Interfaces have clear docs and examples"
+      ],
+      "dependencies": [1],
+      "risks": ["Interface churn if not thought through"],
+      "effort": "M"
+    },
+    {
+      "id": 3,
+      "name": "Config and factories",
+      "objectives": [
+        "Centralize config with validation and defaults",
+        "Create factories for constructing components from config"
+      ],
+      "tasks": [
+        "Move config to internal/backtest/config with typed structs",
+        "Implement defaults + validation with actionable errors",
+        "Add migration that maps current flags/JSON → new config",
+        "Implement factories: NewStrategy, NewPolicies, NewDataProvider, NewReporter"
+      ],
+      "deliverables": ["Config package and factories used by CLI"],
+      "acceptance_criteria": [
+        "Existing flags and configs still work",
+        "Validation errors are clear and actionable"
+      ],
+      "dependencies": [1, 2],
+      "risks": ["Silent behavior changes if defaults differ"],
+      "effort": "M"
+    },
+    {
+      "id": 4,
+      "name": "CLI rework (thin wrapper)",
+      "objectives": ["Make CLI a thin layer over engine and factories"],
+      "tasks": [
+        "Introduce subcommands (run|optimize|sweep|wf|report)",
+        "Map flags → config builder → engine/factories",
+        "Keep current top-level flags working for backward compatibility"
+      ],
+      "deliverables": [
+        "New CLI with subcommands and help text",
+        "Backward-compatible flag handling"
+      ],
+      "acceptance_criteria": [
+        "cmd/backtest/main.go ≤ 300 LoC",
+        "All existing flows still work via compatibility path"
+      ],
+      "dependencies": [1, 2, 3],
+      "risks": ["User confusion during transition if docs are lacking"],
+      "effort": "S"
+    },
+    {
+      "id": 5,
+      "name": "Results and reporting",
+      "objectives": [
+        "Decouple results from presentation",
+        "Enable multiple output formats without engine changes"
+      ],
+      "tasks": [
+        "Define results.Result (equity curve, trades, cycles, pnl, metadata)",
+        "Console, JSON (best.json), Excel (4-sheet), CSV writers",
+        "Add aggregators for multi-interval runs"
+      ],
+      "deliverables": [
+        "Report package with pluggable writers",
+        "Aggregated summaries for -all-intervals"
+      ],
+      "acceptance_criteria": [
+        "Current outputs preserved by default",
+        "Reporters can be extended without touching engine"
+      ],
+      "dependencies": [1, 2],
+      "risks": [],
+      "effort": "M"
+    },
+    {
+      "id": 6,
+      "name": "Optimizer and walk-forward",
+      "objectives": [
+        "Unify optimization and WF under consistent APIs",
+        "Improve reproducibility and metrics reporting"
+      ],
+      "tasks": [
+        "optimizer.Run(ctx, Engine, ParameterSpace, Budget) → BestConfig, Result",
+        "wf.Validate(ctx, Data, SplitConfig, Engine) → WFReport",
+        "Record seeds for reproducibility; expose metrics and traces"
+      ],
+      "deliverables": ["Optimizer and WF packages with examples"],
+      "acceptance_criteria": [
+        "Same/better best results compared to baseline",
+        "WF and optimizer compatible with reporters"
+      ],
+      "dependencies": [1, 2, 3, 5],
+      "risks": ["Search-space explosion; must add budgets and constraints"],
+      "effort": "M/L"
+    },
+    {
+      "id": 7,
+      "name": "Performance improvements",
+      "objectives": ["Speed up multi-interval runs and reduce memory usage"],
+      "tasks": [
+        "Worker pool for -all-intervals with bounded concurrency",
+        "Data cache abstraction (TTL + memory cap); reuse klines across runs",
+        "Incremental indicators and sliding windows",
+        "Optional streaming data provider (chunked CSV/API)",
+        "Context cancellation and progress hooks"
+      ],
+      "deliverables": [
+        "Faster -all-intervals and optimizer runs",
+        "Profiling docs and benchmarks"
+      ],
+      "acceptance_criteria": [
+        "≥30% speedup on -all-intervals vs baseline",
+        "Stable memory profile on long runs"
+      ],
+      "dependencies": [1, 2, 5],
+      "risks": ["Concurrency bugs; add tests and bounds"],
+      "effort": "M"
+    },
+    {
+      "id": 8,
+      "name": "Observability and developer experience",
+      "objectives": ["Add structured logs, progress, and traces for long runs"],
+      "tasks": [
+        "Structured logging with run IDs",
+        "Progress callbacks (percent, ETA, current interval/phase)",
+        "Trace optimizer iterations and WF folds",
+        "Deterministic seeds; stamp run metadata",
+        "Debug levels and dry-run mode"
+      ],
+      "deliverables": ["Logging/tracing utilities and examples"],
+      "acceptance_criteria": [
+        "Operators can track progress and reproduce runs"
+      ],
+      "dependencies": [1, 5, 6],
+      "risks": [],
+      "effort": "S/M"
+    },
+    {
+      "id": 9,
+      "name": "Testing strategy",
+      "objectives": ["Ensure correctness and prevent regressions"],
+      "tasks": [
+        "Unit tests for policies, metrics, engine steps",
+        "Contract tests for Strategy, DataProvider, Reporter",
+        "Golden tests for JSON/Excel outputs",
+        "Scenario datasets (bull/bear/chop) with expectations",
+        "Benchmarks: engine loop, indicators, optimizer"
+      ],
+      "deliverables": ["Automated test suite with CI checks"],
+      "acceptance_criteria": [
+        ">80% coverage on engine/policies",
+        "Golden outputs stable across runs"
+      ],
+      "dependencies": [1, 2, 5],
+      "risks": ["Flaky tests without deterministic seeds"],
+      "effort": "M"
+    }
+  ],
+  "immediate_wins": [
+    "Extract engine and report modules out of cmd/backtest/main.go",
+    "Introduce DataProvider and Reporter interfaces with CSV/console impls",
+    "Add worker pool for -all-intervals",
+    "Move config defaults/validation into internal/backtest/config"
+  ],
+  "extension_points": [
+    "New ThresholdPolicy implementations (ATR, Adaptive, BB, Keltner)",
+    "Custom PositionSizingPolicy (Kelly, volatility targeting)",
+    "Pluggable SlippageModel (percent, orderbook depth)",
+    "Additional Metrics (Calmar, Sortino, turnover, exposure)",
+    "Extra Reporters (HTML/PDF summary)"
+  ],
+  "compatibility": {
+    "strategy": "Maintain current outputs and flags while introducing new modules",
+    "migration": "Map legacy flags to new config; keep JSON/Excel outputs stable",
+    "feature_flags": [
+      "enable_new_engine",
+      "enable_new_reporters",
+      "enable_optimizer_v2"
+    ]
+  },
+  "acceptance_criteria": [
+    "cmd/backtest/main.go ≤ 300 LoC",
+    "Engine has no I/O (pure)",
+    "Green regression on current use-cases",
+    "-all-intervals faster with concurrency and caching",
+    "Clear developer guide: how to add a policy/metric/reporter"
+  ],
+  "milestones": [
+    { "name": "Engine extracted", "phase": 1 },
+    { "name": "Interfaces published", "phase": 2 },
+    { "name": "Config + factories", "phase": 3 },
+    { "name": "Thin CLI", "phase": 4 },
+    { "name": "Reporters + results", "phase": 5 },
+    { "name": "Optimizer + WF", "phase": 6 }
+  ]
+}

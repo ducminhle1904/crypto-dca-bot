@@ -3,8 +3,14 @@
     "symbol": "SUIUSDT",
     "category": "linear",
     "base_amount": 40,
-    "max_multiplier": 2.5,
+    "max_multiplier": 1.8,
     "price_threshold": 0.01,
+    "threshold_mode": "atr",
+    "atr_multiplier": 1.2,
+    "atr_period": 14,
+    "min_threshold": 0.005,
+    "max_threshold": 0.08,
+    "level_increment": 0.008,
     "interval": "5m",
     "window_size": 100,
     "tp_percent": 0.035,
@@ -22,13 +28,13 @@
       "overbought": 85
     },
     "keltner_channels": {
-      "period": 40,
-      "multiplier": 3
+      "period": 25,
+      "multiplier": 2.2
     },
     "wavetrend": {
-      "n1": 8,
-      "n2": 18,
-      "overbought": 50,
+      "n1": 18,
+      "n2": 28,
+      "overbought": 80,
       "oversold": -80
     }
   },
