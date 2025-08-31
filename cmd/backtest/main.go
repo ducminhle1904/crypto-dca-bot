@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +20,9 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/reporting"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 	"github.com/joho/godotenv"
-	"github.com/xuri/excelize/v2"
 )
 
 // convertDCAConfigToBacktestConfig converts the new DCAConfig to the old BacktestConfig for backward compatibility
@@ -67,43 +64,6 @@ func convertDCAConfigToBacktestConfig(dcaCfg *config.DCAConfig) *BacktestConfig 
 		MinOrderQty:    dcaCfg.MinOrderQty,
 	}
 }
-
-// CSVColumnMapping defines the column positions for different CSV formats
-type CSVColumnMapping struct {
-	TimestampCol int
-	OpenCol      int
-	HighCol      int
-	LowCol       int
-	CloseCol     int
-	VolumeCol    int
-	MinColumns   int
-	DateFormat   string
-}
-
-// Predefined CSV formats
-var (
-	DefaultCSVFormat = CSVColumnMapping{
-		TimestampCol: 0,
-		OpenCol:      1,
-		HighCol:      2,
-		LowCol:       3,
-		CloseCol:     4,
-		VolumeCol:    5,
-		MinColumns:   6,
-		DateFormat:   "2006-01-02 15:04:05",
-	}
-	
-	BybitCSVFormat = CSVColumnMapping{
-		TimestampCol: 0,
-		OpenCol:      1,
-		HighCol:      2,
-		LowCol:       3,
-		CloseCol:     4,
-		VolumeCol:    5,
-		MinColumns:   6,
-		DateFormat:   "2006-01-02 15:04:05",
-	}
-)
 
 // Constants for default configuration values
 const (
@@ -419,22 +379,6 @@ type WaveTrendConfig struct {
 	Oversold   float64 `json:"oversold"`
 }
 
-// TP level structure for multiple take profit system
-type TPLevel struct {
-	Level       int        `json:"level"`        // 1-5
-	Percent     float64    `json:"percent"`      // TP percentage (e.g., 0.02 for 2%)
-	Quantity    float64    `json:"quantity"`     // Always 0.20 (20%)
-	Hit         bool       `json:"hit"`          // Whether this level was triggered
-	HitTime     *time.Time `json:"hit_time"`     // When this level was hit
-	HitPrice    float64    `json:"hit_price"`    // Price when hit
-	PnL         float64    `json:"pnl"`          // PnL for this level
-}
-
-// convertIntervalToMinutes converts interval strings like "5m", "1h", "4h" to minute numbers
-// convertIntervalToMinutes moved to pkg/data package
-
-// findDataFile moved to pkg/data package
-
 func main() {
 	var (
 		configFile     = flag.String("config", "", "Path to configuration file")
@@ -700,20 +644,23 @@ func main() {
 		}
 		
 		fmt.Println("\nBest Results:")
-		outputConsole(bestResults)
+		// Use the new context-aware output with the interval information
+		reporting.OutputConsoleWithContext(bestResults, bestConfig.Symbol, intervalStr)
 		return
 	}
 	
 	// Run single backtest
 	results := runBacktest(convertDCAConfigToBacktestConfig(cfg), selectedPeriod)
 	
-	// Output results to console
-	outputConsole(results)
+	// Output results to console with context
+	intervalStr := guessIntervalFromPath(cfg.DataFile)
+	if intervalStr == "" { intervalStr = "unknown" }
+	// Use the new context-aware output that includes the interval information
+	// that was removed from runBacktestWithData
+	reporting.OutputConsoleWithContext(results, cfg.Symbol, intervalStr)
 	
 	if !*consoleOnly {
-		// Save trades to standard path
-		intervalStr := guessIntervalFromPath(cfg.DataFile)
-		if intervalStr == "" { intervalStr = "unknown" }
+		// Save trades to standard path (reuse intervalStr from above)
 		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
 		stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
@@ -807,15 +754,9 @@ func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
 	// Update config with fetched minimum order quantity
 	cfg.MinOrderQty = minQty
 	log.Printf("✅ Fetched minimum order quantity for %s: %.6f %s", cfg.Symbol, minQty, cfg.Symbol)
-	
+
 	return nil
 }
-
-// Note: loadConfig moved to pkg/config package
-
-// Note: loadFromNestedConfig moved to pkg/config package
-
-// Note: validateConfig moved to pkg/config package
 
 func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool, wfConfig WalkForwardConfig) {
 	sym := strings.ToUpper(cfg.Symbol)
@@ -1035,7 +976,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 
 	// Optionally print detailed results for best interval
 	fmt.Println("\nBest interval detailed results:")
-	outputConsole(best.Results)
+	reporting.OutputConsole(best.Results)
 	
 	if !consoleOnly {
 		// Write standard outputs under results/<SYMBOL>_<INTERVAL>_mode/
@@ -1102,8 +1043,6 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 	}
 
 	// Config summary
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Printf("Run: %s @ %s\n", strings.ToUpper(cfg.Symbol), interval)
 	fmt.Printf("Data: %d bars (%s → %s)\n",
 		len(data),
 		data[0].Timestamp.Format("2006-01-02 15:04"),
@@ -1123,8 +1062,6 @@ func runBacktestWithData(cfg *BacktestConfig, data []types.OHLCV) *backtest.Back
 		fmt.Printf("DCA Strategy: Hold mode (no TP), PriceThreshold=%.2f%%\n", 
 			cfg.PriceThreshold*100)
 	}
-	
-	fmt.Println(strings.Repeat("-", 60))
 
 	// Create strategy with configured indicators
 	strat := createStrategy(cfg)
@@ -1254,47 +1191,6 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 	}
 
 	return dca
-}
-
-// Note: Data loading functions moved to pkg/data package
-
-func outputConsole(results *backtest.BacktestResults) {
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("📊 BACKTEST RESULTS")
-	fmt.Println(strings.Repeat("=", 50))
-	
-	fmt.Printf("💰 Initial Balance:    $%.2f\n", results.StartBalance)
-	fmt.Printf("💰 Final Balance:      $%.2f\n", results.EndBalance)
-	fmt.Printf("📈 Total Return:       %.2f%%\n", results.TotalReturn*100)
-	fmt.Printf("📈 Annualized Return:  %.2f%%\n", results.AnnualizedReturn*100)
-	fmt.Printf("📉 Max Drawdown:       %.2f%%\n", results.MaxDrawdown*100)
-	fmt.Printf("📉 Max Intra-Cycle DD: %.2f%%\n", results.MaxIntraCycleDD*100)
-	fmt.Printf("📊 Sharpe Ratio:       %.2f (Ann: %.2f)\n", results.SharpeRatio, results.AnnualizedSharpe)
-	fmt.Printf("📊 Sortino Ratio:      %.2f\n", results.SortinoRatio)
-	fmt.Printf("📊 Calmar Ratio:       %.2f\n", results.CalmarRatio)
-	fmt.Printf("💹 Profit Factor:      %.2f\n", results.ProfitFactor)
-	fmt.Printf("🔄 Total Trades:       %d\n", results.TotalTrades)
-	
-	// Avoid division by zero
-	winRate := 0.0
-	loseRate := 0.0
-	if results.TotalTrades > 0 {
-		winRate = float64(results.WinningTrades) / float64(results.TotalTrades) * 100
-		loseRate = float64(results.LosingTrades) / float64(results.TotalTrades) * 100
-	}
-	
-	fmt.Printf("✅ Winning Trades:     %d (%.1f%%)\n", results.WinningTrades, winRate)
-	fmt.Printf("❌ Losing Trades:      %d (%.1f%%)\n", results.LosingTrades, loseRate)
-	fmt.Printf("🎯 Max Exposure:       %.1f%%\n", results.MaxExposure*100)
-	fmt.Printf("🎯 Avg Exposure:       %.1f%%\n", results.AvgExposure*100)
-	fmt.Printf("🎯 Max Cycle Exposure: %.1f%%\n", results.MaxCycleExposure*100)
-	fmt.Printf("🎯 Avg Cycle Exposure: %.1f%%\n", results.AvgCycleExposure*100)
-	fmt.Printf("🔄 Total Turnover:     %.2fx\n", results.TotalTurnover)
-	
-	// Note: Combo information is already displayed at the start of the backtest
-	// in the runBacktestWithData function
-	
-	fmt.Println("\n" + strings.Repeat("=", 50))
 }
 
 // evaluatePopulationParallel evaluates fitness for all individuals in parallel
@@ -1743,8 +1639,6 @@ func mutate(individual *Individual, rate float64, cfg *BacktestConfig, rng *rand
 	}
 }
 
-// Removed global rng - now passed as parameter to avoid race conditions
-
 func containsIndicator(indicators []string, name string) bool {
 	name = strings.ToLower(name)
 	for _, n := range indicators {
@@ -1761,1527 +1655,120 @@ func getComboTypeName(useAdvancedCombo bool) string {
 	return "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
 }
 
+// printBestConfigJSON - Note: This function has been moved to pkg/reporting/json.go
 func printBestConfigJSON(cfg BacktestConfig) {
-	// Convert to nested format for consistent output
+	// Convert BacktestConfig to nested format using the main.go conversion logic
+	// TODO: This should be refactored to avoid duplicated conversion logic
 	nestedCfg := convertToNestedConfig(cfg)
-	data, _ := json.MarshalIndent(nestedCfg, "", "  ")
-	fmt.Println(string(data))
+	reporting.PrintBestConfigJSON(nestedCfg)
 }
 
 // convertToNestedConfig converts a BacktestConfig to the new nested format
 func convertToNestedConfig(cfg BacktestConfig) NestedConfig {
 	// Extract interval from data file path (e.g., "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m")
-	interval := extractIntervalFromPath(cfg.DataFile)
+	interval := reporting.ExtractIntervalFromPath(cfg.DataFile)
 	if interval == "" {
 		interval = "5m" // Default fallback
 	}
 	
-			// Only include the combo that was actually used
-		strategyConfig := StrategyConfig{
-			Symbol:         cfg.Symbol,
-			BaseAmount:     cfg.BaseAmount,
-			MaxMultiplier:  cfg.MaxMultiplier,
-			PriceThreshold: cfg.PriceThreshold,
-			Interval:       interval,
-			WindowSize:     cfg.WindowSize,
-			TPPercent:      cfg.TPPercent,
-			UseTPLevels:    true, // Always use multi-level TP
-			Cycle:          cfg.Cycle,
-			Indicators:     cfg.Indicators,
-			UseAdvancedCombo:    cfg.UseAdvancedCombo,
-		}
-		
-		// Add combo-specific configurations based on what was used
-		if cfg.UseAdvancedCombo {
-			// Only include advanced combo parameters
-			strategyConfig.HullMA = &HullMAConfig{
-				Period: cfg.HullMAPeriod,
-			}
-			strategyConfig.MFI = &MFIConfig{
-				Period:     cfg.MFIPeriod,
-				Oversold:   cfg.MFIOversold,
-				Overbought: cfg.MFIOverbought,
-			}
-			strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
-				Period:     cfg.KeltnerPeriod,
-				Multiplier: cfg.KeltnerMultiplier,
-			}
-			strategyConfig.WaveTrend = &WaveTrendConfig{
-				N1:          cfg.WaveTrendN1,
-				N2:          cfg.WaveTrendN2,
-				Overbought:  cfg.WaveTrendOverbought,
-				Oversold:    cfg.WaveTrendOversold,
-			}
-		} else {
-			// Only include classic combo parameters
-			strategyConfig.RSI = &RSIConfig{
-				Period:     cfg.RSIPeriod,
-				Oversold:   cfg.RSIOversold,
-				Overbought: cfg.RSIOverbought,
-			}
-			strategyConfig.MACD = &MACDConfig{
-				FastPeriod:   cfg.MACDFast,
-				SlowPeriod:   cfg.MACDSlow,
-				SignalPeriod: cfg.MACDSignal,
-			}
-			strategyConfig.BollingerBands = &BollingerBandsConfig{
-				Period: cfg.BBPeriod,
-				StdDev: cfg.BBStdDev,
-			}
-			strategyConfig.EMA = &EMAConfig{
-				Period: cfg.EMAPeriod,
-			}
-		}
-		
-				return NestedConfig{
-			Strategy:         strategyConfig,
-			Exchange: ExchangeConfig{
-				Name: "bybit",
-				Bybit: BybitConfig{
-					APIKey:    "${BYBIT_API_KEY}",
-					APISecret: "${BYBIT_API_SECRET}",
-					Testnet:   false,
-					Demo:      true,
-				},
-			},
-			Risk: RiskConfig{
-				InitialBalance: cfg.InitialBalance,
-				Commission:     cfg.Commission,
-				MinOrderQty:    cfg.MinOrderQty,
-			},
-			Notifications: NotificationsConfig{
-				Enabled:       false,
-				TelegramToken: "${TELEGRAM_TOKEN}",
-				TelegramChat:  "${TELEGRAM_CHAT_ID}",
-			},
-		}
-}
-
-// extractIntervalFromPath extracts interval from data file path
-// Example: "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m"
-func extractIntervalFromPath(dataPath string) string {
-	if dataPath == "" {
-		return ""
+	// Only include the combo that was actually used
+	strategyConfig := StrategyConfig{
+		Symbol:         cfg.Symbol,
+		BaseAmount:     cfg.BaseAmount,
+		MaxMultiplier:  cfg.MaxMultiplier,
+		PriceThreshold: cfg.PriceThreshold,
+		Interval:       interval,
+		WindowSize:     cfg.WindowSize,
+		TPPercent:      cfg.TPPercent,
+		UseTPLevels:    true, // Always use multi-level TP
+		Cycle:          cfg.Cycle,
+		Indicators:     cfg.Indicators,
+		UseAdvancedCombo:    cfg.UseAdvancedCombo,
 	}
 	
-	// Normalize path separators
-	dataPath = filepath.ToSlash(dataPath)
-	parts := strings.Split(dataPath, "/")
-	
-	// Look for interval pattern (number followed by m,h,d)
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		if len(part) >= 2 {
-			// Check if it matches interval pattern (e.g., "5m", "1h", "4h", "1d")
-			lastChar := part[len(part)-1]
-			if lastChar == 'm' || lastChar == 'h' || lastChar == 'd' {
-				// Check if the rest is numeric
-				numPart := part[:len(part)-1]
-				if _, err := strconv.Atoi(numPart); err == nil {
-					return part
-				}
-			}
+	// Add combo-specific configurations based on what was used
+	if cfg.UseAdvancedCombo {
+		// Only include advanced combo parameters
+		strategyConfig.HullMA = &HullMAConfig{
+			Period: cfg.HullMAPeriod,
+		}
+		strategyConfig.MFI = &MFIConfig{
+			Period:     cfg.MFIPeriod,
+			Oversold:   cfg.MFIOversold,
+			Overbought: cfg.MFIOverbought,
+		}
+		strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
+			Period:     cfg.KeltnerPeriod,
+			Multiplier: cfg.KeltnerMultiplier,
+		}
+		strategyConfig.WaveTrend = &WaveTrendConfig{
+			N1:          cfg.WaveTrendN1,
+			N2:          cfg.WaveTrendN2,
+			Overbought:  cfg.WaveTrendOverbought,
+			Oversold:    cfg.WaveTrendOversold,
+		}
+	} else {
+		// Only include classic combo parameters
+		strategyConfig.RSI = &RSIConfig{
+			Period:     cfg.RSIPeriod,
+			Oversold:   cfg.RSIOversold,
+			Overbought: cfg.RSIOverbought,
+		}
+		strategyConfig.MACD = &MACDConfig{
+			FastPeriod:   cfg.MACDFast,
+			SlowPeriod:   cfg.MACDSlow,
+			SignalPeriod: cfg.MACDSignal,
+		}
+		strategyConfig.BollingerBands = &BollingerBandsConfig{
+			Period: cfg.BBPeriod,
+			StdDev: cfg.BBStdDev,
+		}
+		strategyConfig.EMA = &EMAConfig{
+			Period: cfg.EMAPeriod,
 		}
 	}
 	
-	return ""
+	return NestedConfig{
+		Strategy:         strategyConfig,
+		Exchange: ExchangeConfig{
+			Name: "bybit",
+			Bybit: BybitConfig{
+				APIKey:    "${BYBIT_API_KEY}",
+				APISecret: "${BYBIT_API_SECRET}",
+				Testnet:   false,
+				Demo:      true,
+			},
+		},
+		Risk: RiskConfig{
+			InitialBalance: cfg.InitialBalance,
+			Commission:     cfg.Commission,
+			MinOrderQty:    cfg.MinOrderQty,
+		},
+		Notifications: NotificationsConfig{
+			Enabled:       false,
+			TelegramToken: "${TELEGRAM_TOKEN}",
+			TelegramChat:  "${TELEGRAM_CHAT_ID}",
+		},
+	}
 }
 
+// writeBestConfigJSON - Note: This function has been moved to pkg/reporting/json.go
 func writeBestConfigJSON(cfg BacktestConfig, path string) error {
-	// Convert to nested format
+	// Convert BacktestConfig to nested format using the main.go conversion logic
+	// TODO: This should be refactored to avoid duplicated conversion logic
 	nestedCfg := convertToNestedConfig(cfg)
-	
-	data, err := json.MarshalIndent(nestedCfg, "", "  ")
-	if err != nil { return err }
-	// ensure directory exists
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil { return err }
-	}
-	return os.WriteFile(path, data, 0644)
+	return reporting.WriteBestConfigJSON(nestedCfg, path)
 }
 
+// writeTradesCSV - Note: This function has been moved to pkg/reporting/csv.go
 func writeTradesCSV(results *backtest.BacktestResults, path string) error {
-	// ensure directory exists
-	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil { return err }
-	}
-
-	// If the user requests an Excel file, write two tabs: Trades and Cycles
+	// If the user requests an Excel file, delegate to Excel writer
 	if strings.HasSuffix(strings.ToLower(path), ".xlsx") {
-		return writeTradesXLSX(results, path)
+		return reporting.WriteTradesXLSX(results, path)
 	}
-
-	// CSV path: write enhanced trades with detailed analysis
-	f, err := os.Create(path)
-	if err != nil { return err }
-	defer f.Close()
-
-	w := csv.NewWriter(f)
-	defer w.Flush()
-
-	// Enhanced headers with trade performance and strategy context
-	if err := w.Write([]string{
-		"Cycle",
-		"Entry_Time",
-		"Exit_Time", 
-		"Entry_Price",
-		"Price_Drop_%",
-		"Quantity_USDT",
-		"Trade_PnL_$",
-		"Win_Loss",
-	}); err != nil { return err }
-
-	// Track cycle start prices for price drop calculation
-	cycleData := make(map[int]float64) // cycle -> start price
 	
-	// Pre-process to find cycle start prices
-	for _, t := range results.Trades {
-		if _, exists := cycleData[t.Cycle]; !exists {
-			cycleData[t.Cycle] = t.EntryPrice
-		}
-	}
-
-	// running aggregates for summary
-	var cumQty float64
-	var cumCost float64
-	var totalPnL float64
-
-	for _, t := range results.Trades {
-		// Basic calculations
-		netCost := t.EntryPrice * t.Quantity
-		grossCost := netCost + t.Commission
-		cumQty += t.Quantity
-		cumCost += grossCost
-		totalPnL += t.PnL
-
-		// Trade performance calculations
-		winLoss := "W"
-		if t.PnL < 0 {
-			winLoss = "L"
-		}
-		
-		// Strategy context calculations
-		cycleStart := cycleData[t.Cycle]
-		var priceDropPct float64
-		if t.EntryTime.Equal(t.ExitTime) {
-			// For TP exits (synthetic trades), show profit relative to average entry
-			if t.EntryPrice > 0 {
-				priceDropPct = ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
-			}
-		} else {
-			// For DCA entries, show drop from cycle start
-			priceDropPct = ((cycleStart - t.EntryPrice) / cycleStart) * 100
-		}
-		
-		// Build enhanced row with proper formatting (rounded up values)
-		row := []string{
-			strconv.Itoa(t.Cycle),
-			t.EntryTime.Format("2006-01-02 15:04:05"),
-			t.ExitTime.Format("2006-01-02 15:04:05"),
-			fmt.Sprintf("%.8f", t.EntryPrice),
-			fmt.Sprintf("%.0f%%", priceDropPct),        // Rounded percentage with % sign
-			fmt.Sprintf("$%.0f", math.Ceil(grossCost)), // Rounded up currency
-			fmt.Sprintf("$%.0f", math.Ceil(t.PnL)),     // Rounded up currency
-			winLoss,
-		}
-		if err := w.Write(row); err != nil { return err }
-	}
-
-	// Enhanced summary row with additional metrics
-	avgTradeReturn := 0.0
-	if len(results.Trades) > 0 {
-		totalReturn := 0.0
-		for _, t := range results.Trades {
-			totalReturn += ((t.ExitPrice - t.EntryPrice) / t.EntryPrice) * 100
-		}
-		avgTradeReturn = totalReturn / float64(len(results.Trades))
-	}
-	
-	summary := fmt.Sprintf("SUMMARY: total_pnl=$%.0f; total_capital=$%.0f; avg_trade_return=%.2f%%; total_trades=%d", 
-		math.Ceil(totalPnL), math.Ceil(cumCost), avgTradeReturn, len(results.Trades))
-	
-	// Create summary row with empty fields except summary
-	summaryRow := make([]string, 8) // Match header count
-	summaryRow[7] = summary // Last column
-	if err := w.Write(summaryRow); err != nil { return err }
-
-	return nil
-}
-
-// writeTradeRow helper function to write a trade row with appropriate styling
-func writeTradeRow(fx *excelize.File, sheet string, row int, values []interface{}, baseStyle, currencyStyle, percentStyle int) {
-	for i, v := range values {
-		cell, _ := excelize.CoordinatesToCellName(i+1, row)
-		fx.SetCellValue(sheet, cell, v)
-		
-		// Apply conditional styling based on column
-		if i == 7 || i == 9 { // PnL and Cumulative Cost columns
-			fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-		} else if i == 8 { // Price Change % column
-			fx.SetCellStyle(sheet, cell, cell, percentStyle)
-		} else {
-			fx.SetCellStyle(sheet, cell, cell, baseStyle)
-		}
-	}
-}
-
-// Enhanced function for the new column layout with balance tracking and color coding
-func writeEnhancedTradeRow(fx *excelize.File, sheet string, row int, values []interface{}, baseStyle, currencyStyle, percentStyle int, isEntry bool, redPercentStyle, greenPercentStyle int) {
-	for i, v := range values {
-		cell, _ := excelize.CoordinatesToCellName(i+1, row)
-		fx.SetCellValue(sheet, cell, v)
-		
-		// Apply specific formatting based on enhanced column layout
-		if i == 4 { // Price column
-			fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-		} else if i == 6 || i == 7 { // Commission and PnL columns
-			fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-		} else if i == 8 { // Price Change % column - color coded
-			if isEntry {
-				fx.SetCellStyle(sheet, cell, cell, redPercentStyle) // Red for DCA entries
-			} else {
-				fx.SetCellStyle(sheet, cell, cell, greenPercentStyle) // Green for TP exits
-			}
-		} else if i == 9 || i == 10 { // Running Balance and Balance Change columns
-			fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-		} else {
-			fx.SetCellStyle(sheet, cell, cell, baseStyle)
-		}
-	}
-}
-
-// writeDetailedAnalysis creates a comprehensive and enhanced analysis sheet
-func writeDetailedAnalysis(fx *excelize.File, sheet string, results *backtest.BacktestResults, headerStyle, currencyStyle, percentStyle int) {
-	// Set column widths for better readability
-	fx.SetColWidth(sheet, "A", "A", 25)  // Metric
-	fx.SetColWidth(sheet, "B", "B", 18)  // Value
-	fx.SetColWidth(sheet, "C", "C", 35)  // Description/Analysis
-	fx.SetColWidth(sheet, "D", "D", 15)  // Additional Data
-	fx.SetColWidth(sheet, "E", "E", 20)  // Insights
-	
-	// Create enhanced styles
-	titleStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 18, Color: "FFFFFF"},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"1F4E79"}, Pattern: 1},
-		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
-		Border: []excelize.Border{
-			{Type: "left", Color: "000000", Style: 2},
-			{Type: "right", Color: "000000", Style: 2},
-			{Type: "top", Color: "000000", Style: 2},
-			{Type: "bottom", Color: "000000", Style: 2},
-		},
-	})
-	
-	sectionStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 14, Color: "FFFFFF"},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"4472C4"}, Pattern: 1},
-		Alignment: &excelize.Alignment{Horizontal: "left", Vertical: "center"},
-		Border: []excelize.Border{
-			{Type: "left", Color: "000000", Style: 1},
-			{Type: "right", Color: "000000", Style: 1},
-			{Type: "top", Color: "000000", Style: 1},
-			{Type: "bottom", Color: "000000", Style: 1},
-		},
-	})
-	
-	insightStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Italic: true, Size: 10, Color: "2F4F4F"},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"F0F8FF"}, Pattern: 1},
-	})
-	
-	// Main title
-	fx.MergeCell(sheet, "A1:E1", "")
-	fx.SetCellValue(sheet, "A1", "🚀 COMPREHENSIVE DCA STRATEGY ANALYSIS")
-	fx.SetCellStyle(sheet, "A1", "A1", titleStyle)
-	fx.SetRowHeight(sheet, 1, 30)
-	
-	row := 3
-	
-	// Calculate comprehensive metrics
-	totalPnL := results.EndBalance - results.StartBalance
-	totalCost := 0.0
-	totalTPHits := 0
-	totalDCAEntries := 0
-	avgCycleDuration := 0.0
-	longestCycle := 0.0
-	shortestCycle := 999999.0
-	
-	// Calculate win/loss from TP hits (same logic as console)
-	winTrades := 0
-	totalTrades := 0
-	for _, c := range results.Cycles {
-		for _, pe := range c.PartialExits {
-			totalTrades++
-			if pe.PnL > 0 {
-				winTrades++
-			}
-		}
-	}
-	
-	// Calculate detailed cycle metrics
-	for _, t := range results.Trades {
-		if !t.EntryTime.Equal(t.ExitTime) {
-			totalCost += t.EntryPrice*t.Quantity + t.Commission
-			totalDCAEntries++
-		}
-	}
-	
-	for _, c := range results.Cycles {
-		totalTPHits += len(c.PartialExits)
-		duration := c.EndTime.Sub(c.StartTime).Hours()
-		avgCycleDuration += duration
-		if duration > longestCycle {
-			longestCycle = duration
-		}
-		if duration < shortestCycle {
-			shortestCycle = duration
-		}
-	}
-	
-	if len(results.Cycles) > 0 {
-		avgCycleDuration /= float64(len(results.Cycles))
-	}
-	if shortestCycle == 999999.0 {
-		shortestCycle = 0
-	}
-	
-	// 📊 EXECUTIVE SUMMARY
-	fx.MergeCell(sheet, fmt.Sprintf("A%d:E%d", row, row), "")
-	fx.SetCellValue(sheet, fmt.Sprintf("A%d", row), "📊 EXECUTIVE SUMMARY")
-	fx.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), sectionStyle)
-	row += 2
-	
-	winRate := 0.0
-	if totalTrades > 0 {
-		winRate = float64(winTrades) / float64(totalTrades) * 100
-	}
-	
-	roi := 0.0
-	if totalCost > 0 {
-		roi = (totalPnL / totalCost) * 100
-	}
-	
-	executiveSummary := [][]interface{}{
-		{"🎯 Strategy Performance", fmt.Sprintf("%.1f%% Win Rate", winRate), "Excellent performance with consistent profits", "", "✅ Strong strategy"},
-		{"💰 Financial Results", fmt.Sprintf("$%.0f PnL (%.1f%% ROI)", totalPnL, roi), "Total profit from strategy execution", "", "💡 Capital efficient"},
-		{"⏱️ Time Efficiency", fmt.Sprintf("%.1f hours avg cycle", avgCycleDuration), "Average time to complete each DCA cycle", "", "⚡ Quick turnaround"},
-		{"🔄 Cycle Completion", fmt.Sprintf("%d/%d cycles (%.1f%%)", results.CompletedCycles, len(results.Cycles), float64(results.CompletedCycles)/float64(len(results.Cycles))*100), "Percentage of cycles that hit all TP levels", "", "🎯 High completion"},
-	}
-	
-	for _, summary := range executiveSummary {
-		for i, v := range summary {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			if i == 1 { // Value column
-				fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-			} else if i == 4 { // Insight column
-				fx.SetCellStyle(sheet, cell, cell, insightStyle)
-			}
-		}
-		row++
-	}
-	
-	row += 2
-	
-	// 🎯 DETAILED PERFORMANCE METRICS
-	fx.MergeCell(sheet, fmt.Sprintf("A%d:E%d", row, row), "")
-	fx.SetCellValue(sheet, fmt.Sprintf("A%d", row), "🎯 DETAILED PERFORMANCE METRICS")
-	fx.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), sectionStyle)
-	row += 2
-	
-	performanceMetrics := [][]interface{}{
-		{"Total Return", fmt.Sprintf("%.2f%%", results.TotalReturn*100), "Overall strategy performance vs initial capital", "", ""},
-		{"Profit Factor", fmt.Sprintf("%.2f", results.ProfitFactor), "Ratio of gross profits to gross losses", "", getProfitFactorInsight(results.ProfitFactor)},
-		{"Sharpe Ratio", fmt.Sprintf("%.2f", results.SharpeRatio), "Risk-adjusted return measurement", "", getSharpeInsight(results.SharpeRatio)},
-		{"Max Drawdown", fmt.Sprintf("%.2f%%", results.MaxDrawdown*100), "Largest peak-to-trough decline", "", getDrawdownInsight(results.MaxDrawdown*100)},
-		{"Capital Efficiency", fmt.Sprintf("%.1f%%", (totalCost/results.StartBalance)*100), "Percentage of available capital deployed", "", getCapitalEfficiencyInsight((totalCost/results.StartBalance)*100)},
-		{"Average Trade Return", fmt.Sprintf("%.2f%%", totalPnL/float64(totalTrades)), "Average profit per TP level hit", "", ""},
-	}
-	
-	for _, metric := range performanceMetrics {
-		for i, v := range metric {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			if i == 1 && v != "" { // Value column
-				if strings.Contains(v.(string), "$") {
-					fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-				} else if strings.Contains(v.(string), "%") {
-					fx.SetCellStyle(sheet, cell, cell, percentStyle)
-				}
-			} else if i == 4 && v != "" { // Insight column
-				fx.SetCellStyle(sheet, cell, cell, insightStyle)
-			}
-		}
-		row++
-	}
-	
-	row += 2
-	
-	// 🔄 CYCLE ANALYSIS
-	fx.MergeCell(sheet, fmt.Sprintf("A%d:E%d", row, row), "")
-	fx.SetCellValue(sheet, fmt.Sprintf("A%d", row), "🔄 COMPREHENSIVE CYCLE ANALYSIS")
-	fx.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), sectionStyle)
-	row += 2
-	
-	cycleMetrics := [][]interface{}{
-		{"Total Cycles", fmt.Sprintf("%d", len(results.Cycles)), "Number of DCA cycles initiated", "", ""},
-		{"Completed Cycles", fmt.Sprintf("%d (%.1f%%)", results.CompletedCycles, float64(results.CompletedCycles)/float64(len(results.Cycles))*100), "Cycles that hit all 5 TP levels", "", getCycleCompletionInsight(float64(results.CompletedCycles)/float64(len(results.Cycles))*100)},
-		{"Total DCA Entries", fmt.Sprintf("%d", totalDCAEntries), "Number of buy orders executed", "", ""},
-		{"Total TP Hits", fmt.Sprintf("%d", totalTPHits), "Number of profitable sell orders", "", ""},
-		{"Avg Cycle Duration", fmt.Sprintf("%.1f hours", avgCycleDuration), "Average time from first DCA to last TP", "", getCycleDurationInsight(avgCycleDuration)},
-		{"Longest Cycle", fmt.Sprintf("%.1f hours", longestCycle), "Maximum time for cycle completion", "", ""},
-		{"Shortest Cycle", fmt.Sprintf("%.1f hours", shortestCycle), "Minimum time for cycle completion", "", ""},
-		{"DCA Entries per Cycle", fmt.Sprintf("%.1f", float64(totalDCAEntries)/float64(len(results.Cycles))), "Average number of DCA entries per cycle", "", getDCAEfficiencyInsight(float64(totalDCAEntries)/float64(len(results.Cycles)))},
-	}
-	
-	for _, metric := range cycleMetrics {
-		for i, v := range metric {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			if i == 4 && v != "" { // Insight column
-				fx.SetCellStyle(sheet, cell, cell, insightStyle)
-			}
-		}
-		row++
-	}
-	
-	row += 2
-	
-	// 🎯 TP LEVEL PERFORMANCE ANALYSIS
-	fx.MergeCell(sheet, fmt.Sprintf("A%d:E%d", row, row), "")
-	fx.SetCellValue(sheet, fmt.Sprintf("A%d", row), "🎯 TP LEVEL PERFORMANCE ANALYSIS")
-	fx.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), sectionStyle)
-	row += 2
-	
-	// Headers for TP analysis
-	tpHeaders := []string{"TP Level", "Hit Count", "Success Rate", "Avg PnL", "Total PnL"}
-	for i, h := range tpHeaders {
-		cell, _ := excelize.CoordinatesToCellName(i+1, row)
-		fx.SetCellValue(sheet, cell, h)
-		fx.SetCellStyle(sheet, cell, cell, headerStyle)
-	}
-	row++
-	
-	// Calculate TP level statistics
-	tpStats := make(map[int]struct {
-		count    int
-		totalPnL float64
-		totalGain float64
-	})
-	
-	for _, c := range results.Cycles {
-		for _, pe := range c.PartialExits {
-			if _, exists := tpStats[pe.TPLevel]; !exists {
-				tpStats[pe.TPLevel] = struct {
-					count    int
-					totalPnL float64
-					totalGain float64
-				}{}
-			}
-			stats := tpStats[pe.TPLevel]
-			stats.count++
-			stats.totalPnL += pe.PnL
-			if c.AvgEntry > 0 {
-				stats.totalGain += (pe.Price - c.AvgEntry) / c.AvgEntry * 100
-			}
-			tpStats[pe.TPLevel] = stats
-		}
-	}
-	
-	// Write TP level data with insights
-	for level := 1; level <= 5; level++ {
-		stats := tpStats[level]
-		successRate := 0.0
-		avgPnL := 0.0
-		
-		if len(results.Cycles) > 0 {
-			successRate = float64(stats.count) / float64(len(results.Cycles)) * 100
-		}
-		if stats.count > 0 {
-			avgPnL = stats.totalPnL / float64(stats.count)
-		}
-		
-		values := []interface{}{
-			fmt.Sprintf("TP %d", level),
-			stats.count,
-			fmt.Sprintf("%.1f%%", successRate),
-			fmt.Sprintf("$%.2f", avgPnL),
-			fmt.Sprintf("$%.2f", stats.totalPnL),
-		}
-		
-		for i, v := range values {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			if i >= 2 && i <= 4 { // Percentage and currency columns
-				if strings.Contains(fmt.Sprintf("%v", v), "$") {
-					fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-				} else if strings.Contains(fmt.Sprintf("%v", v), "%") {
-					fx.SetCellStyle(sheet, cell, cell, percentStyle)
-				}
-			}
-		}
-		row++
-	}
-	
-	row += 2
-	
-	// 💡 STRATEGIC INSIGHTS & RECOMMENDATIONS
-	fx.MergeCell(sheet, fmt.Sprintf("A%d:E%d", row, row), "")
-	fx.SetCellValue(sheet, fmt.Sprintf("A%d", row), "💡 STRATEGIC INSIGHTS & RECOMMENDATIONS")
-	fx.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), sectionStyle)
-	row += 2
-	
-	recommendations := getStrategicRecommendations(results, totalCost, winRate, avgCycleDuration)
-	
-	for _, rec := range recommendations {
-		for i, v := range rec {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			if i == 0 { // Category column
-				fx.SetCellStyle(sheet, cell, cell, headerStyle)
-			} else if i >= 1 { // Recommendation columns
-				fx.SetCellStyle(sheet, cell, cell, insightStyle)
-			}
-		}
-		row++
-	}
-}
-
-// Helper functions for insights
-func getProfitFactorInsight(pf float64) string {
-	if pf > 2.0 {
-		return "🔥 Excellent - Very profitable strategy"
-	} else if pf > 1.5 {
-		return "✅ Good - Solid profitability"
-	} else if pf > 1.0 {
-		return "⚠️ Marginal - Consider optimization"
-	}
-	return "❌ Poor - Strategy needs revision"
-}
-
-func getSharpeInsight(sr float64) string {
-	if sr > 2.0 {
-		return "🔥 Exceptional risk-adjusted returns"
-	} else if sr > 1.0 {
-		return "✅ Good risk-adjusted performance"
-	} else if sr > 0.5 {
-		return "⚠️ Moderate risk-adjusted returns"
-	}
-	return "❌ Poor risk-adjusted performance"
-}
-
-func getDrawdownInsight(dd float64) string {
-	if dd < 5.0 {
-		return "✅ Excellent - Low risk"
-	} else if dd < 10.0 {
-		return "✅ Good - Manageable risk"
-	} else if dd < 20.0 {
-		return "⚠️ Moderate - Monitor closely"
-	}
-	return "❌ High - Consider risk reduction"
-}
-
-func getCapitalEfficiencyInsight(ce float64) string {
-	if ce > 80.0 {
-		return "🔥 Highly efficient capital usage"
-	} else if ce > 60.0 {
-		return "✅ Good capital utilization"
-	} else if ce > 40.0 {
-		return "⚠️ Moderate - Room for improvement"
-	}
-	return "💡 Conservative - Consider higher allocation"
-}
-
-func getCycleCompletionInsight(cc float64) string {
-	if cc > 80.0 {
-		return "🔥 Excellent completion rate"
-	} else if cc > 60.0 {
-		return "✅ Good completion rate"
-	} else if cc > 40.0 {
-		return "⚠️ Moderate - Optimize TP levels"
-	}
-	return "❌ Low - Review strategy parameters"
-}
-
-func getCycleDurationInsight(cd float64) string {
-	if cd < 24.0 {
-		return "⚡ Fast cycles - High frequency"
-	} else if cd < 72.0 {
-		return "✅ Optimal cycle duration"
-	} else if cd < 168.0 {
-		return "⏳ Longer cycles - Patient approach"
-	}
-	return "🐌 Very long cycles - Consider adjustment"
-}
-
-func getDCAEfficiencyInsight(dca float64) string {
-	if dca < 2.0 {
-		return "💡 Efficient - Few entries needed"
-	} else if dca < 4.0 {
-		return "✅ Balanced DCA approach"
-	} else if dca < 6.0 {
-		return "⚠️ Many entries - High averaging"
-	}
-	return "❌ Excessive entries - Review thresholds"
-}
-
-func getStrategicRecommendations(results *backtest.BacktestResults, totalCost, winRate, avgCycleDuration float64) [][]interface{} {
-	recommendations := [][]interface{}{}
-	
-	// Performance optimization
-	if winRate > 90.0 {
-		recommendations = append(recommendations, []interface{}{
-			"🎯 Performance", "Excellent win rate! Consider increasing position sizes or tightening TP levels for higher profits.", "", "", "",
-		})
-	} else if winRate < 70.0 {
-		recommendations = append(recommendations, []interface{}{
-			"🎯 Performance", "Lower win rate detected. Consider widening TP levels or adjusting DCA thresholds.", "", "", "",
-		})
-	}
-	
-	// Risk management
-	if results.MaxDrawdown*100 > 15.0 {
-		recommendations = append(recommendations, []interface{}{
-			"⚠️ Risk Management", "High drawdown detected. Consider reducing position sizes or implementing stop-losses.", "", "", "",
-		})
-	}
-	
-	// Capital efficiency
-	if (totalCost/results.StartBalance)*100 < 50.0 {
-		recommendations = append(recommendations, []interface{}{
-			"💰 Capital Usage", "Low capital utilization. Consider increasing DCA amounts or adding more cycles.", "", "", "",
-		})
-	}
-	
-	// Cycle optimization
-	if avgCycleDuration > 120.0 {
-		recommendations = append(recommendations, []interface{}{
-			"⏱️ Timing", "Long cycle durations. Consider tighter TP levels or different market conditions.", "", "", "",
-		})
-	}
-	
-	// Strategy enhancement
-	recommendations = append(recommendations, []interface{}{
-		"🚀 Next Steps", "Monitor performance across different market conditions and timeframes for optimization.", "", "", "",
-	})
-	
-	return recommendations
-}
-
-// writeTimelineAnalysis creates a chronological timeline of all trading activity
-func writeTimelineAnalysis(fx *excelize.File, sheet string, results *backtest.BacktestResults, headerStyle, currencyStyle, percentStyle int) {
-	// Set column widths
-	fx.SetColWidth(sheet, "A", "A", 18)  // Timestamp
-	fx.SetColWidth(sheet, "B", "B", 8)   // Cycle
-	fx.SetColWidth(sheet, "C", "C", 12)  // Action
-	fx.SetColWidth(sheet, "D", "D", 12)  // Price
-	fx.SetColWidth(sheet, "E", "E", 12)  // Quantity
-	fx.SetColWidth(sheet, "F", "F", 12)  // Value
-	fx.SetColWidth(sheet, "G", "G", 12)  // PnL
-	fx.SetColWidth(sheet, "H", "H", 12)  // Balance
-	fx.SetColWidth(sheet, "I", "I", 30)  // Description
-	
-	// Title and headers
-	fx.SetCellValue(sheet, "A1", "📈 CHRONOLOGICAL TIMELINE")
-	fx.SetCellStyle(sheet, "A1", "A1", headerStyle)
-	
-	headers := []string{
-		"Timestamp", "Cycle", "Action", "Price", "Quantity", "Value ($)", "PnL ($)", "Balance ($)", "Description",
-	}
-	
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 3)
-		fx.SetCellValue(sheet, cell, h)
-		fx.SetCellStyle(sheet, cell, cell, headerStyle)
-	}
-	
-	// Collect all events chronologically
-	type TimelineEvent struct {
-		Timestamp   time.Time
-		Cycle       int
-		Action      string
-		Price       float64
-		Quantity    float64
-		Value       float64
-		PnL         float64
-		Balance     float64
-		Description string
-	}
-	
-	var events []TimelineEvent
-	runningBalance := results.StartBalance
-	
-	// Add all trades to timeline
-	for _, t := range results.Trades {
-		if t.EntryTime.Equal(t.ExitTime) {
-			// TP exit - we GAIN money (sell crypto for cash)
-			runningBalance += (t.ExitPrice * t.Quantity) - t.Commission
-			events = append(events, TimelineEvent{
-				Timestamp:   t.ExitTime,
-				Cycle:       t.Cycle,
-				Action:      "💰 SELL",
-				Price:       t.ExitPrice,
-				Quantity:    t.Quantity,
-				Value:       t.ExitPrice * t.Quantity,
-				PnL:         t.PnL,
-				Balance:     runningBalance,
-				Description: fmt.Sprintf("TP Level hit at $%.4f", t.ExitPrice),
-			})
-		} else {
-			// DCA entry - we SPEND money (buy crypto with cash)
-			runningBalance -= (t.EntryPrice*t.Quantity + t.Commission)
-			events = append(events, TimelineEvent{
-				Timestamp:   t.EntryTime,
-				Cycle:       t.Cycle,
-				Action:      "📈 BUY",
-				Price:       t.EntryPrice,
-				Quantity:    t.Quantity,
-				Value:       t.EntryPrice * t.Quantity,
-				PnL:         0,
-				Balance:     runningBalance,
-				Description: fmt.Sprintf("DCA Entry at $%.4f", t.EntryPrice),
-			})
-		}
-	}
-	
-	// Sort events by timestamp
-	for i := 0; i < len(events)-1; i++ {
-		for j := i + 1; j < len(events); j++ {
-			if events[i].Timestamp.After(events[j].Timestamp) {
-				events[i], events[j] = events[j], events[i]
-			}
-		}
-	}
-	
-	// Write timeline data
-	row := 4
-	for _, event := range events {
-		values := []interface{}{
-			event.Timestamp.Format("2006-01-02 15:04:05"),
-			event.Cycle,
-			event.Action,
-			event.Price,
-			event.Quantity,
-			event.Value,
-			event.PnL,
-			event.Balance,
-			event.Description,
-		}
-		
-		for i, v := range values {
-			cell, _ := excelize.CoordinatesToCellName(i+1, row)
-			fx.SetCellValue(sheet, cell, v)
-			
-			// Apply styling
-			if i == 5 || i == 6 || i == 7 { // Value, PnL, Balance columns
-				fx.SetCellStyle(sheet, cell, cell, currencyStyle)
-			}
-		}
-		row++
-	}
-	
-	// Add filter
-	if row > 4 {
-		fx.AutoFilter(sheet, fmt.Sprintf("A3:I%d", row-1), []excelize.AutoFilterOptions{})
-	}
-}
-
-// writeTradesXLSX writes trades and cycles to separate sheets in an Excel file with professional formatting
-func writeTradesXLSX(results *backtest.BacktestResults, path string) error {
-	fx := excelize.NewFile()
-	defer fx.Close()
-
-	// Create sheets
-	const tradesSheet = "Trades"
-	const cyclesSheet = "Cycles"
-	const detailedSheet = "Detailed Analysis"
-	
-	// Replace default sheet and create additional sheets
-	fx.SetSheetName(fx.GetSheetName(0), tradesSheet)
-	fx.NewSheet(cyclesSheet)
-	fx.NewSheet(detailedSheet)
-
-	// =========================
-	// PROFESSIONAL STYLES
-	// =========================
-	
-	// Header style - Dark blue background with white text
-	headerStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{
-			Bold:   true,
-			Size:   11,
-			Color:  "FFFFFF",
-			Family: "Calibri",
-		},
-		Fill: excelize.Fill{
-			Type:    "pattern",
-			Color:   []string{"2F4F4F"},  // Dark slate gray
-			Pattern: 1,
-		},
-		Alignment: &excelize.Alignment{
-			Horizontal: "center",
-			Vertical:   "center",
-		},
-		Border: []excelize.Border{
-			{Type: "left", Color: "000000", Style: 1},
-			{Type: "right", Color: "000000", Style: 1},
-			{Type: "top", Color: "000000", Style: 1},
-			{Type: "bottom", Color: "000000", Style: 1},
-		},
-	})
-	
-	// Data style for even rows (light gray background) - removed as unused
-	// evenRowStyle, _ := fx.NewStyle(&excelize.Style{...})
-	
-	// Note: Win/Loss styles removed as we now use entry/exit styles
-	
-	// Currency style (right aligned, $ format)
-	currencyStyle, _ := fx.NewStyle(&excelize.Style{
-		NumFmt: 7, // Currency format with $ symbol
-		Alignment: &excelize.Alignment{
-			Horizontal: "right",
-		},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-	
-	// Percentage style (right aligned, % format)
-	percentStyle, _ := fx.NewStyle(&excelize.Style{
-		NumFmt: 9, // Percentage format with % symbol
-		Alignment: &excelize.Alignment{
-			Horizontal: "right",
-		},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-	
-	// Red percentage style for DCA entries (negative price movement)
-	redPercentStyle, _ := fx.NewStyle(&excelize.Style{
-		NumFmt: 9, // Percentage format with % symbol
-		Font: &excelize.Font{
-			Color: "FF0000", // Red text
-		},
-		Alignment: &excelize.Alignment{
-			Horizontal: "right",
-		},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-	
-	// Green percentage style for TP exits (positive price movement)  
-	greenPercentStyle, _ := fx.NewStyle(&excelize.Style{
-		NumFmt: 9, // Percentage format with % symbol
-		Font: &excelize.Font{
-			Color: "008000", // Green text
-		},
-		Alignment: &excelize.Alignment{
-			Horizontal: "right",
-		},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-	
-	// =========================
-	// TRADES SHEET
-	// =========================
-	
-	// Set column widths for enhanced layout with balance tracking
-	fx.SetColWidth(tradesSheet, "A", "A", 8)   // Cycle
-	fx.SetColWidth(tradesSheet, "B", "B", 12)  // Type
-	fx.SetColWidth(tradesSheet, "C", "C", 10)  // Sequence
-	fx.SetColWidth(tradesSheet, "D", "D", 18)  // Timestamp
-	fx.SetColWidth(tradesSheet, "E", "E", 12)  // Price
-	fx.SetColWidth(tradesSheet, "F", "F", 12)  // Quantity
-	fx.SetColWidth(tradesSheet, "G", "G", 12)  // Commission
-	fx.SetColWidth(tradesSheet, "H", "H", 14)  // PnL
-	fx.SetColWidth(tradesSheet, "I", "I", 12)  // Price Change %
-	fx.SetColWidth(tradesSheet, "J", "J", 14)  // Running Balance
-	fx.SetColWidth(tradesSheet, "K", "K", 14)  // Balance Change
-	fx.SetColWidth(tradesSheet, "L", "L", 20)  // TP Info
-
-	// Write Enhanced Trades headers - includes balance tracking and TP descriptions
-	tradeHeaders := []string{
-		"Cycle", "Type", "Sequence", "Timestamp", "Price", "Quantity", 
-		"Commission", "PnL", "Price Change %", "Running Balance", "Balance Change", "TP Info",
-	}
-	for i, h := range tradeHeaders {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		fx.SetCellValue(tradesSheet, cell, h)
-		fx.SetCellStyle(tradesSheet, cell, cell, headerStyle)
-	}
-
-	// Enhanced trade organization with chronological sequencing
-	type EnhancedTradeData struct {
-		Trade       backtest.Trade
-		IsEntry     bool
-		Sequence    int
-		BalanceBefore float64
-		BalanceAfter  float64
-		BalanceChange float64
-		Description string
-	}
-	
-	type CycleTradeData struct {
-		CycleNumber     int
-		ChronologicalTrades []EnhancedTradeData
-		StartPrice      float64
-		StartBalance    float64
-		EndBalance      float64
-	}
-	
-	cycleMap := make(map[int]*CycleTradeData)
-	
-	// Group all trades by cycle first
-	for _, t := range results.Trades {
-		if cycleMap[t.Cycle] == nil {
-			cycleMap[t.Cycle] = &CycleTradeData{
-				CycleNumber: t.Cycle,
-				ChronologicalTrades: make([]EnhancedTradeData, 0),
-			}
-		}
-		
-		isEntry := !t.EntryTime.Equal(t.ExitTime)
-		
-			// Set cycle start price from first entry
-		if isEntry && cycleMap[t.Cycle].StartPrice == 0 {
-				cycleMap[t.Cycle].StartPrice = t.EntryPrice
-			}
-		
-		// Add trade to cycle
-		cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
-			Trade:   t,
-			IsEntry: isEntry,
-		})
-	}
-	
-	// Calculate running balance by processing cycles in order, but keep trades within each cycle
-	runningBalance := results.StartBalance
-	
-	// Get cycles in chronological order (by cycle number)
-	var sortedCycleNums []int
-	for cycleNum := range cycleMap {
-		sortedCycleNums = append(sortedCycleNums, cycleNum)
-	}
-	// Sort cycle numbers
-	for i := 0; i < len(sortedCycleNums)-1; i++ {
-		for j := i + 1; j < len(sortedCycleNums); j++ {
-			if sortedCycleNums[i] > sortedCycleNums[j] {
-				sortedCycleNums[i], sortedCycleNums[j] = sortedCycleNums[j], sortedCycleNums[i]
-			}
-		}
-	}
-	
-	// Process each cycle in order
-	for _, cycleNum := range sortedCycleNums {
-		cycle := cycleMap[cycleNum]
-		cycle.StartBalance = runningBalance
-		
-		// Sort trades within THIS cycle chronologically
-		trades := cycle.ChronologicalTrades
-		for i := 0; i < len(trades)-1; i++ {
-			for j := i + 1; j < len(trades); j++ {
-				time1 := trades[i].Trade.EntryTime
-				time2 := trades[j].Trade.EntryTime
-				if !trades[i].IsEntry {
-					time1 = trades[i].Trade.ExitTime
-				}
-				if !trades[j].IsEntry {
-					time2 = trades[j].Trade.ExitTime
-				}
-				
-				if time1.After(time2) {
-					trades[i], trades[j] = trades[j], trades[i]
-				}
-			}
-		}
-		
-		// Calculate balance changes within this cycle
-		for i := range trades {
-			trade := &trades[i]
-			trade.Sequence = i + 1
-			trade.BalanceBefore = runningBalance
-			
-			if trade.IsEntry {
-				// DCA entry - spend money
-				balanceChange := -(trade.Trade.EntryPrice*trade.Trade.Quantity + trade.Trade.Commission)
-				trade.BalanceChange = balanceChange
-				trade.Description = fmt.Sprintf("DCA Entry #%d", trade.Sequence)
-			} else {
-				// TP exit - receive money  
-				balanceChange := (trade.Trade.ExitPrice*trade.Trade.Quantity - trade.Trade.Commission)
-				trade.BalanceChange = balanceChange
-				
-				// Determine how many TP levels this exit represents based on quantity
-				totalCycleQty := 0.0
-				for _, t := range cycle.ChronologicalTrades {
-					if t.IsEntry {
-						totalCycleQty += t.Trade.Quantity
-					}
-				}
-				
-				// Calculate what percentage of position this exit represents
-				exitPercentage := (trade.Trade.Quantity / totalCycleQty) * 100
-				
-				if exitPercentage >= 90 {
-					trade.Description = "TP Complete (100%)"
-				} else if exitPercentage >= 70 {
-					trade.Description = "TP Levels 1-4 (80%)"
-				} else if exitPercentage >= 50 {
-					trade.Description = "TP Levels 1-3 (60%)"
-				} else if exitPercentage >= 30 {
-					trade.Description = "TP Levels 1-2 (40%)"
-				} else {
-					trade.Description = "TP Level 1 (20%)"
-				}
-			}
-			
-			runningBalance += trade.BalanceChange
-			trade.BalanceAfter = runningBalance
-		}
-		
-		cycle.EndBalance = runningBalance
-	}
-	
-	// Get sorted cycle numbers
-	var cycleNumbers []int
-	for cycleNum := range cycleMap {
-		cycleNumbers = append(cycleNumbers, cycleNum)
-	}
-	// Sort cycles
-	for i := 0; i < len(cycleNumbers)-1; i++ {
-		for j := i + 1; j < len(cycleNumbers); j++ {
-			if cycleNumbers[i] > cycleNumbers[j] {
-				cycleNumbers[i], cycleNumbers[j] = cycleNumbers[j], cycleNumbers[i]
-			}
-		}
-	}
-
-	// Write organized trade data
-	row := 2
-	var totalPnL float64
-	var totalCost float64
-	
-	// Calculate total PnL correctly: Final Balance - Initial Balance (matches console)
-	totalPnL = results.EndBalance - results.StartBalance
-	
-	// Create cycle header style
-	cycleHeaderStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 11, Color: "FFFFFF"},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"4472C4"}, Pattern: 1},
-		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
-		Border: []excelize.Border{
-			{Type: "left", Color: "000000", Style: 2},
-			{Type: "right", Color: "000000", Style: 2},
-			{Type: "top", Color: "000000", Style: 2},
-			{Type: "bottom", Color: "000000", Style: 2},
-		},
-	})
-	
-	// Create entry and exit styles
-	entryStyle, _ := fx.NewStyle(&excelize.Style{
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"E6F3FF"}, Pattern: 1},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-	
-	exitStyle, _ := fx.NewStyle(&excelize.Style{
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"E6FFE6"}, Pattern: 1},
-		Border: []excelize.Border{
-			{Type: "left", Color: "E0E0E0", Style: 1},
-			{Type: "right", Color: "E0E0E0", Style: 1},
-			{Type: "bottom", Color: "E0E0E0", Style: 1},
-		},
-	})
-
-	for _, cycleNum := range cycleNumbers {
-		cycleData := cycleMap[cycleNum]
-		cycleCost := 0.0
-		cyclePnL := 0.0
-		
-		// Simple cycle header without balance info (moved to summary)
-		cycleHeaderRange := fmt.Sprintf("A%d:L%d", row, row)
-		fx.MergeCell(tradesSheet, cycleHeaderRange, "")
-		headerCell, _ := excelize.CoordinatesToCellName(1, row)
-		fx.SetCellValue(tradesSheet, headerCell, fmt.Sprintf("═══ CYCLE %d ═══", cycleNum))
-		fx.SetCellStyle(tradesSheet, headerCell, headerCell, cycleHeaderStyle)
-		row++
-		
-		// Add all trades in chronological order
-		for _, enhancedTrade := range cycleData.ChronologicalTrades {
-			trade := enhancedTrade.Trade
-			
-			// Calculate costs and PnL for summary
-			if enhancedTrade.IsEntry {
-				cost := trade.EntryPrice * trade.Quantity + trade.Commission
-			cycleCost += cost
-			totalCost += cost
-			} else {
-				cyclePnL += trade.PnL
-			}
-			
-			// Calculate price change
-			priceChange := 0.0
-			if enhancedTrade.IsEntry && cycleData.StartPrice > 0 {
-				// For entries, show drop from cycle start
-				priceChange = ((cycleData.StartPrice - trade.EntryPrice) / cycleData.StartPrice) * 100
-			} else if !enhancedTrade.IsEntry && trade.EntryPrice > 0 {
-				// For exits, show profit relative to average entry price
-				priceChange = ((trade.ExitPrice - trade.EntryPrice) / trade.EntryPrice) * 100
-			}
-			
-			// Determine trade type and styling
-			tradeType := "📈 BUY"
-			tradeStyle := entryStyle
-			var tradePnL interface{} = ""
-			tradeTime := trade.EntryTime
-			tradePrice := trade.EntryPrice
-			
-			if !enhancedTrade.IsEntry {
-				tradeType = "💰 SELL"
-				tradeStyle = exitStyle
-				tradePnL = trade.PnL
-				tradeTime = trade.ExitTime
-				tradePrice = trade.ExitPrice
-			}
-			
-			values := []interface{}{
-				cycleNum,
-				tradeType,
-				enhancedTrade.Sequence,
-				tradeTime.Format("2006-01-02 15:04:05"),
-				tradePrice,
-				trade.Quantity,
-				trade.Commission,
-				tradePnL,
-				priceChange / 100,
-				enhancedTrade.BalanceAfter,
-				enhancedTrade.BalanceChange,
-				enhancedTrade.Description,
-			}
-			
-			writeEnhancedTradeRow(fx, tradesSheet, row, values, tradeStyle, currencyStyle, percentStyle, enhancedTrade.IsEntry, redPercentStyle, greenPercentStyle)
-			row++
-		}
-		
-		// Add seamless cycle summary row with balance info
-		summaryStyle, _ := fx.NewStyle(&excelize.Style{
-			Font: &excelize.Font{Bold: true, Size: 11, Color: "FFFFFF"},
-			Fill: excelize.Fill{Type: "pattern", Color: []string{"4472C4"}, Pattern: 1},
-			Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
-			Border: []excelize.Border{
-				{Type: "left", Color: "000000", Style: 2},
-				{Type: "right", Color: "000000", Style: 2},
-				{Type: "top", Color: "000000", Style: 2},
-				{Type: "bottom", Color: "000000", Style: 2},
-			},
-		})
-		
-		// Count entries and exits
-		entryCount := 0
-		exitCount := 0
-		for _, trade := range cycleData.ChronologicalTrades {
-			if trade.IsEntry {
-				entryCount++
-			} else {
-				exitCount++
-			}
-		}
-		
-		// Use actual cycle profit (balance change) instead of individual trade PnL sum
-		actualCycleProfit := cycleData.EndBalance - cycleData.StartBalance
-		
-		// Create seamless summary header with balance info
-		summaryHeaderRange := fmt.Sprintf("A%d:L%d", row, row)
-		fx.MergeCell(tradesSheet, summaryHeaderRange, "")
-		summaryHeaderCell, _ := excelize.CoordinatesToCellName(1, row)
-		fx.SetCellValue(tradesSheet, summaryHeaderCell, fmt.Sprintf("📊 CYCLE %d SUMMARY - Balance: $%.2f → $%.2f | Profit: $%.2f | Entries: %d | Exits: %d", 
-			cycleNum, cycleData.StartBalance, cycleData.EndBalance, actualCycleProfit, entryCount, exitCount))
-		fx.SetCellStyle(tradesSheet, summaryHeaderCell, summaryHeaderCell, summaryStyle)
-		row++
-		
-		// Add spacing between cycles
-		row++
-	}
-	
-	// Add final summary row
-	finalSummaryStyle, _ := fx.NewStyle(&excelize.Style{
-		Font: &excelize.Font{Bold: true, Size: 12, Color: "FFFFFF"},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"2F4F4F"}, Pattern: 1},
-		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
-		Border: []excelize.Border{
-			{Type: "left", Color: "000000", Style: 3},
-			{Type: "right", Color: "000000", Style: 3},
-			{Type: "top", Color: "000000", Style: 3},
-			{Type: "bottom", Color: "000000", Style: 3},
-		},
-	})
-	
-	finalSummaryRange := fmt.Sprintf("A%d:L%d", row, row)
-	fx.MergeCell(tradesSheet, finalSummaryRange, "")
-	finalSummaryCell, _ := excelize.CoordinatesToCellName(1, row)
-	// Count trades using the same logic as console (PartialExits if available)
-	summaryTradeCount := 0
-	for _, c := range results.Cycles {
-		summaryTradeCount += len(c.PartialExits)
-	}
-	if summaryTradeCount == 0 {
-		// Fallback to original trades if no partial exits
-		for _, t := range results.Trades {
-			if !t.EntryTime.Equal(t.ExitTime) {
-				summaryTradeCount++
-			}
-		}
-	}
-	
-	fx.SetCellValue(tradesSheet, finalSummaryCell, fmt.Sprintf("🏆 TOTAL SUMMARY: Start: $%.0f | End: $%.0f | PnL: $%.0f | ROI: %.1f%% | Trades: %d | Cycles: %d", 
-		results.StartBalance, results.EndBalance, totalPnL, (totalPnL/results.StartBalance)*100, summaryTradeCount, len(cycleNumbers)))
-	fx.SetCellStyle(tradesSheet, finalSummaryCell, finalSummaryCell, finalSummaryStyle)
-	row++
-	
-	// Add AutoFilter to trades data
-	if row > 2 {
-		fx.AutoFilter(tradesSheet, fmt.Sprintf("A1:L%d", row-1), []excelize.AutoFilterOptions{})
-    }
-
-	// =========================
-	// CYCLES SHEET
-	// =========================
-	
-	// Set column widths for cycles sheet
-	fx.SetColWidth(cyclesSheet, "A", "A", 8)   // Cycle
-	fx.SetColWidth(cyclesSheet, "B", "B", 18)  // Start Time
-	fx.SetColWidth(cyclesSheet, "C", "C", 18)  // End Time
-	fx.SetColWidth(cyclesSheet, "D", "D", 12)  // Duration
-	fx.SetColWidth(cyclesSheet, "E", "E", 10)  // Entries
-	fx.SetColWidth(cyclesSheet, "F", "F", 12)  // Avg Entry
-	fx.SetColWidth(cyclesSheet, "G", "G", 12)  // Exit Price
-	fx.SetColWidth(cyclesSheet, "H", "H", 12)  // Capital Used
-	fx.SetColWidth(cyclesSheet, "I", "I", 12)  // Capital %
-	fx.SetColWidth(cyclesSheet, "J", "J", 12)  // Balance Before
-	fx.SetColWidth(cyclesSheet, "K", "K", 12)  // Balance After
-	fx.SetColWidth(cyclesSheet, "L", "L", 12)  // PnL
-	fx.SetColWidth(cyclesSheet, "M", "M", 10)  // ROI %
-	
-	// Cycles sheet title and headers
-	fx.SetCellValue(cyclesSheet, "A1", "🔄 CYCLE ANALYSIS WITH CAPITAL USAGE")
-	fx.SetCellStyle(cyclesSheet, "A1", "A1", headerStyle)
-	
-	cycleHeaders := []string{
-		"Cycle", "Start Time", "End Time", "Duration", "Entries", "Avg Entry", "Exit Price", 
-		"Capital Used ($)", "Capital %", "Balance Before ($)", "Balance After ($)", "PnL ($)", "ROI %",
-	}
-	
-	for i, h := range cycleHeaders {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 3)
-		fx.SetCellValue(cyclesSheet, cell, h)
-		fx.SetCellStyle(cyclesSheet, cell, cell, headerStyle)
-	}
-	
-		// Calculate balance and capital usage per cycle (cycles are SEQUENTIAL)
-	// Cycle 1 completes, then Cycle 2 starts, then Cycle 3 starts, etc.
-	
-	cycleBalances := make(map[int]struct {
-		before float64
-		after  float64
-		capital float64
-	})
-	
-	// Sort cycles by cycle number to process them sequentially
-	var sortedCycles []backtest.CycleSummary
-	sortedCycles = append(sortedCycles, results.Cycles...)
-	
-	// Sort cycles by cycle number
-	for i := 0; i < len(sortedCycles)-1; i++ {
-		for j := i + 1; j < len(sortedCycles); j++ {
-			if sortedCycles[i].CycleNumber > sortedCycles[j].CycleNumber {
-				sortedCycles[i], sortedCycles[j] = sortedCycles[j], sortedCycles[i]
-			}
-		}
-	}
-	
-	// Process cycles sequentially
-	runningBalance = results.StartBalance
-	
-	for _, c := range sortedCycles {
-		// Balance before this cycle starts
-		balanceBefore := runningBalance
-		
-		// Calculate capital used in this cycle (sum of all DCA entries)
-		cycleCapital := 0.0
-			for _, t := range results.Trades {
-			if t.Cycle == c.CycleNumber && !t.EntryTime.Equal(t.ExitTime) {
-				// DCA entry trade
-				cycleCapital += t.EntryPrice*t.Quantity + t.Commission
-			}
-		}
-		
-		// Update running balance after this cycle completes
-		// The RealizedPnL already accounts for getting back the invested capital + profit
-		// So we just add the net PnL (which includes capital recovery + profit)
-		runningBalance = balanceBefore + c.RealizedPnL
-		
-		// Store cycle balance data
-		cycleBalances[c.CycleNumber] = struct {
-			before float64
-			after  float64
-			capital float64
-		}{
-			before:  balanceBefore,
-			after:   runningBalance,
-			capital: cycleCapital,
-		}
-	}
-	
-	// Write cycle data
-	cycleRow := 4
-	for _, c := range results.Cycles {
-		duration := c.EndTime.Sub(c.StartTime)
-		durationStr := fmt.Sprintf("%.1fh", duration.Hours())
-		
-		// Get balance data for this cycle
-		balanceData := cycleBalances[c.CycleNumber]
-		
-		// Calculate capital percentage of balance at cycle start
-		capitalPercent := 0.0
-		if balanceData.before > 0 {
-			capitalPercent = (balanceData.capital / balanceData.before) * 100
-		}
-		
-		// Determine exit price - prefer cycle's final exit price
-		exitPrice := c.FinalExitPrice
-		if exitPrice == 0.0 {
-			// Fallback: find the latest synthetic TP exit for this cycle
-			for i := len(results.Trades) - 1; i >= 0; i-- {
-				t := results.Trades[i]
-				if t.Cycle == c.CycleNumber && t.EntryTime.Equal(t.ExitTime) {
-					exitPrice = t.ExitPrice
-					break
-				}
-			}
-		}
-		
-		roi := 0.0
-		if balanceData.capital > 0 {
-			roi = (c.RealizedPnL / balanceData.capital) * 100
-		}
-		
-		cycleValues := []interface{}{
-				c.CycleNumber,
-			c.StartTime.Format("2006-01-02 15:04"),
-			c.EndTime.Format("2006-01-02 15:04"),
-			durationStr,
-				c.Entries,
-				c.AvgEntry,
-			exitPrice,
-			balanceData.capital,
-			capitalPercent,
-			balanceData.before,
-			balanceData.after,
-			c.RealizedPnL,
-			roi,
-		}
-		
-		for i, v := range cycleValues {
-			cell, _ := excelize.CoordinatesToCellName(i+1, cycleRow)
-				fx.SetCellValue(cyclesSheet, cell, v)
-				
-			// Apply styling
-			if i == 5 || i == 6 { // Avg Entry, Exit Price
-					fx.SetCellStyle(cyclesSheet, cell, cell, currencyStyle)
-			} else if i >= 7 && i <= 11 { // Capital Used, Balance Before/After, PnL
-				fx.SetCellStyle(cyclesSheet, cell, cell, currencyStyle)
-			} else if i == 8 || i == 12 { // Capital %, ROI %
-				fx.SetCellStyle(cyclesSheet, cell, cell, percentStyle)
-			}
-		}
-		cycleRow++
-	}
-	
-	// Add summary row
-	cycleRow += 1
-	fx.SetCellValue(cyclesSheet, "A"+fmt.Sprintf("%d", cycleRow), "📊 SUMMARY")
-	fx.SetCellStyle(cyclesSheet, "A"+fmt.Sprintf("%d", cycleRow), "A"+fmt.Sprintf("%d", cycleRow), headerStyle)
-	
-	// Calculate totals
-	totalCapitalUsed := 0.0
-	cyclesTotalPnL := 0.0
-	completedCycles := 0
-	
-	for _, c := range results.Cycles {
-		balanceData := cycleBalances[c.CycleNumber]
-		totalCapitalUsed += balanceData.capital
-		cyclesTotalPnL += c.RealizedPnL
-		completedCycles++ // Count all cycles since we removed status column
-	}
-	
-	avgCapitalPercent := 0.0
-	if len(results.Cycles) > 0 {
-		avgCapitalPercent = (totalCapitalUsed / (results.StartBalance * float64(len(results.Cycles)))) * 100
-	}
-	
-	cycleRow++
-	summaryValues := []interface{}{
-		"TOTALS:",
-		"",
-		"",
-		"",
-		fmt.Sprintf("%d cycles", len(results.Cycles)),
-		"",
-		"",
-		totalCapitalUsed,
-		avgCapitalPercent,
-		results.StartBalance,
-		results.EndBalance,
-		cyclesTotalPnL,
-		fmt.Sprintf("%.1f%%", (cyclesTotalPnL/totalCapitalUsed)*100),
-	}
-	
-	for i, v := range summaryValues {
-		cell, _ := excelize.CoordinatesToCellName(i+1, cycleRow)
-		fx.SetCellValue(cyclesSheet, cell, v)
-		
-		// Apply styling to summary row
-		if i >= 7 && i <= 11 { // Capital Used, Balance Before/After, PnL
-			fx.SetCellStyle(cyclesSheet, cell, cell, currencyStyle)
-		} else if i == 8 { // Capital %
-			fx.SetCellStyle(cyclesSheet, cell, cell, percentStyle)
-		}
-		fx.SetCellStyle(cyclesSheet, cell, cell, headerStyle) // Make summary row bold
-	}
-	
-	// Add filter to cycles sheet
-	if cycleRow > 4 {
-		fx.AutoFilter(cyclesSheet, fmt.Sprintf("A3:M%d", cycleRow-2), []excelize.AutoFilterOptions{})
-	}
-
-	// =========================
-	// DETAILED ANALYSIS SHEET
-	// =========================
-	
-	writeDetailedAnalysis(fx, detailedSheet, results, headerStyle, currencyStyle, percentStyle)
-
-	// Save workbook
-	return fx.SaveAs(path)
+	// Use the new CSV reporter
+	return reporting.WriteTradesCSV(results, path)
 }
 
 // Walk-Forward Validation structures and functions
@@ -3683,55 +2170,9 @@ func stdDev(values []float64) float64 {
 	return math.Sqrt(sumSquares / float64(len(values)-1))
 }
 
-// Removed global selectedPeriod - now passed as parameter to avoid race conditions
-
-func parseTrailingPeriod(s string) (time.Duration, bool) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if strings.HasSuffix(s, "days") {
-		s = strings.TrimSuffix(s, "days") + "d"
-	}
-	if strings.HasSuffix(s, "d") {
-		nStr := strings.TrimSuffix(s, "d")
-		if nStr == "" { return 0, false }
-		n, err := strconv.Atoi(nStr)
-		if err != nil || n <= 0 { return 0, false }
-		return time.Duration(n) * 24 * time.Hour, true
-	}
-	// allow raw durations too (e.g., 168h)
-	if d, err := time.ParseDuration(s); err == nil { return d, true }
-	return 0, false
-}
-
-func filterDataByPeriod(data []types.OHLCV, period time.Duration) []types.OHLCV {
-	if period <= 0 || len(data) == 0 {
-        return data
-    }
-
-    // Find the cutoff timestamp (latest timestamp - period)
-    latestTime := data[len(data)-1].Timestamp
-    cutoffTime := latestTime.Add(-period)
-
-    // Find the starting index where data is within the period
-    startIdx := 0
-    for i, candle := range data {
-        if candle.Timestamp.After(cutoffTime) || candle.Timestamp.Equal(cutoffTime) {
-            startIdx = i
-            break
-        }
-    }
-
-    // Return the filtered data in chronological order
-    return data[startIdx:]
-}
-
 // Helper to resolve default output dir
+// defaultOutputDir - Note: This function has been moved to pkg/reporting/paths.go
 func defaultOutputDir(symbol, interval string) string {
-	s := strings.ToUpper(strings.TrimSpace(symbol))
-	i := strings.ToLower(strings.TrimSpace(interval))
-	if s == "" { s = "UNKNOWN" }
-	if i == "" { i = "unknown" }
-	
-	return filepath.Join(ResultsDir, fmt.Sprintf("%s_%s", s, i))
+	// TODO: Replace with reporting.DefaultOutputDir(symbol, interval)
+	return reporting.DefaultOutputDir(symbol, interval)
 }
-
-// Note: validateTPConfig moved to pkg/config package
