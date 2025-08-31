@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,24 +242,52 @@ var (
 )
 
 // Logging functions for better error reporting and debugging
+// Enhanced logging functions with consistent formatting
+func logHeader(title string) {
+	fmt.Printf("\n🎯 %s\n", strings.ToUpper(title))
+	fmt.Printf("%s\n", strings.Repeat("=", len(title)+5))
+}
+
+func logSection(title string) {
+	fmt.Printf("\n📋 %s\n", title)
+	fmt.Printf("%s\n", strings.Repeat("-", len(title)+5))
+}
+
+func logStep(step string) {
+	fmt.Printf("🔸 %s\n", step)
+}
+
 func logInfo(format string, args ...interface{}) {
-	log.Printf("ℹ️  "+format, args...)
+	fmt.Printf("ℹ️  %s\n", fmt.Sprintf(format, args...))
 }
 
 func logWarning(format string, args ...interface{}) {
-	log.Printf("⚠️  "+format, args...)
+	fmt.Printf("⚠️  %s\n", fmt.Sprintf(format, args...))
 }
 
 func logError(format string, args ...interface{}) {
-	log.Printf("❌ "+format, args...)
+	fmt.Printf("❌ %s\n", fmt.Sprintf(format, args...))
 }
 
 func logSuccess(format string, args ...interface{}) {
-	log.Printf("✅ "+format, args...)
+	fmt.Printf("✅ %s\n", fmt.Sprintf(format, args...))
 }
 
 func logProgress(format string, args ...interface{}) {
-	log.Printf("🔄 "+format, args...)
+	fmt.Printf("🔄 %s\n", fmt.Sprintf(format, args...))
+}
+
+// Silent mode control
+var silentMode = false
+
+func setSilentMode(silent bool) {
+	silentMode = silent
+}
+
+func logQuiet(format string, args ...interface{}) {
+	if !silentMode {
+		fmt.Printf("   %s\n", fmt.Sprintf(format, args...))
+	}
 }
 
 // BacktestConfig holds all configuration for backtesting
@@ -451,9 +478,15 @@ func main() {
 	
 	flag.Parse()
 	
+	// Set quiet mode as default
+	setSilentMode(true)
+	
+	// Initialize logging
+	logHeader("DCA Bot Backtest")
+	
 	// Test walk-forward flags to ensure they're accessible
 	if *wfEnable {
-		fmt.Printf("Walk-forward validation enabled\n")
+		logInfo("Walk-forward validation enabled")
 	}
 
 	// If configFile is set and does not contain a path, prepend "configs/"
@@ -492,12 +525,8 @@ func main() {
 	}
 	
 	// Log TP configuration (multi-level TP is always enabled)
-	log.Printf("Using 5-level TP system derived from TPPercent: %.2f%%", cfg.TPPercent*100)
-	log.Printf("TP Levels (20%% each):")
-	for i := 0; i < 5; i++ {
-		levelPct := cfg.TPPercent * float64(i+1) / 5.0
-		log.Printf("  Level %d: 20.00%% at %.2f%%", i+1, levelPct*100)
-	}
+	logSection("Trade Configuration")
+	logQuiet("Using 5-level TP system (max: %.2f%%)", cfg.TPPercent*100)
 
 	// Capture and parse trailing period window
 	var selectedPeriod time.Duration
@@ -531,13 +560,13 @@ func main() {
 	
 	// Fetch minimum order quantity from Bybit before backtesting
 	if err := fetchAndSetMinOrderQtyDCA(cfg); err != nil {
-		log.Printf("Warning: Could not fetch minimum order quantity from Bybit: %v", err)
-		log.Printf("Using default minimum order quantity: %.6f", cfg.MinOrderQty)
+		logWarning("Could not fetch minimum order quantity from Bybit: %v", err)
+		logInfo("Using default minimum order quantity: %.6f", cfg.MinOrderQty)
 	}
 	
 	if *allIntervals {
 		// Create walk-forward configuration
-		wfConfig := WalkForwardConfig{
+		wfConfig := validation.WalkForwardConfig{
 			Enable:     *wfEnable,
 			Rolling:    *wfRolling,
 			SplitRatio: *wfSplitRatio,
@@ -596,21 +625,15 @@ func main() {
 			log.Fatalf("Optimization failed: %v", err)
 		}
 		bestConfig = bestConfigInterface.(*config.DCAConfig)
-			fmt.Println("\n\n🏆 OPTIMIZATION RESULTS:")
-		
-		fmt.Println(strings.Repeat("=", 50))
-		fmt.Printf("Best Parameters:\n")
-		fmt.Printf("  Combo Type:       %s\n", getComboTypeName(bestConfig.UseAdvancedCombo))
-		fmt.Printf("  Indicators:       %s\n", strings.Join(bestConfig.Indicators, ","))
-		fmt.Printf("  Base Amount:      $%.2f\n", bestConfig.BaseAmount)
-		fmt.Printf("  Max Multiplier:   %.2f\n", bestConfig.MaxMultiplier)
-		fmt.Printf("  Price Threshold:  %.2f%%\n", bestConfig.PriceThreshold*100)
-		fmt.Printf("  TP Levels (5-level system, derived from TPPercent %.2f%%):\n", bestConfig.TPPercent*100)
-			for i := 0; i < 5; i++ {
-				levelPct := bestConfig.TPPercent * float64(i+1) / 5.0
-				fmt.Printf("    Level %d: 20.00%% at %.2f%%\n", i+1, levelPct*100)
-		}
-		fmt.Printf("  Min Order Qty:    %.6f %s (from Bybit)\n", bestConfig.MinOrderQty, bestConfig.Symbol)
+		logHeader("Optimization Results")
+		logSection("Best Parameters")
+		logQuiet("Combo Type:       %s", getComboTypeName(bestConfig.UseAdvancedCombo))
+		logQuiet("Indicators:       %s", strings.Join(bestConfig.Indicators, ","))
+		logQuiet("Base Amount:      $%.2f", bestConfig.BaseAmount)
+		logQuiet("Max Multiplier:   %.2f", bestConfig.MaxMultiplier)
+		logQuiet("Price Threshold:  %.2f%%", bestConfig.PriceThreshold*100)
+		logQuiet("TP System:        5-level (%.2f%% max)", bestConfig.TPPercent*100)
+		logQuiet("Min Order Qty:    %.6f %s (from Bybit)", bestConfig.MinOrderQty, bestConfig.Symbol)
 		
 		if bestConfig.UseAdvancedCombo {
 			// Advanced combo parameters
@@ -661,8 +684,8 @@ func main() {
 		fmt.Printf("   or: go run cmd/backtest/main.go -symbol %s -interval %s -base-amount %.0f -max-multiplier %.1f -price-threshold %.3f\n",
 			cfg.Symbol, intervalStr, bestConfig.BaseAmount, bestConfig.MaxMultiplier, bestConfig.PriceThreshold)
 		
-			// Save to results folder
-		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
+		// Save to results folder
+		stdDir := reporting.DefaultOutputDir(cfg.Symbol, intervalStr)
 			stdBestPath := filepath.Join(stdDir, BestConfigFile)
 			stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
@@ -715,7 +738,7 @@ func main() {
 	
 	if !*consoleOnly {
 		// Save trades to standard path (reuse intervalStr from above)
-		stdDir := defaultOutputDir(cfg.Symbol, intervalStr)
+		stdDir := reporting.DefaultOutputDir(cfg.Symbol, intervalStr)
 		stdTradesPath := filepath.Join(stdDir, TradesFile)
 		
 		if err := writeTradesCSV(results, stdTradesPath); err != nil {
@@ -812,7 +835,7 @@ func fetchAndSetMinOrderQty(cfg *BacktestConfig) error {
 	return nil
 }
 
-func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool, wfConfig WalkForwardConfig) {
+func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize bool, selectedPeriod time.Duration, consoleOnly bool, wfConfig validation.WalkForwardConfig) {
 	sym := strings.ToUpper(cfg.Symbol)
 	
 	// Find all available intervals for this symbol in the exchange
@@ -897,8 +920,28 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 					data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 				}
 				
-				// Run walk-forward validation instead of regular optimization
-				runWalkForwardValidation(&cfgCopy, data, wfConfig)
+				// Convert to validation.WalkForwardConfig
+				validationWFConfig := validation.WalkForwardConfig{
+					Enable:     wfConfig.Enable,
+					Rolling:    wfConfig.Rolling,
+					SplitRatio: wfConfig.SplitRatio,
+					TrainDays:  wfConfig.TrainDays,
+					TestDays:   wfConfig.TestDays,
+					RollDays:   wfConfig.RollDays,
+				}
+				
+				// Run walk-forward validation using pkg/validation
+				_, err = validation.RunWalkForwardValidation(convertBacktestConfigToDCAConfig(&cfgCopy), data, validationWFConfig,
+					func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
+						return optimization.OptimizeWithGA(config, cfgCopy.DataFile, 0)
+					},
+					func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
+						dcaConfig := cfg.(*config.DCAConfig)
+						return runBacktestWithData(convertDCAConfigToBacktestConfig(dcaConfig), data)
+					})
+				if err != nil {
+					log.Fatalf("Walk-forward validation failed: %v", err)
+				}
 				
 				// For now, still run regular optimization to get results for comparison
 				// In production, you might want to use the WF results instead
@@ -1048,7 +1091,7 @@ func runAcrossIntervals(cfg *BacktestConfig, dataRoot, exchange string, optimize
 	
 	if !consoleOnly {
 		// Write standard outputs under results/<SYMBOL>_<INTERVAL>_mode/
-		stdDir := defaultOutputDir(cfg.Symbol, best.Interval)
+		stdDir := reporting.DefaultOutputDir(cfg.Symbol, best.Interval)
 		stdBestPath := filepath.Join(stdDir, BestConfigFile)
 		stdTradesPath := filepath.Join(stdDir, TradesFile)
 		if err := writeBestConfigJSON(best.OptimizedCfg, stdBestPath); err != nil {
@@ -1391,355 +1434,4 @@ func writeTradesCSV(results *backtest.BacktestResults, path string) error {
 	
 	// Use the new CSV reporter
 	return reporting.WriteTradesCSV(results, path)
-}
-
-// Walk-forward validation structures (legacy - now handled by pkg/validation)
-type WalkForwardConfig struct {
-	Enable     bool
-	Rolling    bool
-	SplitRatio float64
-	TrainDays  int
-	TestDays   int
-	RollDays   int
-}
-
-type WalkForwardFold struct {
-	Train      []types.OHLCV
-	Test       []types.OHLCV
-	TrainStart time.Time
-	TrainEnd   time.Time
-	TestStart  time.Time
-	TestEnd    time.Time
-}
-
-type WalkForwardResults struct {
-	TrainResults *backtest.BacktestResults
-	TestResults  *backtest.BacktestResults
-	BestConfig   BacktestConfig
-	Fold         int
-}
-
-// splitByRatio splits data into train/test by ratio
-func splitByRatio(data []types.OHLCV, ratio float64) ([]types.OHLCV, []types.OHLCV) {
-	if ratio <= 0 || ratio >= 1 {
-		return data, nil
-	}
-	
-	n := int(float64(len(data)) * ratio)
-	if n < 1 || n >= len(data) {
-		return data, nil
-	}
-	
-	return data[:n], data[n:]
-}
-
-// createRollingFolds creates rolling walk-forward folds
-func createRollingFolds(data []types.OHLCV, trainDays, testDays, rollDays int) []WalkForwardFold {
-	var folds []WalkForwardFold
-	
-	trainDur := time.Duration(trainDays) * 24 * time.Hour
-	testDur := time.Duration(testDays) * 24 * time.Hour
-	rollDur := time.Duration(rollDays) * 24 * time.Hour
-	
-	if len(data) < 100 {
-		return folds // Need minimum data
-	}
-	
-	start := 0
-	for {
-		// Find train window
-		trainEndTs := data[start].Timestamp.Add(trainDur)
-		trainEnd := start
-		for trainEnd < len(data) && data[trainEnd].Timestamp.Before(trainEndTs) {
-			trainEnd++
-		}
-		
-		// Find test window
-		testEndTs := trainEndTs.Add(testDur)
-		testEnd := trainEnd
-		for testEnd < len(data) && data[testEnd].Timestamp.Before(testEndTs) {
-			testEnd++
-		}
-		
-		// Check if we have enough data
-		trainSize := trainEnd - start
-		testSize := testEnd - trainEnd
-		
-		if trainSize < 50 || testSize < 10 {
-			break // Not enough data for this fold
-		}
-		
-		fold := WalkForwardFold{
-			Train:      data[start:trainEnd],
-			Test:       data[trainEnd:testEnd],
-			TrainStart: data[start].Timestamp,
-			TrainEnd:   data[trainEnd-1].Timestamp,
-			TestStart:  data[trainEnd].Timestamp,
-			TestEnd:    data[testEnd-1].Timestamp,
-		}
-		
-		folds = append(folds, fold)
-		
-		// Roll forward
-		nextStartTs := data[start].Timestamp.Add(rollDur)
-		nextStart := start
-		for nextStart < len(data) && data[nextStart].Timestamp.Before(nextStartTs) {
-			nextStart++
-		}
-		
-		if nextStart <= start {
-			nextStart = start + 1
-		}
-		if nextStart >= len(data) {
-			break
-		}
-		
-		start = nextStart
-	}
-	
-	return folds
-}
-
-// runWalkForwardValidation runs the complete walk-forward validation
-// Note: This function will be replaced with pkg/validation in future iterations
-func runWalkForwardValidation(cfg *BacktestConfig, data []types.OHLCV, wfCfg WalkForwardConfig) {
-	// TODO: Replace with validation.RunWalkForwardValidation(cfg, data, validationConfig, optimizer, backtester)
-	fmt.Println("\n🔄 ================ WALK-FORWARD VALIDATION ================")
-	
-	if wfCfg.Rolling {
-		// Rolling walk-forward
-		fmt.Printf("Mode: Rolling Walk-Forward\n")
-		fmt.Printf("Train: %d days, Test: %d days, Roll: %d days\n", wfCfg.TrainDays, wfCfg.TestDays, wfCfg.RollDays)
-		
-		folds := createRollingFolds(data, wfCfg.TrainDays, wfCfg.TestDays, wfCfg.RollDays)
-		if len(folds) == 0 {
-			fmt.Println("❌ Not enough data for rolling walk-forward validation")
-			return
-		}
-		
-		fmt.Printf("Created %d folds\n\n", len(folds))
-		
-		var allResults []WalkForwardResults
-		
-		for i, fold := range folds {
-			fmt.Printf("📊 Fold %d/%d: Train %s → %s, Test %s → %s\n", 
-				i+1, len(folds),
-				fold.TrainStart.Format("2006-01-02"),
-				fold.TrainEnd.Format("2006-01-02"),
-				fold.TestStart.Format("2006-01-02"),
-				fold.TestEnd.Format("2006-01-02"))
-			
-			// Run GA on training data
-			trainResults, bestConfig := runGAOnData(cfg, fold.Train)
-			
-			// Test on out-of-sample data
-			testResults := runBacktestWithConfig(bestConfig, fold.Test)
-			
-			result := WalkForwardResults{
-				TrainResults: trainResults,
-				TestResults:  testResults,
-				BestConfig:   bestConfig,
-				Fold:         i + 1,
-			}
-			
-			allResults = append(allResults, result)
-			
-			fmt.Printf("  Train: %.2f%% return, %.2f%% drawdown\n", 
-				trainResults.TotalReturn*100, trainResults.MaxDrawdown*100)
-			fmt.Printf("  Test:  %.2f%% return, %.2f%% drawdown\n\n", 
-				testResults.TotalReturn*100, testResults.MaxDrawdown*100)
-		}
-		
-		// Print summary
-		printWalkForwardSummary(allResults)
-		
-	} else {
-		// Simple holdout validation
-		fmt.Printf("Mode: Simple Holdout\n")
-		fmt.Printf("Split: %.0f%% train, %.0f%% test\n", wfCfg.SplitRatio*100, (1-wfCfg.SplitRatio)*100)
-		
-		trainData, testData := splitByRatio(data, wfCfg.SplitRatio)
-		if len(testData) < 50 {
-			fmt.Println("❌ Not enough test data for validation")
-			return
-		}
-		
-		fmt.Printf("Train: %d candles (%s → %s)\n", 
-			len(trainData),
-			trainData[0].Timestamp.Format("2006-01-02"),
-			trainData[len(trainData)-1].Timestamp.Format("2006-01-02"))
-		fmt.Printf("Test:  %d candles (%s → %s)\n\n", 
-			len(testData),
-			testData[0].Timestamp.Format("2006-01-02"),
-			testData[len(testData)-1].Timestamp.Format("2006-01-02"))
-		
-		// Run GA on training data
-		fmt.Println("🧬 Running GA optimization on training data...")
-		trainResults, bestConfig := runGAOnData(cfg, trainData)
-		
-		// Test on out-of-sample data
-		fmt.Println("🧪 Testing optimized parameters on test data...")
-		testResults := runBacktestWithConfig(bestConfig, testData)
-		
-		// Print results
-		fmt.Println("\n📈 ================ WALK-FORWARD RESULTS ================")
-		fmt.Printf("TRAIN RESULTS:\n")
-		fmt.Printf("  Return:    %.2f%%\n", trainResults.TotalReturn*100)
-		fmt.Printf("  Drawdown:  %.2f%%\n", trainResults.MaxDrawdown*100)
-		fmt.Printf("  Trades:    %d\n", trainResults.TotalTrades)
-		
-		trainResults.UpdateMetrics()
-		fmt.Printf("  Sharpe:    %.2f\n", trainResults.SharpeRatio)
-		fmt.Printf("  ProfitFactor: %.2f\n", trainResults.ProfitFactor)
-		
-		fmt.Printf("\nTEST RESULTS (Out-of-Sample):\n")
-		fmt.Printf("  Return:    %.2f%%\n", testResults.TotalReturn*100)
-		fmt.Printf("  Drawdown:  %.2f%%\n", testResults.MaxDrawdown*100)
-		fmt.Printf("  Trades:    %d\n", testResults.TotalTrades)
-		
-		testResults.UpdateMetrics()
-		fmt.Printf("  Sharpe:    %.2f\n", testResults.SharpeRatio)
-		fmt.Printf("  ProfitFactor: %.2f\n", testResults.ProfitFactor)
-		
-		// Performance degradation analysis
-		returnDegradation := ((trainResults.TotalReturn - testResults.TotalReturn) / math.Max(0.01, math.Abs(trainResults.TotalReturn))) * 100
-		fmt.Printf("\n📊 ANALYSIS:\n")
-		fmt.Printf("  Return Degradation: %.1f%%\n", returnDegradation)
-		
-		if returnDegradation > 50 {
-			fmt.Printf("  ⚠️  HIGH OVERFITTING RISK - Test performance much worse than train\n")
-		} else if returnDegradation > 20 {
-			fmt.Printf("  ⚠️  MODERATE OVERFITTING - Some performance degradation\n")
-		} else if returnDegradation < -10 {
-			fmt.Printf("  ✅ ROBUST STRATEGY - Test performance better than train\n")
-		} else {
-			fmt.Printf("  ✅ GOOD GENERALIZATION - Consistent train/test performance\n")
-		}
-	}
-}
-
-// Helper function to run GA on specific data - now uses pkg/optimization
-func runGAOnData(cfg *BacktestConfig, data []types.OHLCV) (*backtest.BacktestResults, BacktestConfig) {
-	// Convert BacktestConfig to DCAConfig for pkg/optimization
-	dcaConfig := convertBacktestConfigToDCAConfig(cfg)
-	
-	// Create a temporary data file path (optimization requires a file path)
-	// For in-memory data, we'll use the original file path but override with data
-	dataFile := dcaConfig.DataFile
-	if dataFile == "" {
-		dataFile = "temp_data" // Fallback
-	}
-	
-	// Use pkg/optimization with the data
-	// Note: This is a limitation - pkg/optimization expects file paths
-	// For now, we'll use a simplified approach
-	results, bestConfigInterface, err := optimization.OptimizeWithGA(dcaConfig, dataFile, 0)
-	if err != nil {
-		log.Printf("GA optimization failed: %v", err)
-		// Fallback to simple backtest
-		engine := backtest.NewBacktestEngine(
-			cfg.InitialBalance,
-			cfg.Commission, 
-			createStrategy(cfg),
-			cfg.TPPercent,
-			cfg.MinOrderQty,
-			cfg.UseTPLevels,
-		)
-		results = engine.Run(data, cfg.WindowSize)
-		return results, *cfg
-	}
-	
-	// Convert back to BacktestConfig
-	bestDCAConfig := bestConfigInterface.(*config.DCAConfig)
-	bestBacktestConfig := convertDCAConfigToBacktestConfig(bestDCAConfig)
-	
-	return results, *bestBacktestConfig
-}
-
-// Helper function to run backtest with specific config and data
-func runBacktestWithConfig(cfg BacktestConfig, data []types.OHLCV) *backtest.BacktestResults {
-	engine := backtest.NewBacktestEngine(
-		cfg.InitialBalance,
-		cfg.Commission,
-		createStrategy(&cfg),
-		cfg.TPPercent,
-		cfg.MinOrderQty,
-		cfg.UseTPLevels,
-	)
-	
-	return engine.Run(data, cfg.WindowSize)
-}
-
-// Print summary of rolling walk-forward results
-func printWalkForwardSummary(results []WalkForwardResults) {
-	fmt.Println("📊 ================ WALK-FORWARD SUMMARY ================")
-	
-	var trainReturns, testReturns []float64
-	var trainDrawdowns, testDrawdowns []float64
-	
-	for _, r := range results {
-		trainReturns = append(trainReturns, r.TrainResults.TotalReturn*100)
-		testReturns = append(testReturns, r.TestResults.TotalReturn*100)
-		trainDrawdowns = append(trainDrawdowns, r.TrainResults.MaxDrawdown*100)
-		testDrawdowns = append(testDrawdowns, r.TestResults.MaxDrawdown*100)
-	}
-	
-	// Calculate averages
-	avgTrainReturn := average(trainReturns)
-	avgTestReturn := average(testReturns)
-	avgTrainDD := average(trainDrawdowns)
-	avgTestDD := average(testDrawdowns)
-	
-	fmt.Printf("AVERAGE PERFORMANCE ACROSS %d FOLDS:\n", len(results))
-	fmt.Printf("  Train Return:    %.2f%% ± %.2f%%\n", avgTrainReturn, stdDev(trainReturns))
-	fmt.Printf("  Test Return:     %.2f%% ± %.2f%%\n", avgTestReturn, stdDev(testReturns))
-	fmt.Printf("  Train Drawdown:  %.2f%% ± %.2f%%\n", avgTrainDD, stdDev(trainDrawdowns))
-	fmt.Printf("  Test Drawdown:   %.2f%% ± %.2f%%\n", avgTestDD, stdDev(testDrawdowns))
-	
-	// Consistency analysis
-	returnDegradation := ((avgTrainReturn - avgTestReturn) / math.Max(0.01, math.Abs(avgTrainReturn))) * 100
-	fmt.Printf("\nCONSISTENCY ANALYSIS:\n")
-	fmt.Printf("  Return Degradation: %.1f%%\n", returnDegradation)
-	
-	if returnDegradation > 30 {
-		fmt.Printf("  ⚠️  HIGH OVERFITTING RISK - Strategy may not generalize well\n")
-	} else if returnDegradation > 15 {
-		fmt.Printf("  ⚠️  MODERATE OVERFITTING - Some performance degradation\n")
-	} else {
-		fmt.Printf("  ✅ ROBUST STRATEGY - Good generalization across time periods\n")
-	}
-}
-
-// Helper functions for statistics
-func average(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, v := range values {
-		sum += v
-	}
-	return sum / float64(len(values))
-}
-
-func stdDev(values []float64) float64 {
-	if len(values) <= 1 {
-		return 0
-	}
-	
-	avg := average(values)
-	sumSquares := 0.0
-	for _, v := range values {
-		diff := v - avg
-		sumSquares += diff * diff
-	}
-	
-	return math.Sqrt(sumSquares / float64(len(values)-1))
-}
-
-// Helper to resolve default output dir
-// defaultOutputDir - Note: This function has been moved to pkg/reporting/paths.go
-func defaultOutputDir(symbol, interval string) string {
-	// TODO: Replace with reporting.DefaultOutputDir(symbol, interval)
-	return reporting.DefaultOutputDir(symbol, interval)
 }

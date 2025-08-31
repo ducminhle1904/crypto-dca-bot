@@ -292,9 +292,6 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	dcaConfig.PriceThreshold = RandomChoice(ranges.PriceThresholds, rng)
 	dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
 	
-	// Randomize combo type
-	dcaConfig.UseAdvancedCombo = rng.Float64() < 0.5
-	
 	// Set indicators based on combo type
 	if dcaConfig.UseAdvancedCombo {
 		dcaConfig.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
@@ -359,37 +356,29 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 		childConfig.TPPercent = parent2Config.TPPercent
 	}
 	
-	// Crossover combo type
-	if rng.Float64() < 0.5 {
-		childConfig.UseAdvancedCombo = parent2Config.UseAdvancedCombo
-		
-		// If combo type changed, update indicators accordingly
-		if childConfig.UseAdvancedCombo {
-			childConfig.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-			// Crossover advanced parameters
-			if rng.Float64() < 0.5 { childConfig.HullMAPeriod = parent2Config.HullMAPeriod }
-			if rng.Float64() < 0.5 { childConfig.MFIPeriod = parent2Config.MFIPeriod }
-			if rng.Float64() < 0.5 { childConfig.MFIOversold = parent2Config.MFIOversold }
-			if rng.Float64() < 0.5 { childConfig.MFIOverbought = parent2Config.MFIOverbought }
-			if rng.Float64() < 0.5 { childConfig.KeltnerPeriod = parent2Config.KeltnerPeriod }
-			if rng.Float64() < 0.5 { childConfig.KeltnerMultiplier = parent2Config.KeltnerMultiplier }
-			if rng.Float64() < 0.5 { childConfig.WaveTrendN1 = parent2Config.WaveTrendN1 }
-			if rng.Float64() < 0.5 { childConfig.WaveTrendN2 = parent2Config.WaveTrendN2 }
-			if rng.Float64() < 0.5 { childConfig.WaveTrendOverbought = parent2Config.WaveTrendOverbought }
-			if rng.Float64() < 0.5 { childConfig.WaveTrendOversold = parent2Config.WaveTrendOversold }
-		} else {
-			childConfig.Indicators = []string{"rsi", "macd", "bb", "ema"}
-			// Crossover classic parameters
-			if rng.Float64() < 0.5 { childConfig.RSIPeriod = parent2Config.RSIPeriod }
-			if rng.Float64() < 0.5 { childConfig.RSIOversold = parent2Config.RSIOversold }
-			if rng.Float64() < 0.5 { childConfig.RSIOverbought = parent2Config.RSIOverbought }
-			if rng.Float64() < 0.5 { childConfig.MACDFast = parent2Config.MACDFast }
-			if rng.Float64() < 0.5 { childConfig.MACDSlow = parent2Config.MACDSlow }
-			if rng.Float64() < 0.5 { childConfig.MACDSignal = parent2Config.MACDSignal }
-			if rng.Float64() < 0.5 { childConfig.BBPeriod = parent2Config.BBPeriod }
-			if rng.Float64() < 0.5 { childConfig.BBStdDev = parent2Config.BBStdDev }
-			if rng.Float64() < 0.5 { childConfig.EMAPeriod = parent2Config.EMAPeriod }
-		}
+	if childConfig.UseAdvancedCombo {
+		// Crossover advanced parameters from parent2
+		if rng.Float64() < 0.5 { childConfig.HullMAPeriod = parent2Config.HullMAPeriod }
+		if rng.Float64() < 0.5 { childConfig.MFIPeriod = parent2Config.MFIPeriod }
+		if rng.Float64() < 0.5 { childConfig.MFIOversold = parent2Config.MFIOversold }
+		if rng.Float64() < 0.5 { childConfig.MFIOverbought = parent2Config.MFIOverbought }
+		if rng.Float64() < 0.5 { childConfig.KeltnerPeriod = parent2Config.KeltnerPeriod }
+		if rng.Float64() < 0.5 { childConfig.KeltnerMultiplier = parent2Config.KeltnerMultiplier }
+		if rng.Float64() < 0.5 { childConfig.WaveTrendN1 = parent2Config.WaveTrendN1 }
+		if rng.Float64() < 0.5 { childConfig.WaveTrendN2 = parent2Config.WaveTrendN2 }
+		if rng.Float64() < 0.5 { childConfig.WaveTrendOverbought = parent2Config.WaveTrendOverbought }
+		if rng.Float64() < 0.5 { childConfig.WaveTrendOversold = parent2Config.WaveTrendOversold }
+	} else {
+		// Crossover classic parameters from parent2
+		if rng.Float64() < 0.5 { childConfig.RSIPeriod = parent2Config.RSIPeriod }
+		if rng.Float64() < 0.5 { childConfig.RSIOversold = parent2Config.RSIOversold }
+		if rng.Float64() < 0.5 { childConfig.RSIOverbought = parent2Config.RSIOverbought }
+		if rng.Float64() < 0.5 { childConfig.MACDFast = parent2Config.MACDFast }
+		if rng.Float64() < 0.5 { childConfig.MACDSlow = parent2Config.MACDSlow }
+		if rng.Float64() < 0.5 { childConfig.MACDSignal = parent2Config.MACDSignal }
+		if rng.Float64() < 0.5 { childConfig.BBPeriod = parent2Config.BBPeriod }
+		if rng.Float64() < 0.5 { childConfig.BBStdDev = parent2Config.BBStdDev }
+		if rng.Float64() < 0.5 { childConfig.EMAPeriod = parent2Config.EMAPeriod }
 	}
 }
 
@@ -412,18 +401,6 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 	}
 	if rng.Float64() < 0.1 {
 		dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
-	}
-	
-	// Mutate combo type (5% chance)
-	if rng.Float64() < 0.05 {
-		dcaConfig.UseAdvancedCombo = !dcaConfig.UseAdvancedCombo
-		
-		// Update indicators based on new combo type
-		if dcaConfig.UseAdvancedCombo {
-			dcaConfig.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-		} else {
-			dcaConfig.Indicators = []string{"rsi", "macd", "bb", "ema"}
-		}
 	}
 	
 	// Mutate indicator parameters based on current combo type using predefined ranges
