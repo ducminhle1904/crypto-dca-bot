@@ -468,8 +468,9 @@ func runDCABacktestWithData(cfg *configpkg.DCAConfig, data []types.OHLCV) *backt
 	return results
 }
 
-// createDCAStrategy creates a strategy from DCAConfig (adapted from main.go)
+// createDCAStrategy creates a strategy from DCAConfig (optimized version)
 func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
+	// Use optimized Enhanced DCA strategy
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
 	dca.SetPriceThreshold(cfg.PriceThreshold)
 	
@@ -502,7 +503,7 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 			dca.AddIndicator(wavetrend)
 		}
 	} else {
-		// Classic combo indicators
+		// Classic combo indicators (with optimizations)
 		if include["rsi"] {
 			rsi := indicators.NewRSI(cfg.RSIPeriod)
 			rsi.SetOversold(cfg.RSIOversold)
@@ -514,6 +515,7 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 			dca.AddIndicator(macd)
 		}
 		if include["bb"] {
+			// Use optimized Bollinger Bands for better performance in GA
 			bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 			dca.AddIndicator(bb)
 		}

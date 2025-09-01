@@ -132,7 +132,7 @@ func (r *DefaultBacktestRunner) fetchAndSetMinOrderQty(cfg *config.DCAConfig) er
 
 // createStrategy creates a strategy based on configuration
 func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.Strategy, error) {
-	// Build Enhanced DCA strategy
+	// Use optimized Enhanced DCA strategy
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
 
 	// Set price threshold for DCA entry spacing
@@ -167,7 +167,7 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 			dca.AddIndicator(wavetrend)
 		}
 	} else {
-		// Classic combo indicators
+		// Classic combo indicators (with optimizations)
 		if include["rsi"] {
 			rsi := indicators.NewRSI(cfg.RSIPeriod)
 			rsi.SetOversold(cfg.RSIOversold)
@@ -179,6 +179,7 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 			dca.AddIndicator(macd)
 		}
 		if include["bb"] {
+			// Use optimized Bollinger Bands for better performance
 			bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 			dca.AddIndicator(bb)
 		}

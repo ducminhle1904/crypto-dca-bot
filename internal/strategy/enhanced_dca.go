@@ -10,7 +10,7 @@ import (
 
 // EnhancedDCAStrategy implements a Dollar Cost Averaging strategy with multiple technical indicators
 type EnhancedDCAStrategy struct {
-	indicators       []indicators.TechnicalIndicator
+	indicatorManager *indicators.IndicatorManager
 	baseAmount       float64
 	maxMultiplier    float64
 	minConfidence    float64
@@ -22,12 +22,12 @@ type EnhancedDCAStrategy struct {
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
 func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 	return &EnhancedDCAStrategy{
-		indicators:     make([]indicators.TechnicalIndicator, 0),
-		baseAmount:     baseAmount,
-		maxMultiplier:  3.0,
-		minConfidence:  0.5,
-		priceThreshold: 0.0, // Default: no threshold (disabled)
-		lastEntryPrice: 0.0, // No previous entry
+		indicatorManager: indicators.NewIndicatorManager(),
+		baseAmount:       baseAmount,
+		maxMultiplier:    3.0,
+		minConfidence:    0.5,
+		priceThreshold:   0.0, // Default: no threshold (disabled)
+		lastEntryPrice:   0.0, // No previous entry
 	}
 }
 
@@ -38,7 +38,7 @@ func (s *EnhancedDCAStrategy) SetPriceThreshold(threshold float64) {
 
 // AddIndicator adds a technical indicator to the strategy
 func (s *EnhancedDCAStrategy) AddIndicator(indicator indicators.TechnicalIndicator) {
-	s.indicators = append(s.indicators, indicator)
+	s.indicatorManager.AddIndicator(indicator)
 }
 
 func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDecision, error) {
@@ -46,54 +46,37 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		return &TradeDecision{Action: ActionHold}, nil
 	}
 
-	// Get current price
-	currentPrice := data[len(data)-1].Close
+	currentCandle := data[len(data)-1]
+	currentPrice := currentCandle.Close
 
-	// Collect signals from all indicators
-	buySignals := 0
-	sellSignals := 0
-	buyStrength := 0.0
-	sellStrength := 0.0
-
-	for _, indicator := range s.indicators {
-		// check the sufficiency of the data
-		if len(data) < indicator.GetRequiredPeriods() {
-			continue
-		}
-
-		shouldBuy, err := indicator.ShouldBuy(currentPrice, data)
-		if err != nil {
-			continue
-		}
-
-		shouldSell, err := indicator.ShouldSell(currentPrice, data)
-		if err != nil {
-			continue
-		}
-
-		if shouldBuy {
-			buySignals++
-			buyStrength += indicator.GetSignalStrength()
-		} else if shouldSell {
-			sellSignals++
-			sellStrength += indicator.GetSignalStrength()
-		}
-	}
-
-	// make a decision based on consensus
-	totalIndicators := len(s.indicators)
-	if totalIndicators == 0 {
+	// Process all indicators in batch (major optimization)
+	results := s.indicatorManager.ProcessCandle(currentCandle, data)
+	
+	// Check if we have any indicators configured
+	if len(results) == 0 {
 		return &TradeDecision{Action: ActionHold, Reason: "No indicators configured"}, nil
 	}
 
-	// Only consider indicators that gave active signals (buy or sell)
+	// Efficiently count signals using batch results
+	buySignals, sellSignals, buyStrength, _ := s.indicatorManager.CountActiveSignals(results)
+	
+	// Track failed indicators for debugging
+	failedCount := 0
+	for _, result := range results {
+		if result.Error != nil {
+			failedCount++
+		}
+	}
+	
+	// Calculate active signals (exclude failed indicators)
+	totalIndicators := len(results) - failedCount
 	activeSignals := buySignals + sellSignals
 	
 	// If no indicators are giving active signals, hold
-	if activeSignals == 0 {
+	if activeSignals == 0 || totalIndicators == 0 {
 		return &TradeDecision{
 			Action: ActionHold, 
-			Reason: "No active buy/sell signals from indicators",
+			Reason: fmt.Sprintf("No active signals from %d indicators", totalIndicators),
 		}, nil
 	}
 	
@@ -103,10 +86,8 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	if confidence >= s.minConfidence {
 		// Apply price threshold check for DCA entries
 		if s.priceThreshold > 0 && s.lastEntryPrice > 0 {
-			// Calculate price drop since last entry
 			priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
 			
-			// If price hasn't dropped enough, skip this entry
 			if priceDrop < s.priceThreshold {
 				return &TradeDecision{
 					Action: ActionHold,
@@ -116,33 +97,32 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			}
 		}
 
-		// Calculate net strength for buy decision (only use buy strength for positive values)
-		netStrength := buyStrength
-		if buySignals == 0 {
-			netStrength = 0.0
-		} else {
-			// Average strength per buy signal
+		// Calculate net strength for buy decision
+		netStrength := 0.0
+		if buySignals > 0 {
 			netStrength = buyStrength / float64(buySignals)
 		}
 		
 		amount := s.calculatePositionSize(netStrength, confidence)
 		
-		// Update last entry price when we decide to buy
+		// Update last entry price and time
 		s.lastEntryPrice = currentPrice
-		s.lastTradeTime = data[len(data)-1].Timestamp
+		s.lastTradeTime = currentCandle.Timestamp
 		
 		return &TradeDecision{
 			Action:     ActionBuy,
 			Amount:     amount,
 			Confidence: confidence,
 			Strength:   netStrength,
-			Reason:     "Buy signal consensus reached",
+			Reason:     fmt.Sprintf("Buy consensus: %d/%d signals (%.1f%% confidence)", 
+						buySignals, activeSignals, confidence*100),
 		}, nil
 	}
 
 	return &TradeDecision{
 		Action: ActionHold,
-		Reason: "Insufficient buy signal consensus",
+		Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d signals (%.1f%% < %.1f%%)", 
+				buySignals, activeSignals, confidence*100, s.minConfidence*100),
 	}, nil
 }
 
@@ -166,6 +146,46 @@ func (s *EnhancedDCAStrategy) GetName() string {
 func (s *EnhancedDCAStrategy) OnCycleComplete() {
 	// Reset the last entry price so the next cycle starts fresh
 	s.lastEntryPrice = 0.0
+	// Clear indicator cache to start fresh for next cycle
+	s.indicatorManager.ClearCache()
+}
+
+// GetIndicatorManager returns the indicator manager (useful for advanced configuration)
+func (s *EnhancedDCAStrategy) GetIndicatorManager() *indicators.IndicatorManager {
+	return s.indicatorManager
+}
+
+// GetIndicatorCount returns the number of configured indicators
+func (s *EnhancedDCAStrategy) GetIndicatorCount() int {
+	return len(s.indicatorManager.GetIndicators())
+}
+
+// GetLastResults returns the most recent indicator results (useful for debugging)
+func (s *EnhancedDCAStrategy) GetLastResults() map[string]*indicators.IndicatorResult {
+	return s.indicatorManager.GetCachedResults()
+}
+
+// SetMinConfidence sets the minimum confidence threshold for buy signals
+func (s *EnhancedDCAStrategy) SetMinConfidence(confidence float64) {
+	s.minConfidence = confidence
+}
+
+// SetMaxMultiplier sets the maximum position size multiplier
+func (s *EnhancedDCAStrategy) SetMaxMultiplier(multiplier float64) {
+	s.maxMultiplier = multiplier
+}
+
+// GetConfiguration returns current strategy configuration
+func (s *EnhancedDCAStrategy) GetConfiguration() map[string]interface{} {
+	return map[string]interface{}{
+		"base_amount":      s.baseAmount,
+		"max_multiplier":   s.maxMultiplier,
+		"min_confidence":   s.minConfidence,
+		"price_threshold":  s.priceThreshold,
+		"indicator_count":  s.GetIndicatorCount(),
+		"last_entry_price": s.lastEntryPrice,
+		"last_trade_time":  s.lastTradeTime,
+	}
 }
 
 

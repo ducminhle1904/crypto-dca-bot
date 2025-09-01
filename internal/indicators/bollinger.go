@@ -21,12 +21,18 @@ type BollingerBands struct {
 	stdDev     float64
 	maType     MovingAverageType
 	
-	// Stateful components for non-repainting behavior
+	// Stateful components for efficient calculation
 	ema        *EMA      // For EMA-based middle band
-	values     []float64 // Rolling window for variance calculation
-	sum        float64   // Running sum for SMA calculation
+	values     []float64 // Circular buffer for price values
+	writeIndex int       // Current write position in circular buffer
+	
+	// Rolling statistics for O(1) variance calculation
+	sum        float64   // Running sum for SMA
+	sumSquares float64   // Running sum of squares
+	count      int       // Number of values in buffer
 	initialized bool
 	
+	// Cached results
 	lastUpper  float64
 	lastMiddle float64
 	lastLower  float64
@@ -45,10 +51,12 @@ func NewBollingerBandsEMA(period int, stdDev float64) *BollingerBands {
 // NewBollingerBandsWithType creates a new Bollinger Bands indicator with specified MA type
 func NewBollingerBandsWithType(period int, stdDev float64, maType MovingAverageType) *BollingerBands {
 	bb := &BollingerBands{
-		period: period,
-		stdDev: stdDev,
-		maType: maType,
-		values: make([]float64, 0, period), // Pre-allocate for efficiency
+		period:     period,
+		stdDev:     stdDev,
+		maType:     maType,
+		values:     make([]float64, period), // Pre-allocated circular buffer
+		writeIndex: 0,
+		count:      0,
 	}
 	
 	// Initialize EMA if using EMA mode
@@ -74,7 +82,7 @@ func (bb *BollingerBands) Calculate(data []types.OHLCV) (float64, error) {
 	return bb.incrementalCalculation(currentPrice)
 }
 
-// initialCalculation sets up the initial rolling window
+// initialCalculation sets up the initial rolling window and statistics
 func (bb *BollingerBands) initialCalculation(data []types.OHLCV) (float64, error) {
 	if len(data) < bb.period {
 		return 0, errors.New("insufficient data for Bollinger Bands initialization")
@@ -88,27 +96,29 @@ func (bb *BollingerBands) initialCalculation(data []types.OHLCV) (float64, error
 		}
 	}
 
-	// Initialize rolling window with the last 'period' values for standard deviation
-	bb.values = make([]float64, bb.period)
-	bb.sum = 0.0
-	
+	// Initialize circular buffer and rolling statistics
 	startIdx := len(data) - bb.period
+	bb.sum = 0.0
+	bb.sumSquares = 0.0
+	
 	for i := 0; i < bb.period; i++ {
-		bb.values[i] = data[startIdx+i].Close
-		if bb.maType == MA_SMA {
-			bb.sum += bb.values[i]
-		}
+		price := data[startIdx+i].Close
+		bb.values[i] = price
+		bb.sum += price
+		bb.sumSquares += price * price
 	}
-
+	
+	bb.count = bb.period
+	bb.writeIndex = 0
 	bb.initialized = true
+	
 	return bb.calculateBands()
 }
 
-// incrementalCalculation updates with new price using rolling window
+// incrementalCalculation updates with new price using O(1) rolling statistics
 func (bb *BollingerBands) incrementalCalculation(newPrice float64) (float64, error) {
 	// Update EMA if using EMA mode
 	if bb.maType == MA_EMA {
-		// Create single data point for EMA update
 		singlePoint := []types.OHLCV{{Close: newPrice}}
 		_, err := bb.ema.Calculate(singlePoint)
 		if err != nil {
@@ -116,32 +126,31 @@ func (bb *BollingerBands) incrementalCalculation(newPrice float64) (float64, err
 		}
 	}
 	
-	// Update rolling window for standard deviation calculation
-	oldestValue := bb.values[0]
+	// Update rolling statistics using circular buffer
+	oldPrice := bb.values[bb.writeIndex]
 	
-	// Shift all values left and add new value at end
-	copy(bb.values[:bb.period-1], bb.values[1:])
-	bb.values[bb.period-1] = newPrice
+	// O(1) update of rolling statistics
+	bb.sum = bb.sum - oldPrice + newPrice
+	bb.sumSquares = bb.sumSquares - (oldPrice * oldPrice) + (newPrice * newPrice)
 	
-	// Update running sum efficiently (needed for SMA mode)
-	if bb.maType == MA_SMA {
-		bb.sum = bb.sum - oldestValue + newPrice
-	}
+	// Update circular buffer
+	bb.values[bb.writeIndex] = newPrice
+	bb.writeIndex = (bb.writeIndex + 1) % bb.period
 
 	return bb.calculateBands()
 }
 
-// calculateBands computes the actual band values from current window
+// calculateBands computes bands from pre-calculated rolling statistics (O(1))
 func (bb *BollingerBands) calculateBands() (float64, error) {
 	var middleBand float64
 	
 	// Calculate middle band based on MA type
 	switch bb.maType {
 	case MA_SMA:
-		// Use SMA from rolling window
+		// O(1) SMA from rolling sum
 		middleBand = bb.sum / float64(bb.period)
 	case MA_EMA:
-		// Use stateful EMA (already calculated)
+		// Use pre-calculated EMA
 		middleBand = bb.ema.GetLastValue()
 	default:
 		return 0, errors.New("unsupported moving average type")
@@ -149,14 +158,16 @@ func (bb *BollingerBands) calculateBands() (float64, error) {
 	
 	bb.lastMiddle = middleBand
 
-	// Calculate variance from rolling window (same for both SMA and EMA)
-	// Note: We use the price window for standard deviation, not the MA values
-	variance := 0.0
-	for _, value := range bb.values {
-		diff := value - middleBand
-		variance += diff * diff
+	// O(1) variance calculation using the formula: Var = E[X²] - (E[X])²
+	meanSquare := bb.sumSquares / float64(bb.period)
+	squareMean := middleBand * middleBand
+	variance := meanSquare - squareMean
+	
+	// Handle numerical precision issues
+	if variance < 0 {
+		variance = 0
 	}
-	variance /= float64(bb.period)
+	
 	standardDev := math.Sqrt(variance)
 
 	// Calculate upper and lower bands
