@@ -1,8 +1,9 @@
 package indicators
 
 import (
-	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 	"time"
+
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
 type TechnicalIndicator interface {

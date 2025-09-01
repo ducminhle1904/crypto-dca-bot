@@ -22,12 +22,12 @@ type EnhancedDCAStrategy struct {
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
 func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 	return &EnhancedDCAStrategy{
-		indicators:       make([]indicators.TechnicalIndicator, 0),
-		baseAmount:       baseAmount,
-		maxMultiplier:    3.0,
-		minConfidence:    0.5,
-		priceThreshold:   0.0, // Default: no threshold (disabled)
-		lastEntryPrice:   0.0, // No previous entry
+		indicators:     make([]indicators.TechnicalIndicator, 0),
+		baseAmount:     baseAmount,
+		maxMultiplier:  3.0,
+		minConfidence:  0.5,
+		priceThreshold: 0.0, // Default: no threshold (disabled)
+		lastEntryPrice: 0.0, // No previous entry
 	}
 }
 
@@ -167,5 +167,7 @@ func (s *EnhancedDCAStrategy) OnCycleComplete() {
 	// Reset the last entry price so the next cycle starts fresh
 	s.lastEntryPrice = 0.0
 }
+
+
 
 

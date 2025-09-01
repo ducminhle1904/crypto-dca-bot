@@ -268,6 +268,36 @@ func (b *BybitAdapter) GetOrderStatus(ctx context.Context, orderID string) (*exc
 	}
 }
 
+// GetOpenOrders retrieves open orders for a symbol
+func (b *BybitAdapter) GetOpenOrders(ctx context.Context, category, symbol string) ([]*exchange.Order, error) {
+	orders, err := b.client.GetOpenOrders(ctx, category, symbol)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert Bybit orders to exchange orders
+	var exchangeOrders []*exchange.Order
+	for _, order := range orders {
+		exchangeOrder := &exchange.Order{
+			OrderID:       order.OrderID,
+			Symbol:        order.Symbol,
+			Side:          exchange.OrderSide(order.Side),
+			OrderType:     exchange.OrderType(order.OrderType),
+			Quantity:      order.Qty,
+			Price:         order.Price,
+			OrderStatus:   string(order.OrderStatus),
+			CumExecQty:    order.CumExecQty,
+			CumExecValue:  order.CumExecValue,
+			AvgPrice:      order.AvgPrice,
+			CreatedTime:   order.CreatedTime,
+			UpdatedTime:   order.UpdatedTime,
+		}
+		exchangeOrders = append(exchangeOrders, exchangeOrder)
+	}
+	
+	return exchangeOrders, nil
+}
+
 // GetTradingConstraints retrieves trading constraints for a symbol
 func (b *BybitAdapter) GetTradingConstraints(ctx context.Context, category, symbol string) (*exchange.TradingConstraints, error) {
 	minQty, maxQty, qtyStep, err := b.client.GetInstrumentManager().GetQuantityConstraints(ctx, category, symbol)
