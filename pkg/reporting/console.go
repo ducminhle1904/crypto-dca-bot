@@ -49,11 +49,6 @@ func (r *DefaultConsoleReporter) OutputResults(results *backtest.BacktestResults
 	fmt.Printf("🎯 Max Cycle Exposure: %.1f%%\n", results.MaxCycleExposure*100)
 	fmt.Printf("🎯 Avg Cycle Exposure: %.1f%%\n", results.AvgCycleExposure*100)
 	fmt.Printf("🔄 Total Turnover:     %.2fx\n", results.TotalTurnover)
-	
-	// Note: Combo information is already displayed at the start of the backtest
-	// in the runBacktestWithData function
-	
-	fmt.Println("\n" + strings.Repeat("=", 50))
 }
 
 // PrintConfig prints configuration to console
@@ -139,11 +134,6 @@ func stdDev(values []float64) float64 {
 
 // OutputResultsWithContext prints results with symbol and interval context
 func (r *DefaultConsoleReporter) OutputResultsWithContext(results *backtest.BacktestResults, symbol, interval string) {
-	// Display context header like the original
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Printf("Run: %s @ %s\n", strings.ToUpper(symbol), interval)
-	
-	// Then display the regular results
 	r.OutputResults(results)
 }
 

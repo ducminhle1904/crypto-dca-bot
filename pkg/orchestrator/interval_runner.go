@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
@@ -16,15 +17,18 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/validation"
 )
 
-// DefaultIntervalRunner implements the IntervalRunner interface
+// DefaultIntervalRunner implements the IntervalRunner interface with performance optimizations
 type DefaultIntervalRunner struct {
 	backtestRunner BacktestRunner
+	minQtyCache    map[string]float64 // Cache minimum order quantities to avoid API calls
+	cacheMutex     sync.RWMutex
 }
 
-// NewDefaultIntervalRunner creates a new default interval runner
+// NewDefaultIntervalRunner creates a new default interval runner with performance optimizations
 func NewDefaultIntervalRunner() IntervalRunner {
 	return &DefaultIntervalRunner{
 		backtestRunner: NewDefaultBacktestRunner(),
+		minQtyCache:    make(map[string]float64),
 	}
 }
 
@@ -97,10 +101,11 @@ func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, 
 	cfgCopy.DataFile = dataFile
 	cfgCopy.Interval = interval
 	
-	// Fetch minimum order quantity for this interval
-	backtestRunner := NewDefaultBacktestRunner()
-	if err := backtestRunner.(*DefaultBacktestRunner).fetchAndSetMinOrderQty(&cfgCopy); err != nil {
+	// PERFORMANCE FIX: Use cached minimum order quantity to avoid API calls
+	if err := r.fetchAndSetMinOrderQtyCached(&cfgCopy); err != nil {
 		log.Printf("⚠️ Could not fetch minimum order quantity for %s: %v", interval, err)
+		// Set a sensible default instead of failing
+		cfgCopy.MinOrderQty = 0.001 // Default for most USDT pairs
 	}
 	
 	var optimizedCfg *config.DCAConfig
@@ -127,7 +132,8 @@ func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, 
 		optimizedCfg = optimizedCfgInterface.(*config.DCAConfig)
 	} else {
 		log.Printf("📊 Running backtest for interval: %s", interval)
-		results, err = backtestRunner.RunWithFile(&cfgCopy, selectedPeriod)
+		// PERFORMANCE FIX: Reuse existing backtest runner
+		results, err = r.backtestRunner.RunWithFile(&cfgCopy, selectedPeriod)
 		if err != nil {
 			return nil, fmt.Errorf("backtest failed for interval %s: %w", interval, err)
 		}
@@ -143,8 +149,10 @@ func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, 
 	}, nil
 }
 
-// runWalkForwardForInterval runs walk-forward validation for a specific interval
+// runWalkForwardForInterval runs walk-forward validation for a specific interval with detailed logging
 func (r *DefaultIntervalRunner) runWalkForwardForInterval(cfg *config.DCAConfig, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) error {
+	log.Printf("🔄 [%s] Walk-Forward Validation starting...", cfg.Interval)
+	
 	// Load data for walk-forward validation
 	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
@@ -155,22 +163,95 @@ func (r *DefaultIntervalRunner) runWalkForwardForInterval(cfg *config.DCAConfig,
 		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 	}
 	
-	// Run walk-forward validation using pkg/validation
-	_, err = validation.RunWalkForwardValidation(cfg, data, *wfConfig,
+	// Run walk-forward validation in quiet mode
+	summary, err := validation.RunQuietWalkForwardValidation(cfg, data, *wfConfig,
 		func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
+			// Quiet optimization for intervals
 			return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
 		},
 		func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
+			// Quiet testing for intervals
 			dcaConfig := cfg.(*config.DCAConfig)
 			results, err := r.backtestRunner.RunWithData(dcaConfig, data)
 			if err != nil {
-				log.Printf("Error in validation backtest: %v", err)
 				return nil
 			}
 			return results
 		})
+		
+	if err != nil {
+		return fmt.Errorf("walk-forward validation failed for interval %s: %w", cfg.Interval, err)
+	}
 	
-	return err
+	// Display clean interval-specific summary
+	r.printCleanIntervalWalkForwardSummary(cfg.Interval, summary)
+	
+	return nil
+}
+
+// fetchAndSetMinOrderQtyCached fetches minimum order quantity with caching to avoid redundant API calls
+func (r *DefaultIntervalRunner) fetchAndSetMinOrderQtyCached(cfg *config.DCAConfig) error {
+	// Create cache key
+	cacheKey := cfg.Symbol
+	
+	// Check cache first (read lock)
+	r.cacheMutex.RLock()
+	if minQty, exists := r.minQtyCache[cacheKey]; exists {
+		r.cacheMutex.RUnlock()
+		cfg.MinOrderQty = minQty
+		log.Printf("ℹ️ Using cached minimum order quantity for %s: %.6f", cfg.Symbol, minQty)
+		return nil
+	}
+	r.cacheMutex.RUnlock()
+	
+	// If not in cache, fetch once and cache it (write lock)
+	r.cacheMutex.Lock()
+	defer r.cacheMutex.Unlock()
+	
+	// Double-check in case another goroutine filled the cache
+	if minQty, exists := r.minQtyCache[cacheKey]; exists {
+		cfg.MinOrderQty = minQty
+		log.Printf("ℹ️ Using cached minimum order quantity for %s: %.6f", cfg.Symbol, minQty)
+		return nil
+	}
+	
+	// Fetch from API (this is the expensive call)
+	runner := r.backtestRunner.(*DefaultBacktestRunner)
+	if err := runner.fetchAndSetMinOrderQty(cfg); err != nil {
+		return err
+	}
+	
+	// Cache the result
+	r.minQtyCache[cacheKey] = cfg.MinOrderQty
+	log.Printf("✅ Fetched and cached minimum order quantity for %s: %.6f", cfg.Symbol, cfg.MinOrderQty)
+	
+	return nil
+}
+
+// printCleanIntervalWalkForwardSummary displays a concise walk-forward validation summary for a specific interval
+func (r *DefaultIntervalRunner) printCleanIntervalWalkForwardSummary(interval string, summary *validation.WalkForwardSummary) {
+	// Quick assessment
+	assessment := "🚨"
+	if summary.ReturnDegradation < 0.05 {
+		assessment = "✅"
+	} else if summary.ReturnDegradation < 0.15 {
+		assessment = "⚠️"
+	}
+	
+	profitable := ""
+	if summary.AverageTestReturn > 0 {
+		profitable = "Profitable"
+	} else {
+		profitable = "Unprofitable"
+	}
+	
+	log.Printf("   [%s] Train=%.1f%%, Test=%.1f%%, Degradation=%.1f%% | %s %s", 
+		strings.ToUpper(interval),
+		summary.AverageTrainReturn*100, 
+		summary.AverageTestReturn*100, 
+		summary.ReturnDegradation*100,
+		assessment,
+		profitable)
 }
 
 // Helper functions removed - dataRoot and exchange are now passed directly

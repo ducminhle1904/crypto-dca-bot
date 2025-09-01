@@ -95,7 +95,6 @@ func (p *CachedProvider) GetName() string {
 func (p *CachedProvider) LoadData(source string) ([]types.OHLCV, error) {
 	// Check cache first
 	if cachedData, exists := p.cache.Get(source); exists {
-		log.Printf("ℹ️ Using cached data for %s (%d records)", filepath.Base(source), len(cachedData))
 		return cachedData, nil
 	}
 

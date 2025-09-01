@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
@@ -37,24 +38,32 @@ func NewOrchestratorWithComponents(backtestRunner BacktestRunner, intervalRunner
 
 // RunSingleBacktest executes a single backtest with the given configuration
 func (o *DefaultOrchestrator) RunSingleBacktest(cfg *config.DCAConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, error) {
+	start := time.Now()
+	
 	log.Println("🚀 Starting Single DCA Bot Backtest")
 	log.Printf("📊 Symbol: %s", cfg.Symbol)
 	log.Printf("💰 Initial Balance: $%.2f", cfg.InitialBalance)
 	log.Printf("📈 Base DCA Amount: $%.2f", cfg.BaseAmount)
 	log.Printf("🔄 Max Multiplier: %.2f", cfg.MaxMultiplier)
 	
-	return o.backtestRunner.RunWithFile(cfg, selectedPeriod)
+	results, err := o.backtestRunner.RunWithFile(cfg, selectedPeriod)
+	if err != nil {
+		return nil, err
+	}
+	
+	log.Printf("⚡ Performance: Single backtest completed in %s", time.Since(start).Truncate(time.Millisecond))
+	return results, nil
 }
 
 // RunOptimizedBacktest executes optimization + backtest workflow
 func (o *DefaultOrchestrator) RunOptimizedBacktest(cfg *config.DCAConfig, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) (*backtest.BacktestResults, *config.DCAConfig, error) {
+	start := time.Now()
+	
 	log.Println("🚀 Starting DCA Bot Optimization")
 	log.Printf("📊 Symbol: %s", cfg.Symbol)
 	
 	// Check if walk-forward validation is enabled
 	if wfConfig != nil && wfConfig.Enable {
-		log.Println("🔄 Walk-forward validation enabled")
-		
 		// Run walk-forward validation first
 		err := o.runWalkForwardValidation(cfg, selectedPeriod, wfConfig)
 		if err != nil {
@@ -65,13 +74,22 @@ func (o *DefaultOrchestrator) RunOptimizedBacktest(cfg *config.DCAConfig, select
 	
 	// Run genetic algorithm optimization
 	log.Println("🧬 Running genetic algorithm optimization...")
+	optimizationStart := time.Now()
+	
 	bestResults, bestConfigInterface, err := optimization.OptimizeWithGA(cfg, cfg.DataFile, selectedPeriod)
 	if err != nil {
 		return nil, nil, fmt.Errorf("optimization failed: %w", err)
 	}
 	
 	bestConfig := bestConfigInterface.(*config.DCAConfig)
+	
+	optimizationTime := time.Since(optimizationStart)
+	totalTime := time.Since(start)
+	
 	log.Printf("✅ Optimization completed - Best return: %.2f%%", bestResults.TotalReturn*100)
+	log.Printf("⚡ Performance: Optimization took %s (Total: %s)", 
+		optimizationTime.Truncate(time.Millisecond), 
+		totalTime.Truncate(time.Millisecond))
 	
 	return bestResults, bestConfig, nil
 }
@@ -133,10 +151,15 @@ func (o *DefaultOrchestrator) RunMultiIntervalAnalysis(cfg *config.DCAConfig, da
 	}, nil
 }
 
-// runWalkForwardValidation executes walk-forward validation
+// runWalkForwardValidation executes walk-forward validation with clean, concise logging
 func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) error {
-	// This is a simplified implementation - in practice you'd want more sophisticated WF validation
-	log.Println("🔄 Running walk-forward validation...")
+	log.Printf("🔄 Walk-Forward Validation: %s", cfg.Symbol)
+	log.Printf("   Mode: %s", func() string {
+		if wfConfig.Rolling {
+			return fmt.Sprintf("Rolling (Train=%dd, Test=%dd, Roll=%dd)", wfConfig.TrainDays, wfConfig.TestDays, wfConfig.RollDays)
+		}
+		return fmt.Sprintf("Holdout (Split=%.0f%%)", wfConfig.SplitRatio*100)
+	}())
 	
 	// Load data for validation
 	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
@@ -148,18 +171,22 @@ func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, se
 		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
 	}
 	
-	// Run walk-forward validation using the validation package
-	_, err = validation.RunWalkForwardValidation(cfg, data, *wfConfig,
+	log.Printf("   Data: %d candles (%s → %s)", 
+		len(data), 
+		data[0].Timestamp.Format("2006-01-02"), 
+		data[len(data)-1].Timestamp.Format("2006-01-02"))
+	
+	// Run walk-forward validation in quiet mode
+	summary, err := validation.RunQuietWalkForwardValidation(cfg, data, *wfConfig,
 		func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
-			// Optimization function for training phases
+			// Quiet optimization - no per-fold logging
 			return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
 		},
 		func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
-			// Evaluation function for test phases
+			// Quiet testing - no per-fold logging
 			dcaConfig := cfg.(*config.DCAConfig)
 			results, err := o.backtestRunner.RunWithData(dcaConfig, data)
 			if err != nil {
-				log.Printf("Error in validation backtest: %v", err)
 				return nil
 			}
 			return results
@@ -169,6 +196,62 @@ func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, se
 		return fmt.Errorf("walk-forward validation failed: %w", err)
 	}
 	
-	log.Println("✅ Walk-forward validation completed")
+	// Display clean summary results
+	o.printCleanWalkForwardSummary(summary)
+	
 	return nil
+}
+
+// printCleanWalkForwardSummary displays a concise, table-formatted walk-forward validation summary
+func (o *DefaultOrchestrator) printCleanWalkForwardSummary(summary *validation.WalkForwardSummary) {
+	log.Printf("\n📊 Walk-Forward Validation Results (%d folds)", len(summary.Results))
+	log.Println(strings.Repeat("-", 65))
+	
+	// Clean table header
+	if len(summary.Results) > 1 {
+		log.Println("Fold | Train Return | Test Return  | Degradation | Status")
+		log.Println("-----|--------------|--------------|-------------|-------")
+		
+		for _, result := range summary.Results {
+			degradation := (result.TrainResults.TotalReturn - result.TestResults.TotalReturn) * 100
+			status := "✅"
+			if degradation > 50 {
+				status = "🚨"
+			} else if degradation > 15 {
+				status = "⚠️"
+			}
+			
+			log.Printf("%3d  | %+10.1f%% | %+10.1f%% | %+9.1f%% | %s",
+				result.Fold,
+				result.TrainResults.TotalReturn*100,
+				result.TestResults.TotalReturn*100,
+				degradation,
+				status)
+		}
+		log.Println(strings.Repeat("-", 65))
+	}
+	
+	// Concise summary
+	log.Printf("Summary: Train=%.1f%%, Test=%.1f%%, Degradation=%.1f%%", 
+		summary.AverageTrainReturn*100, 
+		summary.AverageTestReturn*100, 
+		summary.ReturnDegradation*100)
+	
+	// Quick assessment
+	assessment := "🚨 HIGH RISK"
+	if summary.ReturnDegradation < 0.05 {
+		assessment = "✅ ROBUST"
+	} else if summary.ReturnDegradation < 0.15 {
+		assessment = "⚠️  MODERATE"
+	}
+	
+	profitable := ""
+	if summary.AverageTestReturn > 0 {
+		profitable = "Profitable"
+	} else {
+		profitable = "Unprofitable"
+	}
+	
+	log.Printf("Assessment: %s | %s | Risk: %s", assessment, profitable, summary.OverfittingRisk)
+	log.Println(strings.Repeat("-", 65) + "\n")
 }

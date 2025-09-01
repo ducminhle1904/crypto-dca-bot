@@ -193,19 +193,12 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 
 // logBacktestConfig logs the backtest configuration
 func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []types.OHLCV) {
-	// Data summary
-	log.Printf("📊 Data: %d bars (%s → %s)",
-		len(data),
-		data[0].Timestamp.Format("2006-01-02 15:04"),
-		data[len(data)-1].Timestamp.Format("2006-01-02 15:04"))
-	
 	// Combo information
 	comboType := "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
 	if cfg.UseAdvancedCombo {
 		comboType = "ADVANCED COMBO: Hull MA + MFI + Keltner + WaveTrend"
 	}
 	log.Printf("🎯 COMBO: %s", comboType)
-	log.Printf("📋 Indicators: %s", strings.Join(cfg.Indicators, ", "))
 	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f",
 		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty)
 	
