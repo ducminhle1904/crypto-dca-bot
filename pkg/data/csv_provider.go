@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -44,14 +45,22 @@ func (p *CSVProvider) LoadData(source string) ([]types.OHLCV, error) {
 
 // loadHistoricalDataWithFormat loads data with a specific CSV format
 func (p *CSVProvider) loadHistoricalDataWithFormat(filename string, format CSVColumnMapping) ([]types.OHLCV, error) {
+	// Get absolute path for better error reporting
+	absPath, err := filepath.Abs(filename)
+	if err != nil {
+		absPath = filename // fallback to original if absolute path fails
+	}
+	
 	file, err := os.Open(filename)
 	if err != nil {
-		// If file doesn't exist, generate sample data
+		// If file doesn't exist, provide detailed error with path information
 		if os.IsNotExist(err) {
-			log.Println("⚠️  Historical data file not found, generating sample data...")
+			log.Printf("❌ Historical data file not found: %s", absPath)
+			log.Printf("💡 Current working directory: %s", getCurrentWorkingDir())
+			log.Printf("⚠️  Generating sample data as fallback...")
 			return p.generateSampleData(), nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to open data file '%s': %w", absPath, err)
 	}
 	defer file.Close()
 	
@@ -217,4 +226,12 @@ func (p *CSVProvider) ValidateData(data []types.OHLCV) error {
 	}
 	
 	return nil
+}
+
+// getCurrentWorkingDir returns current working directory for debugging
+func getCurrentWorkingDir() string {
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "unknown"
 }

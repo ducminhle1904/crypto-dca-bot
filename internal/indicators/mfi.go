@@ -249,3 +249,14 @@ func (m *MFI) GetLastValue() float64 {
 func (m *MFI) GetMoneyFlows() (positive, negative float64) {
 	return m.positiveFlow, m.negativeFlow
 }
+
+// ResetState resets the MFI internal state for new data periods
+func (m *MFI) ResetState() {
+	m.lastValue = 0.0
+	m.positiveFlow = 0.0
+	m.negativeFlow = 0.0
+	m.initialized = false
+	m.typicalPrices = make([]float64, 0, m.period+1)
+	m.volumes = make([]float64, 0, m.period+1)
+	m.moneyFlows = make([]float64, 0, m.period+1)
+}

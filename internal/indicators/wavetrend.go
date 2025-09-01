@@ -292,3 +292,19 @@ func (wt *WaveTrend) IsOverbought() bool {
 func (wt *WaveTrend) IsOversold() bool {
 	return wt.lastWT1 < wt.overSold
 }
+
+// ResetState resets the WaveTrend internal state for new data periods
+func (wt *WaveTrend) ResetState() {
+	// Reset EMA components
+	wt.esaEMA.ResetState()
+	wt.dEMA.ResetState()
+	wt.wt1EMA.ResetState()
+	
+	// Reset rolling windows and values
+	wt.wt2Values = make([]float64, 0, 4)
+	wt.lastWT1 = 0.0
+	wt.lastWT2 = 0.0
+	wt.lastHLC3 = 0.0
+	wt.initialized = false
+	wt.dataPoints = 0
+}

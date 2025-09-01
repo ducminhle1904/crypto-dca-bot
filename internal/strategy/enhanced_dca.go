@@ -188,6 +188,16 @@ func (s *EnhancedDCAStrategy) GetConfiguration() map[string]interface{} {
 	}
 }
 
+// ResetForNewPeriod resets strategy state for walk-forward validation periods
+func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
+	// Reset all indicators and clear cache in one atomic operation
+	s.indicatorManager.ResetAllIndicators()
+	
+	// Reset strategy state
+	s.lastEntryPrice = 0.0
+	s.lastTradeTime = time.Time{}
+}
+
 
 
 

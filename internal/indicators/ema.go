@@ -112,3 +112,9 @@ func (e *EMA) GetRequiredPeriods() int {
 func (e *EMA) GetLastValue() float64 {
 	return e.lastValue
 }
+
+// ResetState resets the EMA internal state for new data periods
+func (e *EMA) ResetState() {
+	e.lastValue = 0.0
+	e.initialized = false
+}

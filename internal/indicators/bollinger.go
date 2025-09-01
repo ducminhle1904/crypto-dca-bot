@@ -233,6 +233,27 @@ func (bb *BollingerBands) GetRequiredPeriods() int {
 	return bb.period
 }
 
+// ResetState resets the Bollinger Bands internal state for new data periods
+func (bb *BollingerBands) ResetState() {
+	// Reset stateful EMA if using EMA mode
+	if bb.ema != nil {
+		bb.ema.ResetState()
+	}
+	
+	// Reset circular buffer and statistics
+	bb.values = make([]float64, bb.period)
+	bb.writeIndex = 0
+	bb.sum = 0.0
+	bb.sumSquares = 0.0
+	bb.count = 0
+	bb.initialized = false
+	
+	// Reset cached results
+	bb.lastUpper = 0.0
+	bb.lastMiddle = 0.0
+	bb.lastLower = 0.0
+}
+
 // GetBands returns the current band values
 func (bb *BollingerBands) GetBands() (upper, middle, lower float64) {
 	return bb.lastUpper, bb.lastMiddle, bb.lastLower

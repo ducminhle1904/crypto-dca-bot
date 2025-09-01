@@ -167,7 +167,7 @@ func (r *DefaultIntervalRunner) fetchAndSetMinOrderQtyCached(cfg *config.DCAConf
 	
 	// Fetch from API (this is the expensive call)
 	runner := r.backtestRunner.(*DefaultBacktestRunner)
-	if err := runner.fetchAndSetMinOrderQty(cfg); err != nil {
+	if err := runner.FetchAndSetMinOrderQty(cfg); err != nil {
 		return err
 	}
 	

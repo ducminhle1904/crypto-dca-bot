@@ -10,6 +10,7 @@ type NestedConfig struct {
 
 type StrategyConfig struct {
 	Symbol         string             `json:"symbol"`
+	DataFile       string             `json:"data_file"`           // ✅ ADD DATA FILE
 	BaseAmount     float64            `json:"base_amount"`
 	MaxMultiplier  float64            `json:"max_multiplier"`
 	PriceThreshold float64            `json:"price_threshold"`

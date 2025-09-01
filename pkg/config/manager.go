@@ -28,12 +28,17 @@ func (m *DCAConfigManager) LoadConfig(configFile, dataFile, symbol string, balan
 	// Start with default DCA configuration
 	cfg := NewDefaultDCAConfig()
 	
-	// Set basic parameters
-	cfg.DataFile = dataFile
+	// Set basic parameters (config file will override these if provided)
 	cfg.Symbol = symbol
 	cfg.InitialBalance = balance
 	cfg.Commission = commission
 	cfg.WindowSize = windowSize
+	
+	// Only set DataFile from command line if not loading from config file
+	// This allows config file to override with the correct data source
+	if configFile == "" {
+		cfg.DataFile = dataFile
+	}
 	
 	// Extract DCA-specific parameters from params map
 	if baseAmount, ok := params["base_amount"].(float64); ok {
@@ -92,6 +97,7 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	// Map strategy fields
 	strategy := nestedCfg.Strategy
 	cfg.Symbol = strategy.Symbol
+	cfg.DataFile = strategy.DataFile        
 	cfg.Interval = strategy.Interval
 	cfg.BaseAmount = strategy.BaseAmount
 	cfg.MaxMultiplier = strategy.MaxMultiplier
@@ -180,6 +186,7 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 	// Only include the combo that was actually used
 	strategyConfig := StrategyConfig{
 		Symbol:         dcaCfg.Symbol,
+		DataFile:       dcaCfg.DataFile,
 		BaseAmount:     dcaCfg.BaseAmount,
 		MaxMultiplier:  dcaCfg.MaxMultiplier,
 		PriceThreshold: dcaCfg.PriceThreshold,

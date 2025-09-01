@@ -99,7 +99,6 @@ func (p *CachedProvider) LoadData(source string) ([]types.OHLCV, error) {
 	}
 
 	// Load data if not in cache
-	log.Printf("🔄 Loading historical data from %s", filepath.Base(source))
 	data, err := p.provider.LoadData(source)
 	if err != nil {
 		log.Printf("❌ Failed to load data from %s: %v", filepath.Base(source), err)

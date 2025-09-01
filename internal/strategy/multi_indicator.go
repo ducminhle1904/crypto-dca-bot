@@ -238,3 +238,11 @@ func (m *MultiIndicatorStrategy) GetName() string {
 func (m *MultiIndicatorStrategy) OnCycleComplete() {
 	// No state to reset for multi-indicator strategy
 }
+
+// ResetForNewPeriod resets strategy state for walk-forward validation periods
+func (m *MultiIndicatorStrategy) ResetForNewPeriod() {
+	// Reset all indicators to prevent state contamination between validation folds
+	for _, weightedIndicator := range m.indicators {
+		weightedIndicator.Indicator.ResetState()
+	}
+}

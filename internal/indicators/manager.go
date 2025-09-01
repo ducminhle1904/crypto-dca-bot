@@ -34,6 +34,21 @@ func NewIndicatorManager(indicators ...TechnicalIndicator) *IndicatorManager {
 	}
 }
 
+// ResetAllIndicators resets all indicators and clears cache
+func (m *IndicatorManager) ResetAllIndicators() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	
+	// Reset all indicators
+	for _, indicator := range m.indicators {
+		indicator.ResetState()
+	}
+	
+	// Clear cache
+	m.cache = make(map[string]*IndicatorResult)
+	m.lastTimestamp = time.Time{}
+}
+
 // AddIndicator adds an indicator to the manager
 func (m *IndicatorManager) AddIndicator(indicator TechnicalIndicator) {
 	m.indicators = append(m.indicators, indicator)
@@ -43,13 +58,10 @@ func (m *IndicatorManager) AddIndicator(indicator TechnicalIndicator) {
 func (m *IndicatorManager) ProcessCandle(candle types.OHLCV, data []types.OHLCV) map[string]*IndicatorResult {
 	m.mutex.RLock()
 	// Early exit if same timestamp (cache hit)
+	// Return cache directly since results are not modified by callers
 	if candle.Timestamp.Equal(m.lastTimestamp) && len(m.cache) > 0 {
-		cacheCopy := make(map[string]*IndicatorResult, len(m.cache))
-		for k, v := range m.cache {
-			cacheCopy[k] = v
-		}
 		m.mutex.RUnlock()
-		return cacheCopy
+		return m.cache
 	}
 	m.mutex.RUnlock()
 
@@ -117,12 +129,9 @@ func (m *IndicatorManager) GetCachedResults() map[string]*IndicatorResult {
 		return nil
 	}
 	
-	// Return defensive copy
-	cacheCopy := make(map[string]*IndicatorResult, len(m.cache))
-	for k, v := range m.cache {
-		cacheCopy[k] = v
-	}
-	return cacheCopy
+	// Return cache directly since results are not modified by callers
+	// This avoids unnecessary allocation and copying
+	return m.cache
 }
 
 // ClearCache clears the internal cache (useful for new time periods)

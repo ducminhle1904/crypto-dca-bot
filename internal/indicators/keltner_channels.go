@@ -263,3 +263,16 @@ func (kc *KeltnerChannels) GetChannelPosition(price float64) float64 {
 	position := (price - kc.lastLower) / (kc.lastUpper - kc.lastLower)
 	return math.Max(0, math.Min(1, position)) // Clamp to 0-1 range
 }
+
+// ResetState resets the Keltner Channels internal state for new data periods
+func (kc *KeltnerChannels) ResetState() {
+	// Reset internal components
+	kc.emaIndicator.ResetState()
+	kc.atrIndicator.ResetState()
+	
+	// Reset state values
+	kc.lastUpper = 0.0
+	kc.lastMiddle = 0.0
+	kc.lastLower = 0.0
+	kc.initialized = false
+}

@@ -1,6 +1,7 @@
 package data
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,6 +56,7 @@ func (f *DefaultFileLocator) ConvertIntervalToMinutes(interval string) string {
 
 // FindDataFile attempts to locate data files for a specific exchange
 // Structure: data/{exchange}/{category}/{symbol}/{interval}/candles.csv
+// Returns empty string if no file is found
 func (f *DefaultFileLocator) FindDataFile(dataRoot, exchange, symbol, interval string) string {
 	symbol = strings.ToUpper(symbol)
 	
@@ -73,13 +75,21 @@ func (f *DefaultFileLocator) FindDataFile(dataRoot, exchange, symbol, interval s
 	}
 	
 	// Check each category for the exchange
+	var attemptedPaths []string
 	for _, category := range categories {
 		path := filepath.Join(dataRoot, exchange, category, symbol, intervalMinutes, "candles.csv")
+		attemptedPaths = append(attemptedPaths, path)
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 	
-	// If no existing file found, return the preferred structure (first category for the exchange)
-	return filepath.Join(dataRoot, exchange, categories[0], symbol, intervalMinutes, "candles.csv")
+	// Log attempted paths for debugging
+	log.Printf("⚠️ No data file found for %s %s %s in:", exchange, symbol, interval)
+	for _, path := range attemptedPaths {
+		log.Printf("   - %s", path)
+	}
+	
+	// Return empty string instead of non-existent path
+	return ""
 }

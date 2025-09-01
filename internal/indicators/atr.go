@@ -130,3 +130,10 @@ func (a *ATR) GetLastValue() float64 {
 func (a *ATR) GetPeriod() int {
 	return a.period
 }
+
+// ResetState resets the ATR internal state for new data periods
+func (a *ATR) ResetState() {
+	a.ema.ResetState()
+	a.lastClose = 0.0
+	a.initialized = false
+}

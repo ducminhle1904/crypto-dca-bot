@@ -2,6 +2,8 @@ package reporting
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
@@ -18,6 +20,13 @@ func NewDefaultExcelReporter() *DefaultExcelReporter {
 
 // WriteTradesXLSX writes trades to Excel file - extracted from main.go writeTradesXLSX
 func (r *DefaultExcelReporter) WriteTradesXLSX(results *backtest.BacktestResults, path string) error {
+	// Ensure directory exists before creating file
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+	
 	fx := excelize.NewFile()
 	defer fx.Close()
 

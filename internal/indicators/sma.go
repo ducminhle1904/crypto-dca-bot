@@ -124,3 +124,13 @@ func (s *SMA) GetName() string {
 func (s *SMA) GetRequiredPeriods() int {
 	return s.period
 }
+
+// ResetState resets the SMA internal state for new data periods
+func (s *SMA) ResetState() {
+	s.lastValue = 0.0
+	s.values = make([]float64, s.period)
+	s.writeIndex = 0
+	s.sum = 0.0
+	s.count = 0
+	s.initialized = false
+}

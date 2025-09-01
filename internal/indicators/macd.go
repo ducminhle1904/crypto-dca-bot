@@ -118,3 +118,16 @@ func (m *MACD) GetRequiredPeriods() int {
 func (m *MACD) GetLastValues() (macd, signal, histogram float64) {
 	return m.lastMACD, m.lastSignal, m.lastHistogram
 }
+
+// ResetState resets the MACD internal state for new data periods
+func (m *MACD) ResetState() {
+	// Reset stateful EMAs
+	m.fastEMA.ResetState()
+	m.slowEMA.ResetState()
+	
+	// Reset calculated values
+	m.lastMACD = 0.0
+	m.lastSignal = 0.0
+	m.lastHistogram = 0.0
+	m.initialized = false
+}

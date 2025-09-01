@@ -31,8 +31,8 @@ func (r *DefaultCSVReporter) WriteTradesCSV(results *backtest.BacktestResults, p
 
 	// If the user requests an Excel file, delegate to Excel writer
 	if strings.HasSuffix(strings.ToLower(path), ".xlsx") {
-		// This would call Excel writer when available
-		return fmt.Errorf("Excel writing not implemented yet - use CSV extension")
+		// Delegate to Excel writer
+		return WriteTradesXLSX(results, path)
 	}
 
 	// CSV path: write enhanced trades with detailed analysis

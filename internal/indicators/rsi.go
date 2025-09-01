@@ -155,3 +155,12 @@ func (r *RSI) SetOversold(threshold float64) {
 func (r *RSI) SetOverbought(threshold float64) {
 	r.overbought = threshold
 }
+
+// ResetState resets the RSI internal state for new data periods
+func (r *RSI) ResetState() {
+	r.lastValue = 0.0
+	r.avgGain = 0.0
+	r.avgLoss = 0.0
+	r.initialized = false
+	r.dataPoints = 0
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +43,10 @@ func (r *DefaultBacktestRunner) RunWithData(cfg *config.DCAConfig, data []types.
 		return nil, fmt.Errorf("failed to create strategy: %w", err)
 	}
 	
+	// Reset strategy state to prevent contamination from previous runs
+	// This is crucial for walk-forward validation accuracy
+	strat.ResetForNewPeriod()
+	
 	// Create and run backtest engine
 	tp := cfg.TPPercent
 	if !cfg.Cycle {
@@ -61,16 +66,28 @@ func (r *DefaultBacktestRunner) RunWithData(cfg *config.DCAConfig, data []types.
 
 // RunWithFile executes a backtest by loading data from file
 func (r *DefaultBacktestRunner) RunWithFile(cfg *config.DCAConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, error) {
-	// Fetch minimum order quantity from exchange if needed
-	if err := r.fetchAndSetMinOrderQty(cfg); err != nil {
-		log.Printf("⚠️ Could not fetch minimum order quantity: %v", err)
-		log.Printf("ℹ️ Using default minimum order quantity: %.6f", cfg.MinOrderQty)
+	// Only fetch minimum order quantity if not already set (preserve optimized values)
+	// This prevents API overrides when using saved configs from optimization
+	if cfg.MinOrderQty <= 0.000001 { // Use small threshold to account for floating point precision
+		if err := r.FetchAndSetMinOrderQty(cfg); err != nil {
+			log.Printf("⚠️ Could not fetch minimum order quantity: %v", err)
+			// Set a sensible default
+			cfg.MinOrderQty = 0.001
+			log.Printf("ℹ️ Using default minimum order quantity: %.6f", cfg.MinOrderQty)
+		}
+	} else {
+		log.Printf("✅ Using configured minimum order quantity: %.6f BTCUSDT", cfg.MinOrderQty)
+	}
+	
+	// Validate data file exists before attempting to load
+	if err := validateDataFile(cfg.DataFile); err != nil {
+		return nil, err
 	}
 	
 	// Load historical data
 	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load data: %w", err)
+		return nil, fmt.Errorf("failed to load data from '%s': %w", cfg.DataFile, err)
 	}
 	
 	if len(data) == 0 {
@@ -92,8 +109,8 @@ func (r *DefaultBacktestRunner) RunWithFile(cfg *config.DCAConfig, selectedPerio
 	return r.RunWithData(cfg, data)
 }
 
-// fetchAndSetMinOrderQty fetches minimum order quantity from exchange
-func (r *DefaultBacktestRunner) fetchAndSetMinOrderQty(cfg *config.DCAConfig) error {
+// FetchAndSetMinOrderQty fetches minimum order quantity from exchange
+func (r *DefaultBacktestRunner) FetchAndSetMinOrderQty(cfg *config.DCAConfig) error {
 	// Create Bybit client to fetch instrument info
 	bybitConfig := bybit.Config{
 		APIKey:    os.Getenv("BYBIT_API_KEY"),
@@ -205,7 +222,7 @@ func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []
 	
 	// DCA Strategy details
 	if cfg.Cycle {
-		log.Printf("🔄 DCA Strategy: TP=%.2f%%, PriceThreshold=%.2f%% (cycle mode)", 
+		log.Printf("🔄 DCA Strategy: TP=%.2f%%, PriceThreshold=%.2f%%", 
 			cfg.TPPercent*100, cfg.PriceThreshold*100)
 	} else {
 		log.Printf("🔄 DCA Strategy: Hold mode (no TP), PriceThreshold=%.2f%%", 
@@ -213,16 +230,36 @@ func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []
 	}
 }
 
-// loadDataForValidation is a helper function for loading data
-func loadDataForValidation(dataFile string, selectedPeriod time.Duration) ([]types.OHLCV, error) {
-	data, err := datamanager.LoadHistoricalDataCached(dataFile)
+// validateDataFile validates that the data file exists and is accessible
+func validateDataFile(dataFile string) error {
+	if strings.TrimSpace(dataFile) == "" {
+		return fmt.Errorf("data file path is empty")
+	}
+	
+	// Get absolute path for better error reporting
+	absPath, err := filepath.Abs(dataFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load data: %w", err)
+		absPath = dataFile // fallback to original if absolute path fails
 	}
 	
-	if selectedPeriod > 0 {
-		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
+	// Check if file exists
+	if _, err := os.Stat(dataFile); err != nil {
+		if os.IsNotExist(err) {
+			// Get current working directory for context
+			wd := "unknown"
+			if currentWd, wdErr := os.Getwd(); wdErr == nil {
+				wd = currentWd
+			}
+			
+			return fmt.Errorf("data file not found: %s\n"+
+				"  Absolute path: %s\n"+
+				"  Current working directory: %s\n"+
+				"  💡 Hint: Check if the file path in your config is correct", 
+				dataFile, absPath, wd)
+		}
+		return fmt.Errorf("cannot access data file '%s': %w", absPath, err)
 	}
 	
-	return data, nil
+	log.Printf("✅ Data file validated: %s", filepath.Base(dataFile))
+	return nil
 }

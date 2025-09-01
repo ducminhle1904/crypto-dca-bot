@@ -3,6 +3,7 @@ package optimization
 import (
 	"log"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,17 +16,17 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
-// GA Constants
+// GA Constants - Optimized for Walk-Forward Validation (180-day windows)
 const (
-	GAPopulationSize    = 45   // Population size for optimization
-	GAGenerations       = 30   // Number of generations
-	GAMutationRate      = 0.1  // Mutation rate
-	GACrossoverRate     = 0.8  // Crossover rate
-	GAEliteSize         = 5    // Elite size (10% of population)
-	TournamentSize      = 3    // Tournament selection size
-	MaxParallelWorkers  = 4    // Maximum concurrent GA evaluations
-	ProgressReportInterval = 5 // Report progress every N generations
-	DetailReportInterval   = 10 // Show detailed config every N generations
+	GAPopulationSize    = 24   // Smaller population for faster convergence (was 45)
+	GAGenerations       = 15   // Fewer generations - still effective for 180d data (was 30)
+	GAMutationRate      = 0.2 // Higher mutation for faster exploration (was 0.1)
+	GACrossoverRate     = 0.85 // Higher crossover for better mixing (was 0.8)
+	GAEliteSize         = 4    // Keep best 4 individuals (~17% of population)
+	TournamentSize      = 2    // Smaller tournament for speed (was 3)
+	MaxParallelWorkers  = 6    // More parallel workers for speed (was 4)
+	ProgressReportInterval = 3 // More frequent progress reports (was 5)
+	DetailReportInterval   = 8 // Less frequent detailed reports (was 10)
 )
 
 // Individual represents a candidate solution - extracted from main.go
@@ -39,6 +40,9 @@ type GAIndividual struct {
 func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time.Duration) (*backtest.BacktestResults, interface{}, error) {
 	// Create local RNG to avoid race conditions
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
+	// MinOrderQty should be fetched at orchestrator level before calling OptimizeWithGA
+	// to ensure consistency with single backtest runs
 	
 	// Preload data once for performance
 	data, err := datamanager.LoadHistoricalDataCached(dataFile)
@@ -151,15 +155,11 @@ func EvaluatePopulationParallel(population []*GAIndividual, data []types.OHLCV) 
 	wg.Wait()
 }
 
-// SortPopulationByFitness sorts population by fitness (descending) - extracted from main.go
+// SortPopulationByFitness sorts population by fitness (descending) - optimized with O(n log n) complexity
 func SortPopulationByFitness(population []*GAIndividual) {
-	for i := 0; i < len(population)-1; i++ {
-		for j := i + 1; j < len(population); j++ {
-			if population[j].Fitness > population[i].Fitness {
-				population[i], population[j] = population[j], population[i]
-			}
-		}
-	}
+	sort.Slice(population, func(i, j int) bool {
+		return population[i].Fitness > population[j].Fitness // Descending order
+	})
 }
 
 // AverageFitness calculates average fitness - extracted from main.go
@@ -532,3 +532,5 @@ func ContainsIndicator(indicators []string, name string) bool {
 	}
 	return false
 }
+
+

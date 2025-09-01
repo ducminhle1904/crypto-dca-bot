@@ -63,6 +63,9 @@ type BacktestRunner interface {
 	
 	// RunWithFile executes a backtest by loading data from file
 	RunWithFile(cfg *config.DCAConfig, selectedPeriod time.Duration) (*backtest.BacktestResults, error)
+	
+	// FetchAndSetMinOrderQty fetches minimum order quantity from exchange and updates config
+	FetchAndSetMinOrderQty(cfg *config.DCAConfig) error
 }
 
 // IntervalRunner interface for multi-interval operations

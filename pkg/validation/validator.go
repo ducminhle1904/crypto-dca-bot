@@ -60,7 +60,7 @@ func (v *DefaultWalkForwardValidator) validateRolling(config interface{}, data [
 	}
 	
 	log.Printf("Created %d folds", len(folds))
-	
+
 	var allResults []WalkForwardResults
 	
 	for i, fold := range folds {
@@ -89,7 +89,7 @@ func (v *DefaultWalkForwardValidator) validateRolling(config interface{}, data [
 		
 		allResults = append(allResults, result)
 		
-		log.Printf("  ✅ GA → %.2f%% | Test → %.2f%% | Drawdown: %.2f%%", 
+		log.Printf("✅ GA → %.2f%% | Test → %.2f%% | Drawdown: %.2f%%", 
 			trainResults.TotalReturn*100,
 			testResults.TotalReturn*100,
 			testResults.MaxDrawdown*100)
@@ -159,20 +159,21 @@ func (v *DefaultWalkForwardValidator) calculateSummary(results []WalkForwardResu
 	var trainDrawdowns, testDrawdowns []float64
 	
 	for _, r := range results {
+		// Store raw returns for degradation calculation
 		trainReturns = append(trainReturns, r.TrainResults.TotalReturn*100)
 		testReturns = append(testReturns, r.TestResults.TotalReturn*100)
 		trainDrawdowns = append(trainDrawdowns, r.TrainResults.MaxDrawdown*100)
 		testDrawdowns = append(testDrawdowns, r.TestResults.MaxDrawdown*100)
 	}
 	
-	// Calculate averages
+	// Calculate averages (already in percentage form)
 	avgTrainReturn := average(trainReturns)
 	avgTestReturn := average(testReturns)
 	avgTrainDD := average(trainDrawdowns)
 	avgTestDD := average(testDrawdowns)
 	
-	// Calculate return degradation
-	returnDegradation := ((avgTrainReturn - avgTestReturn) / math.Max(0.01, math.Abs(avgTrainReturn))) * 100
+	// Calculate return degradation (use percentage values directly)
+	returnDegradation := ((avgTrainReturn - avgTestReturn) / math.Max(1.0, math.Abs(avgTrainReturn))) * 100
 	
 	// Determine robustness
 	isRobust := returnDegradation <= 30

@@ -63,12 +63,24 @@ func (o *DefaultOrchestrator) RunOptimizedBacktest(cfg *config.DCAConfig, select
 	log.Printf("📊 Symbol: %s", cfg.Symbol)
 	
 	// Check if walk-forward validation is enabled
+	wfValidationRan := false
 	if wfConfig != nil && wfConfig.Enable {
-		// Run walk-forward validation first
+		// Run walk-forward validation first (includes MinOrderQty fetch)
 		err := o.runWalkForwardValidation(cfg, selectedPeriod, wfConfig)
 		if err != nil {
 			log.Printf("⚠️ Walk-forward validation failed: %v", err)
 			// Continue with regular optimization
+		} else {
+			wfValidationRan = true
+		}
+	}
+	
+	// Fetch MinOrderQty before optimization only if not already fetched by walk-forward validation
+	// This ensures consistency and avoids redundant API calls
+	if !wfValidationRan {
+		if err := o.backtestRunner.FetchAndSetMinOrderQty(cfg); err != nil {
+			log.Printf("⚠️ Could not fetch minimum order quantity for optimization: %v", err)
+			log.Printf("ℹ️ Using default minimum order quantity: %.6f", cfg.MinOrderQty)
 		}
 	}
 	
@@ -153,18 +165,15 @@ func (o *DefaultOrchestrator) RunMultiIntervalAnalysis(cfg *config.DCAConfig, da
 
 // runWalkForwardValidation executes walk-forward validation with clean, concise logging
 func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) error {
-	log.Printf("🔄 Walk-Forward Validation: %s", cfg.Symbol)
-	log.Printf("   Mode: %s", func() string {
-		if wfConfig.Rolling {
-			return fmt.Sprintf("Rolling (Train=%dd, Test=%dd, Roll=%dd)", wfConfig.TrainDays, wfConfig.TestDays, wfConfig.RollDays)
-		}
-		return fmt.Sprintf("Holdout (Split=%.0f%%)", wfConfig.SplitRatio*100)
-	}())
+	// Validate and load data for validation
+	if strings.TrimSpace(cfg.DataFile) == "" {
+		return fmt.Errorf("data file path is empty in configuration")
+	}
 	
-	// Load data for validation
+	log.Printf("📂 Loading validation data from: %s", cfg.DataFile)
 	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
 	if err != nil {
-		return fmt.Errorf("failed to load data for validation: %w", err)
+		return fmt.Errorf("failed to load validation data from '%s': %w", cfg.DataFile, err)
 	}
 	
 	if selectedPeriod > 0 {
@@ -172,23 +181,42 @@ func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, se
 	}
 	
 	log.Printf("   Data: %d candles (%s → %s)", 
-		len(data), 
-		data[0].Timestamp.Format("2006-01-02"), 
-		data[len(data)-1].Timestamp.Format("2006-01-02"))
-	
+	len(data), 
+	data[0].Timestamp.Format("2006-01-02"), 
+	data[len(data)-1].Timestamp.Format("2006-01-02"))
+
+	if err := o.backtestRunner.FetchAndSetMinOrderQty(cfg); err != nil {
+		log.Printf("⚠️ Could not fetch minimum order quantity for walk-forward validation: %v", err)
+		log.Printf("ℹ️ Using default minimum order quantity: %.6f", cfg.MinOrderQty)
+	}
+
 	// Run walk-forward validation with clean logging
 	summary, err := validation.RunWalkForwardValidation(cfg, data, *wfConfig,
-		func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
-			// Clean GA optimization
-			return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
+		func(configInterface interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
+			// MinOrderQty already fetched above - just run optimization
+			return optimization.OptimizeWithGA(configInterface, cfg.DataFile, 0)
 		},
 		func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
-			// Testing function
+			// Testing function with debugging
 			dcaConfig := cfg.(*config.DCAConfig)
+			
+			// Debug test data
+			if len(data) < 50 {
+				log.Printf("⚠️  Test data insufficient: %d candles (need ≥50)", len(data))
+				return &backtest.BacktestResults{} // Return empty result instead of nil
+			}
+			
 			results, err := o.backtestRunner.RunWithData(dcaConfig, data)
 			if err != nil {
-				return nil
+				log.Printf("⚠️  Test backtest failed: %v", err)
+				return &backtest.BacktestResults{} // Return empty result instead of nil
 			}
+			
+			// Debug test results
+			if results.TotalTrades == 0 {
+				log.Printf("⚠️  No trades executed in test period (%d candles)", len(data))
+			}
+			
 			return results
 		})
 	
@@ -231,18 +259,18 @@ func (o *DefaultOrchestrator) printCleanWalkForwardSummary(summary *validation.W
 		log.Println(strings.Repeat("-", 65))
 	}
 	
-	// Concise summary
+	// Concise summary (AverageTrainReturn/TestReturn are already in percentage form)
 	log.Printf("Summary: Train=%.1f%%, Test=%.1f%%, Degradation=%.1f%%", 
-		summary.AverageTrainReturn*100, 
-		summary.AverageTestReturn*100, 
-		summary.ReturnDegradation*100)
+		summary.AverageTrainReturn, 
+		summary.AverageTestReturn, 
+		summary.ReturnDegradation)
 	
 	// Quick assessment
 	assessment := "🚨 HIGH RISK"
 	if summary.ReturnDegradation < 0.05 {
 		assessment = "✅ ROBUST"
 	} else if summary.ReturnDegradation < 0.15 {
-		assessment = "⚠️  MODERATE"
+		assessment = "⚠️ MODERATE"
 	}
 	
 	profitable := ""

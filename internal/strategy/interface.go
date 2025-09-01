@@ -17,6 +17,10 @@ type Strategy interface {
 	// OnCycleComplete is called when a take-profit cycle is completed
 	// This allows strategies to reset state for the next cycle
 	OnCycleComplete()
+	
+	// ResetForNewPeriod resets strategy state for walk-forward validation periods
+	// This clears all indicator state to prevent contamination between validation folds
+	ResetForNewPeriod()
 }
 
 // TradeDecision represents a trading decision made by a strategy

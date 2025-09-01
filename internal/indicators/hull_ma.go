@@ -60,6 +60,12 @@ func (w *WMA) IsReady() bool {
 	return len(w.values) >= w.period
 }
 
+// ResetState resets the WMA internal state for new data periods
+func (w *WMA) ResetState() {
+	w.values = make([]float64, 0, w.period)
+	w.initialized = false
+}
+
 // HullMA represents the Hull Moving Average technical indicator
 type HullMA struct {
 	period       int
@@ -293,4 +299,16 @@ func (h *HullMA) GetSlope(data []types.OHLCV) float64 {
 	// In a real implementation, you would calculate the actual slope
 	// using multiple previous Hull MA values
 	return float64(trend) * 0.1 // Simplified slope value
+}
+
+// ResetState resets the Hull MA internal state for new data periods
+func (h *HullMA) ResetState() {
+	// Reset WMA components
+	h.wmaHalf.ResetState()
+	h.wmaFull.ResetState()
+	h.wmaSqrt.ResetState()
+	
+	// Reset state values
+	h.lastValue = 0.0
+	h.initialized = false
 }

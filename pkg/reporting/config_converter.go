@@ -75,6 +75,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 	// Only include the combo that was actually used
 	strategyConfig := StrategyConfig{
 		Symbol:         cfg.Symbol,
+		DataFile:       cfg.DataFile,         // ✅ PRESERVE DATA FILE
 		BaseAmount:     cfg.BaseAmount,
 		MaxMultiplier:  cfg.MaxMultiplier,
 		PriceThreshold: cfg.PriceThreshold,

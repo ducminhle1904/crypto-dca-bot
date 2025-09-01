@@ -253,8 +253,19 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	
 	// Resolve data file if not set and not scanning all intervals
 	if strings.TrimSpace(cfg.DataFile) == "" {
-		cfg.DataFile = datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), interval)
+		dataFile := datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), interval)
+		if dataFile == "" {
+			return nil, fmt.Errorf("no data file found for symbol %s with interval %s\n"+
+				"💡 Expected data structure: data/bybit/{category}/%s/%s/candles.csv\n"+
+				"   Where {category} is one of: spot, linear, inverse\n"+
+				"   Please ensure data files exist or provide explicit -data flag", 
+				cfg.Symbol, interval, strings.ToUpper(cfg.Symbol), interval)
+		}
+		cfg.DataFile = dataFile
+		log.Printf("📁 Auto-detected data file: %s", filepath.Base(dataFile))
 	}
+
+	cfg.Interval = interval
 	
 	// Log configuration summary
 	printConfigSummary(cfg)
@@ -459,9 +470,9 @@ func saveOptimizedConfig(cfg *config.DCAConfig, symbol, interval string) {
 // Helper function to convert DCAConfig for JSON output
 func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 	return reporting.MainBacktestConfig{
-		DataFile:            cfg.DataFile,
+		DataFile:            cfg.DataFile,         // ✅ PRESERVE DATA FILE
 		Symbol:              cfg.Symbol,
-		Interval:            cfg.Interval,
+		Interval:            cfg.Interval,         // ✅ PRESERVE INTERVAL
 		InitialBalance:      cfg.InitialBalance,
 		Commission:          cfg.Commission,
 		WindowSize:          cfg.WindowSize,
