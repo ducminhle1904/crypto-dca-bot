@@ -66,10 +66,8 @@ func (opt *DCAOptimizer) Optimize(baseConfig interface{}, data []types.OHLCV) (*
 	cfg := baseConfig.(BacktestConfig)
 	
 	log.Printf("🧬 Starting Genetic Algorithm Optimization")
-	log.Printf("Mode: Full optimization (including indicator parameters)")
 	log.Printf("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
 		opt.config.PopulationSize, opt.config.Generations, opt.config.MutationRate*100, opt.config.CrossoverRate*100)
-	log.Printf("Using %d parallel workers for fitness evaluation", opt.config.MaxWorkers)
 
 	// Initialize population
 	population := opt.initializePopulation(cfg, opt.config.PopulationSize)

@@ -69,10 +69,8 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 	eliteSize := GAEliteSize
 
 	log.Printf("🔄 Starting Genetic Algorithm Optimization")
-	log.Printf("Mode: Full optimization (including indicator parameters)")
 	log.Printf("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
 		populationSize, generations, mutationRate*100, crossoverRate*100)
-	log.Printf("Using %d parallel workers for fitness evaluation", MaxParallelWorkers)
 
 	// Initialize population
 	population := InitializePopulation(baseConfig, populationSize, rng)
