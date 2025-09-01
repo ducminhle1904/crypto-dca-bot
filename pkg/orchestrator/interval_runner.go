@@ -13,8 +13,6 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/optimization"
-	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
-	"github.com/ducminhle1904/crypto-dca-bot/pkg/validation"
 )
 
 // DefaultIntervalRunner implements the IntervalRunner interface with performance optimizations
@@ -87,7 +85,7 @@ func (r *DefaultIntervalRunner) FindAvailableIntervals(dataRoot, exchange, symbo
 }
 
 // RunForInterval executes workflow for a specific interval
-func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, exchange, interval string, optimize bool, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) (*IntervalResult, error) {
+func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, exchange, interval string, optimize bool, selectedPeriod time.Duration) (*IntervalResult, error) {
 	// Create a copy of the config for this interval
 	cfgCopy := *cfg
 	
@@ -115,14 +113,6 @@ func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, 
 	if optimize {
 		log.Printf("🧬 Optimizing for interval: %s", interval)
 		
-		if wfConfig != nil && wfConfig.Enable {
-			// Run walk-forward validation
-			if wfErr := r.runWalkForwardForInterval(&cfgCopy, selectedPeriod, wfConfig); wfErr != nil {
-				log.Printf("⚠️ Walk-forward validation failed for %s: %v", interval, wfErr)
-				// Continue with regular optimization
-			}
-		}
-		
 		// Run optimization
 		var optimizedCfgInterface interface{}
 		results, optimizedCfgInterface, err = optimization.OptimizeWithGA(&cfgCopy, cfgCopy.DataFile, selectedPeriod)
@@ -147,46 +137,6 @@ func (r *DefaultIntervalRunner) RunForInterval(cfg *config.DCAConfig, dataRoot, 
 		Results:      results,
 		OptimizedCfg: optimizedCfg,
 	}, nil
-}
-
-// runWalkForwardForInterval runs walk-forward validation for a specific interval with detailed logging
-func (r *DefaultIntervalRunner) runWalkForwardForInterval(cfg *config.DCAConfig, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) error {
-	log.Printf("🔄 [%s] Walk-Forward Validation starting...", cfg.Interval)
-	
-	// Load data for walk-forward validation
-	data, err := datamanager.LoadHistoricalDataCached(cfg.DataFile)
-	if err != nil {
-		return fmt.Errorf("failed to load data for walk-forward validation: %w", err)
-	}
-	
-	if selectedPeriod > 0 {
-		data = datamanager.FilterDataByPeriod(data, selectedPeriod)
-	}
-	
-	// Run walk-forward validation in quiet mode
-	summary, err := validation.RunQuietWalkForwardValidation(cfg, data, *wfConfig,
-		func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
-			// Quiet optimization for intervals
-			return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
-		},
-		func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
-			// Quiet testing for intervals
-			dcaConfig := cfg.(*config.DCAConfig)
-			results, err := r.backtestRunner.RunWithData(dcaConfig, data)
-			if err != nil {
-				return nil
-			}
-			return results
-		})
-		
-	if err != nil {
-		return fmt.Errorf("walk-forward validation failed for interval %s: %w", cfg.Interval, err)
-	}
-	
-	// Display clean interval-specific summary
-	r.printCleanIntervalWalkForwardSummary(cfg.Interval, summary)
-	
-	return nil
 }
 
 // fetchAndSetMinOrderQtyCached fetches minimum order quantity with caching to avoid redundant API calls
@@ -228,30 +178,6 @@ func (r *DefaultIntervalRunner) fetchAndSetMinOrderQtyCached(cfg *config.DCAConf
 	return nil
 }
 
-// printCleanIntervalWalkForwardSummary displays a concise walk-forward validation summary for a specific interval
-func (r *DefaultIntervalRunner) printCleanIntervalWalkForwardSummary(interval string, summary *validation.WalkForwardSummary) {
-	// Quick assessment
-	assessment := "🚨"
-	if summary.ReturnDegradation < 0.05 {
-		assessment = "✅"
-	} else if summary.ReturnDegradation < 0.15 {
-		assessment = "⚠️"
-	}
-	
-	profitable := ""
-	if summary.AverageTestReturn > 0 {
-		profitable = "Profitable"
-	} else {
-		profitable = "Unprofitable"
-	}
-	
-	log.Printf("   [%s] Train=%.1f%%, Test=%.1f%%, Degradation=%.1f%% | %s %s", 
-		strings.ToUpper(interval),
-		summary.AverageTrainReturn*100, 
-		summary.AverageTestReturn*100, 
-		summary.ReturnDegradation*100,
-		assessment,
-		profitable)
-}
+
 
 // Helper functions removed - dataRoot and exchange are now passed directly

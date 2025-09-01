@@ -118,7 +118,7 @@ func (o *DefaultOrchestrator) RunMultiIntervalAnalysis(cfg *config.DCAConfig, da
 	for _, interval := range intervals {
 		log.Printf("🔄 Processing interval: %s", interval)
 		
-		result, err := o.intervalRunner.RunForInterval(cfg, dataRoot, exchange, interval, optimize, selectedPeriod, wfConfig)
+		result, err := o.intervalRunner.RunForInterval(cfg, dataRoot, exchange, interval, optimize, selectedPeriod)
 		if err != nil {
 			log.Printf("❌ Failed to process interval %s: %v", interval, err)
 			results = append(results, IntervalResult{
@@ -176,14 +176,14 @@ func (o *DefaultOrchestrator) runWalkForwardValidation(cfg *config.DCAConfig, se
 		data[0].Timestamp.Format("2006-01-02"), 
 		data[len(data)-1].Timestamp.Format("2006-01-02"))
 	
-	// Run walk-forward validation in quiet mode
-	summary, err := validation.RunQuietWalkForwardValidation(cfg, data, *wfConfig,
+	// Run walk-forward validation with clean logging
+	summary, err := validation.RunWalkForwardValidation(cfg, data, *wfConfig,
 		func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error) {
-			// Quiet optimization - no per-fold logging
+			// Clean GA optimization
 			return optimization.OptimizeWithGA(config, cfg.DataFile, 0)
 		},
 		func(cfg interface{}, data []types.OHLCV) *backtest.BacktestResults {
-			// Quiet testing - no per-fold logging
+			// Testing function
 			dcaConfig := cfg.(*config.DCAConfig)
 			results, err := o.backtestRunner.RunWithData(dcaConfig, data)
 			if err != nil {

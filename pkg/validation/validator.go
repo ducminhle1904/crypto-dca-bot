@@ -2,6 +2,7 @@ package validation
 
 import (
 	"fmt"
+	"log"
 	"math"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
@@ -13,7 +14,7 @@ type DefaultWalkForwardValidator struct {
 	splitter  DataSplitter
 	optimizer func(config interface{}, data []types.OHLCV) (*backtest.BacktestResults, interface{}, error)
 	backtester func(config interface{}, data []types.OHLCV) *backtest.BacktestResults
-	quiet     bool // If true, suppress detailed logging
+	// No quiet mode - always use clean, consistent logging
 }
 
 // NewDefaultWalkForwardValidator creates a new walk-forward validator
@@ -33,16 +34,12 @@ func (v *DefaultWalkForwardValidator) SetBacktester(backtester func(config inter
 	v.backtester = backtester
 }
 
-// SetQuiet sets whether to suppress detailed logging
-func (v *DefaultWalkForwardValidator) SetQuiet(quiet bool) {
-	v.quiet = quiet
-}
+// Removed quiet mode - always use clean, consistent logging
 
 // Validate performs walk-forward validation - extracted from main.go runWalkForwardValidation
 func (v *DefaultWalkForwardValidator) Validate(config interface{}, data []types.OHLCV, wfConfig WalkForwardConfig) (*WalkForwardSummary, error) {
-	if !v.quiet {
-		fmt.Println("\n🔄 ================ WALK-FORWARD VALIDATION ================")
-	}
+	// Clean walkforward validation header
+	log.Printf("🔄 Walk-Forward Validation Starting")
 	
 	if wfConfig.Rolling {
 		return v.validateRolling(config, data, wfConfig)
@@ -54,31 +51,25 @@ func (v *DefaultWalkForwardValidator) Validate(config interface{}, data []types.
 // validateRolling performs rolling walk-forward validation
 func (v *DefaultWalkForwardValidator) validateRolling(config interface{}, data []types.OHLCV, wfConfig WalkForwardConfig) (*WalkForwardSummary, error) {
 	// Rolling walk-forward
-	if !v.quiet {
-		fmt.Printf("Mode: Rolling Walk-Forward\n")
-		fmt.Printf("Train: %d days, Test: %d days, Roll: %d days\n", wfConfig.TrainDays, wfConfig.TestDays, wfConfig.RollDays)
-	}
+	log.Printf("Mode: Rolling Walk-Forward")
+	log.Printf("Train: %d days, Test: %d days, Roll: %d days", wfConfig.TrainDays, wfConfig.TestDays, wfConfig.RollDays)
 	
 	folds := v.splitter.CreateRollingFolds(data, wfConfig.TrainDays, wfConfig.TestDays, wfConfig.RollDays)
 	if len(folds) == 0 {
 		return nil, fmt.Errorf("not enough data for rolling walk-forward validation")
 	}
 	
-	if !v.quiet {
-		fmt.Printf("Created %d folds\n\n", len(folds))
-	}
+	log.Printf("Created %d folds", len(folds))
 	
 	var allResults []WalkForwardResults
 	
 	for i, fold := range folds {
-		if !v.quiet {
-			fmt.Printf("📊 Fold %d/%d: Train %s → %s, Test %s → %s\n", 
-				i+1, len(folds),
-				fold.TrainStart.Format("2006-01-02"),
-				fold.TrainEnd.Format("2006-01-02"),
-				fold.TestStart.Format("2006-01-02"),
-				fold.TestEnd.Format("2006-01-02"))
-		}
+		log.Printf("📊 Fold %d/%d: Train %s → %s, Test %s → %s", 
+			i+1, len(folds),
+			fold.TrainStart.Format("2006-01-02"),
+			fold.TrainEnd.Format("2006-01-02"),
+			fold.TestStart.Format("2006-01-02"),
+			fold.TestEnd.Format("2006-01-02"))
 		
 		// Run optimization on training data
 		trainResults, bestConfig, err := v.optimizer(config, fold.Train)
@@ -98,20 +89,16 @@ func (v *DefaultWalkForwardValidator) validateRolling(config interface{}, data [
 		
 		allResults = append(allResults, result)
 		
-		if !v.quiet {
-			fmt.Printf("  Train: %.2f%% return, %.2f%% drawdown\n", 
-				trainResults.TotalReturn*100, trainResults.MaxDrawdown*100)
-			fmt.Printf("  Test:  %.2f%% return, %.2f%% drawdown\n\n", 
-				testResults.TotalReturn*100, testResults.MaxDrawdown*100)
-		}
+		log.Printf("  ✅ GA → %.2f%% | Test → %.2f%% | Drawdown: %.2f%%", 
+			trainResults.TotalReturn*100,
+			testResults.TotalReturn*100,
+			testResults.MaxDrawdown*100)
 	}
 	
 	// Calculate summary
 	summary := v.calculateSummary(allResults)
 	
-	if !v.quiet {
-		v.printRollingSummary(summary)
-	}
+	v.printRollingSummary(summary)
 	
 	return summary, nil
 }
@@ -119,39 +106,30 @@ func (v *DefaultWalkForwardValidator) validateRolling(config interface{}, data [
 // validateHoldout performs simple holdout validation
 func (v *DefaultWalkForwardValidator) validateHoldout(config interface{}, data []types.OHLCV, wfConfig WalkForwardConfig) (*WalkForwardSummary, error) {
 	// Simple holdout validation
-	if !v.quiet {
-		fmt.Printf("Mode: Simple Holdout\n")
-		fmt.Printf("Split: %.0f%% train, %.0f%% test\n", wfConfig.SplitRatio*100, (1-wfConfig.SplitRatio)*100)
-	}
+	log.Printf("Mode: Simple Holdout")
+	log.Printf("Split: %.0f%% train, %.0f%% test", wfConfig.SplitRatio*100, (1-wfConfig.SplitRatio)*100)
 	
 	trainData, testData := v.splitter.SplitByRatio(data, wfConfig.SplitRatio)
 	if len(testData) < 50 {
 		return nil, fmt.Errorf("not enough test data for validation")
 	}
 	
-	if !v.quiet {
-		fmt.Printf("Train: %d candles (%s → %s)\n", 
-			len(trainData),
-			trainData[0].Timestamp.Format("2006-01-02"),
-			trainData[len(trainData)-1].Timestamp.Format("2006-01-02"))
-		fmt.Printf("Test:  %d candles (%s → %s)\n\n", 
-			len(testData),
-			testData[0].Timestamp.Format("2006-01-02"),
-			testData[len(testData)-1].Timestamp.Format("2006-01-02"))
-		
-		// Run optimization on training data
-		fmt.Println("🧬 Running GA optimization on training data...")
-	}
+	log.Printf("Train: %d candles (%s → %s)", 
+		len(trainData),
+		trainData[0].Timestamp.Format("2006-01-02"),
+		trainData[len(trainData)-1].Timestamp.Format("2006-01-02"))
+	log.Printf("Test:  %d candles (%s → %s)", 
+		len(testData),
+		testData[0].Timestamp.Format("2006-01-02"),
+		testData[len(testData)-1].Timestamp.Format("2006-01-02"))
 	
 	trainResults, bestConfig, err := v.optimizer(config, trainData)
 	if err != nil {
 		return nil, fmt.Errorf("optimization failed: %v", err)
 	}
 	
-	if !v.quiet {
-		// Test on out-of-sample data
-		fmt.Println("🧪 Testing optimized parameters on test data...")
-	}
+	// Test on out-of-sample data
+	log.Printf("🧪 Testing optimized parameters on test data...")
 	
 	testResults := v.backtester(bestConfig, testData)
 	
@@ -166,9 +144,7 @@ func (v *DefaultWalkForwardValidator) validateHoldout(config interface{}, data [
 	// Calculate summary
 	summary := v.calculateSummary([]WalkForwardResults{result})
 	
-	if !v.quiet {
-		v.printHoldoutResults(trainResults, testResults, summary.ReturnDegradation)
-	}
+	v.printHoldoutResults(trainResults, testResults, summary.ReturnDegradation)
 	
 	return summary, nil
 }
@@ -322,7 +298,7 @@ func stdDev(values []float64) float64 {
 
 // Package-level convenience functions
 
-// RunWalkForwardValidation is a convenience function using the default validator
+// RunWalkForwardValidation runs walk-forward validation with clean, consistent logging
 func RunWalkForwardValidation(config interface{}, data []types.OHLCV, wfConfig WalkForwardConfig, 
 	optimizer func(interface{}, []types.OHLCV) (*backtest.BacktestResults, interface{}, error),
 	backtester func(interface{}, []types.OHLCV) *backtest.BacktestResults) (*WalkForwardSummary, error) {
@@ -330,19 +306,7 @@ func RunWalkForwardValidation(config interface{}, data []types.OHLCV, wfConfig W
 	validator := NewDefaultWalkForwardValidator()
 	validator.SetOptimizer(optimizer)
 	validator.SetBacktester(backtester)
-	
-	return validator.Validate(config, data, wfConfig)
-}
-
-// RunQuietWalkForwardValidation is a convenience function using the default validator in quiet mode
-func RunQuietWalkForwardValidation(config interface{}, data []types.OHLCV, wfConfig WalkForwardConfig, 
-	optimizer func(interface{}, []types.OHLCV) (*backtest.BacktestResults, interface{}, error),
-	backtester func(interface{}, []types.OHLCV) *backtest.BacktestResults) (*WalkForwardSummary, error) {
-	
-	validator := NewDefaultWalkForwardValidator()
-	validator.SetOptimizer(optimizer)
-	validator.SetBacktester(backtester)
-	validator.SetQuiet(true)
+	// Always show clean, consistent logging
 	
 	return validator.Validate(config, data, wfConfig)
 }

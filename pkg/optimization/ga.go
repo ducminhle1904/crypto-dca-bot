@@ -17,11 +17,11 @@ import (
 
 // GA Constants
 const (
-	GAPopulationSize    = 60   // Population size for optimization
-	GAGenerations       = 35   // Number of generations
+	GAPopulationSize    = 45   // Population size for optimization
+	GAGenerations       = 30   // Number of generations
 	GAMutationRate      = 0.1  // Mutation rate
 	GACrossoverRate     = 0.8  // Crossover rate
-	GAEliteSize         = 6    // Elite size
+	GAEliteSize         = 5    // Elite size (10% of population)
 	TournamentSize      = 3    // Tournament selection size
 	MaxParallelWorkers  = 4    // Maximum concurrent GA evaluations
 	ProgressReportInterval = 5 // Report progress every N generations
@@ -68,9 +68,7 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 	crossoverRate := GACrossoverRate
 	eliteSize := GAEliteSize
 
-	log.Printf("🔄 Starting Genetic Algorithm Optimization")
-	log.Printf("Population: %d, Generations: %d, Mutation: %.1f%%, Crossover: %.1f%%", 
-		populationSize, generations, mutationRate*100, crossoverRate*100)
+	// Silent GA optimization - only show final result
 
 	// Initialize population
 	population := InitializePopulation(baseConfig, populationSize, rng)
@@ -95,21 +93,7 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 			bestResults = population[0].Results
 		}
 		
-		if gen%ProgressReportInterval == 0 {
-			log.Printf("🔄 Gen %d: Best=%.2f%%, Avg=%.2f%%, Worst=%.2f%%", 
-				gen+1, 
-				population[0].Fitness*100,
-				AverageFitness(population)*100,
-				population[len(population)-1].Fitness*100)
-				
-			// Show best individual details every DetailReportInterval generations
-			if gen%DetailReportInterval == (DetailReportInterval-1) {
-				log.Printf("ℹ️ Best Config: maxMult=%.1f | tp=%.1f%% | threshold=%.1f%%",
-					getConfigField(population[0].Config, "MaxMultiplier"),
-					getConfigField(population[0].Config, "TPPercent")*100,
-					getConfigField(population[0].Config, "PriceThreshold")*100)
-			}
-		}
+		// Silent generation processing
 		
 		// Create next generation
 		if gen < generations-1 {
@@ -117,7 +101,7 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 		}
 	}
 	
-	log.Printf("✅ GA Optimization completed! Best fitness: %.2f%%", bestIndividual.Fitness*100)
+	log.Printf("✅ GA → %.2f%%", bestIndividual.Fitness*100)
 	return bestResults, bestIndividual.Config, nil
 }
 

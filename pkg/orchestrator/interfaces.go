@@ -71,5 +71,5 @@ type IntervalRunner interface {
 	FindAvailableIntervals(dataRoot, exchange, symbol string) ([]string, error)
 	
 	// RunForInterval executes workflow for a specific interval
-	RunForInterval(cfg *config.DCAConfig, dataRoot, exchange, interval string, optimize bool, selectedPeriod time.Duration, wfConfig *validation.WalkForwardConfig) (*IntervalResult, error)
+	RunForInterval(cfg *config.DCAConfig, dataRoot, exchange, interval string, optimize bool, selectedPeriod time.Duration) (*IntervalResult, error)
 }
