@@ -1,0 +1,600 @@
+{
+  "project": {
+    "name": "Dual-Engine Regime Bot",
+    "version": "1.0.0-alpha",
+    "description": "Advanced trading bot with automatic regime detection and dual-engine execution system",
+    "base_codebase": "Enhanced DCA Bot",
+    "created_date": "2024-12-19",
+    "status": "planning"
+  },
+
+  "concept_overview": {
+    "core_philosophy": "One codebase, two engines, automatically switching based on market regime",
+    "engines": {
+      "trend_engine": {
+        "purpose": "Rides directional moves when market is trending",
+        "timeframes": ["30m_core", "5m_execution", "1m_execution"],
+        "strategy": "Multi-timeframe trend following with pullback entries"
+      },
+      "grid_engine": {
+        "purpose": "Scalps chop and hedges exposure in ranging markets",
+        "timeframes": ["30m_bias", "5m_execution"],
+        "strategy": "Mean-reversion hedge grid with symmetric positioning"
+      }
+    },
+    "orchestration": {
+      "regime_detector": "Analyzes market conditions every 30m candle with 5m intrabar updates",
+      "overseer": "Enforces risk limits, PnL caps, and emergency controls"
+    }
+  },
+
+  "architecture_design": {
+    "new_components": {
+      "regime_detector": {
+        "file": "internal/regime/detector.go",
+        "responsibility": "Market condition analysis and regime classification",
+        "inputs": ["price_data", "volume_data", "technical_indicators"],
+        "outputs": ["regime_type", "confidence_score", "transition_signals"]
+      },
+      "transition_manager": {
+        "file": "internal/transition/manager.go",
+        "responsibility": "Handles regime switches mid-trade with position evaluation and migration",
+        "inputs": ["regime_changes", "current_positions", "market_context"],
+        "outputs": [
+          "transition_decisions",
+          "position_adjustments",
+          "execution_plans"
+        ],
+        "critical_solution": "Addresses the key challenge of what happens when regime switches during active trades"
+      },
+      "engine_orchestrator": {
+        "file": "internal/orchestrator/engine_manager.go",
+        "responsibility": "Manages engine selection and transitions",
+        "inputs": ["regime_signals", "current_positions", "risk_metrics"],
+        "outputs": [
+          "active_engine",
+          "transition_commands",
+          "position_adjustments"
+        ]
+      },
+      "trend_engine": {
+        "file": "internal/engines/trend_engine.go",
+        "responsibility": "Directional trading in trending markets",
+        "strategy_components": [
+          "pullback_detection",
+          "momentum_confirmation",
+          "multi_timeframe_bias"
+        ]
+      },
+      "grid_engine": {
+        "file": "internal/engines/grid_engine.go",
+        "responsibility": "Mean-reversion trading with hedge grid approach",
+        "strategy_components": [
+          "vwap_anchoring",
+          "symmetric_grid_placement",
+          "hedge_management"
+        ]
+      },
+      "overseer": {
+        "file": "internal/risk/overseer.go",
+        "responsibility": "Global risk management and emergency controls",
+        "functions": [
+          "daily_loss_limits",
+          "drawdown_protection",
+          "manual_overrides",
+          "circuit_breakers"
+        ]
+      }
+    },
+    "enhanced_components": {
+      "regime_indicators": {
+        "file": "internal/indicators/regime_indicators.go",
+        "new_indicators": [
+          "donchian_channels",
+          "adr_normalization",
+          "noise_detection",
+          "breakout_detection"
+        ]
+      },
+      "transition_components": {
+        "position_evaluator": "internal/transition/position_evaluator.go - Evaluates position compatibility with new regime",
+        "transition_policies": "internal/transition/policies.go - Configurable transition decision rules",
+        "execution_coordinator": "internal/transition/executor.go - Manages position adjustments during transitions"
+      },
+      "multi_engine_config": {
+        "file": "internal/config/dual_engine_config.go",
+        "enhancements": [
+          "engine_specific_params",
+          "regime_thresholds",
+          "transition_rules"
+        ]
+      },
+      "state_persistence": {
+        "file": "internal/state/persistence.go",
+        "requirements": [
+          "multi_engine_positions",
+          "regime_history",
+          "transition_logs",
+          "engine_performance_metrics"
+        ]
+      }
+    },
+    "integration_points": {
+      "exchange_layer": "Reuse existing exchange adapters with multi-engine position tracking",
+      "risk_management": "Extend current risk manager for dual-engine coordination",
+      "monitoring": "Enhanced metrics for regime detection and engine performance",
+      "notifications": "Extended alerts for regime switches and engine transitions"
+    }
+  },
+
+  "implementation_phases": {
+    "phase_1": {
+      "name": "Regime Detection Foundation",
+      "duration_estimate": "3-4 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Implement core regime detection logic",
+        "Build regime indicator suite",
+        "Create regime classification system",
+        "Implement data collection for validation"
+      ],
+      "deliverables": [
+        "RegimeDetector component with configurable thresholds",
+        "Extended indicator suite (ADX, Donchian, noise detection)",
+        "Regime classification logging system",
+        "Historical regime analysis tool"
+      ],
+      "acceptance_criteria": [
+        "Regime detector runs on historical data with stable classifications",
+        "False regime switch rate < 15% on test datasets",
+        "Performance impact < 5% on existing system"
+      ]
+    },
+    "phase_2": {
+      "name": "Trend Engine Implementation",
+      "duration_estimate": "4-5 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Build multi-timeframe trend engine",
+        "Implement pullback entry logic",
+        "Add momentum confirmation system",
+        "Create trend-specific risk management"
+      ],
+      "deliverables": [
+        "TrendEngine with 30m/5m/1m timeframe coordination",
+        "Pullback detection and entry system",
+        "Momentum confirmation indicators",
+        "Trend-specific stop-loss and take-profit logic"
+      ],
+      "acceptance_criteria": [
+        "Trend engine performs in backtests on trending market periods",
+        "Risk-adjusted returns > baseline in trending conditions",
+        "Maximum drawdown within acceptable limits"
+      ]
+    },
+    "phase_3": {
+      "name": "Grid Engine Development",
+      "duration_estimate": "5-6 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Build symmetric hedge grid system",
+        "Implement VWAP/EMA anchoring",
+        "Create inventory management",
+        "Add safety unwind mechanisms"
+      ],
+      "deliverables": [
+        "GridEngine with symmetric positioning",
+        "Dynamic grid level calculation",
+        "Hedge inventory management system",
+        "Regime-change safety exits"
+      ],
+      "acceptance_criteria": [
+        "Grid engine maintains market-neutral exposure in ranging conditions",
+        "Profit factor > 1.2 in choppy market periods",
+        "Maximum inventory exposure stays within limits"
+      ]
+    },
+    "phase_4": {
+      "name": "Engine Orchestration",
+      "duration_estimate": "3-4 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Build engine switching logic",
+        "Implement comprehensive transition management system",
+        "Create position evaluation and migration logic",
+        "Add transition risk controls and monitoring"
+      ],
+      "deliverables": [
+        "EngineOrchestrator with regime-aware switching",
+        "TransitionManager with multi-tier decision system",
+        "Position evaluation matrix for regime compatibility",
+        "Transition execution with cost tracking and safety controls"
+      ],
+      "acceptance_criteria": [
+        "Transition decisions made correctly based on position evaluation matrix",
+        "Transition costs < 0.1% of portfolio value per regime switch",
+        "No orphaned positions during switches",
+        "Position migration preserves appropriate risk profile for new regime",
+        "Emergency transition controls activate properly under stress tests"
+      ]
+    },
+    "phase_5": {
+      "name": "Overseer and Safety Systems",
+      "duration_estimate": "2-3 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Implement global risk controls",
+        "Add circuit breakers and kill switches",
+        "Create manual override system",
+        "Build comprehensive monitoring"
+      ],
+      "deliverables": [
+        "Overseer with global risk limits",
+        "Emergency stop mechanisms",
+        "Manual control interface",
+        "Enhanced monitoring dashboard"
+      ],
+      "acceptance_criteria": [
+        "All safety mechanisms activate correctly under test conditions",
+        "Manual overrides work reliably",
+        "Monitoring provides full system visibility"
+      ]
+    },
+    "phase_6": {
+      "name": "Integration and Testing",
+      "duration_estimate": "4-5 weeks",
+      "status": "not_started",
+      "objectives": [
+        "Full system integration testing",
+        "Comprehensive backtesting",
+        "Paper trading validation",
+        "Performance optimization"
+      ],
+      "deliverables": [
+        "Integrated dual-engine system",
+        "Comprehensive backtest results",
+        "Paper trading performance data",
+        "Optimized configuration parameters"
+      ],
+      "acceptance_criteria": [
+        "System passes all integration tests",
+        "Backtesting shows positive risk-adjusted returns",
+        "Paper trading validates backtest results"
+      ]
+    }
+  },
+
+  "technical_specifications": {
+    "regime_detection_parameters": {
+      "trend_detection": {
+        "ema_periods": [50, 200],
+        "adx_period": 14,
+        "adx_trend_threshold": 20,
+        "ema_distance_threshold": 0.005,
+        "donchian_period": 20
+      },
+      "volatility_assessment": {
+        "atr_period": 14,
+        "bb_period": 20,
+        "bb_std_dev": 2,
+        "volatility_normalization": "price_percentage"
+      },
+      "noise_detection": {
+        "rsi_period": 14,
+        "rsi_noise_range": [45, 55],
+        "noise_bars_threshold": 8
+      },
+      "hysteresis": {
+        "confirmation_bars": 3,
+        "regime_switch_cooldown": 2
+      }
+    },
+    "trend_engine_parameters": {
+      "timeframe_hierarchy": {
+        "bias_timeframe": "30m",
+        "execution_timeframes": ["5m", "1m"]
+      },
+      "entry_conditions": {
+        "pullback_levels": [0.382, 0.618],
+        "momentum_indicators": ["macd_histogram", "rsi_5"],
+        "entry_methods": ["limit_first", "market_fallback"]
+      },
+      "risk_management": {
+        "stop_loss_method": "swing_low_or_atr",
+        "atr_multiplier": 1.2,
+        "take_profit_scaling": [0.5, 1.0],
+        "trailing_method": "atr_or_chandelier",
+        "chandelier_multiplier": 3
+      },
+      "position_management": {
+        "max_add_ons": 2,
+        "add_on_conditions": ["unrealized_pnl_positive", "adx_rising"]
+      }
+    },
+    "grid_engine_parameters": {
+      "anchor_methods": ["anchored_vwap", "ema_100"],
+      "band_calculation": {
+        "atr_multiplier": 0.75,
+        "grid_spacing_multiplier": 0.25,
+        "max_bands": 4
+      },
+      "hedge_management": {
+        "symmetric_placement": true,
+        "inventory_limits": {
+          "max_long_notional": 0.4,
+          "max_short_notional": 0.4,
+          "max_net_exposure": 0.1
+        }
+      },
+      "exit_conditions": {
+        "take_profit_multiplier": 0.7,
+        "stop_loss_multiplier": 1.5,
+        "time_based_exit": true,
+        "max_bars_in_trade": 48
+      },
+      "safety_mechanisms": {
+        "bb_width_exit_threshold": 1.5,
+        "adx_popup_threshold": 22,
+        "regime_flip_exit": true
+      }
+    }
+  },
+
+  "risk_management_framework": {
+    "engine_level_limits": {
+      "trend_engine": {
+        "max_position_size": 0.3,
+        "max_daily_trades": 10,
+        "max_daily_loss": 0.02
+      },
+      "grid_engine": {
+        "max_total_exposure": 0.8,
+        "max_legs_per_side": 6,
+        "max_daily_loss": 0.015
+      }
+    },
+    "global_limits": {
+      "max_portfolio_risk": 0.05,
+      "max_daily_loss": 0.03,
+      "max_drawdown": 0.08,
+      "correlation_limits": {
+        "max_engine_correlation": 0.6,
+        "position_concentration": 0.4
+      }
+    },
+    "circuit_breakers": {
+      "volatility_spike": {
+        "threshold": "3x_daily_atr",
+        "action": "reduce_positions"
+      },
+      "regime_uncertainty": {
+        "threshold": "confidence_below_60%",
+        "action": "pause_new_entries"
+      },
+      "system_errors": {
+        "exchange_disconnection": "emergency_flatten",
+        "data_feed_issues": "pause_trading",
+        "calculation_errors": "alert_and_hold"
+      }
+    }
+  },
+
+  "testing_strategy": {
+    "unit_testing": {
+      "regime_detection": [
+        "individual_indicator_accuracy",
+        "regime_classification_logic",
+        "hysteresis_mechanism",
+        "edge_case_handling"
+      ],
+      "engine_components": [
+        "entry_signal_generation",
+        "exit_logic_validation",
+        "risk_calculation_accuracy",
+        "position_sizing_logic"
+      ]
+    },
+    "integration_testing": {
+      "engine_transitions": [
+        "position_migration_accuracy",
+        "state_consistency_checks",
+        "transition_cost_measurement",
+        "regime_switch_timing"
+      ],
+      "system_coordination": [
+        "orchestrator_decision_making",
+        "risk_limit_enforcement",
+        "monitoring_data_accuracy",
+        "notification_triggering"
+      ]
+    },
+    "backtesting_strategy": {
+      "individual_engines": {
+        "trend_engine": "test_on_strong_trending_periods",
+        "grid_engine": "test_on_ranging_market_periods"
+      },
+      "regime_detection": {
+        "accuracy_measurement": "manual_regime_labeling_vs_detector",
+        "false_signal_analysis": "cost_of_incorrect_classifications"
+      },
+      "full_system": {
+        "multi_regime_periods": "test_across_various_market_conditions",
+        "transition_analysis": "performance_during_regime_changes",
+        "parameter_sensitivity": "robustness_across_different_settings"
+      }
+    },
+    "paper_trading": {
+      "duration": "minimum_3_months",
+      "validation_metrics": [
+        "regime_classification_accuracy",
+        "engine_performance_vs_backtest",
+        "transition_execution_quality",
+        "risk_management_effectiveness"
+      ]
+    }
+  },
+
+  "configuration_management": {
+    "file_structure": {
+      "main_config": "configs/dual_engine/main_config.json",
+      "regime_detection": "configs/dual_engine/regime_params.json",
+      "trend_engine": "configs/dual_engine/trend_engine.json",
+      "grid_engine": "configs/dual_engine/grid_engine.json",
+      "risk_management": "configs/dual_engine/risk_limits.json"
+    },
+    "environment_specific": {
+      "development": "aggressive_parameters_for_testing",
+      "staging": "conservative_parameters_for_validation",
+      "production": "optimized_parameters_from_backtesting"
+    },
+    "parameter_optimization": {
+      "method": "genetic_algorithm_with_walk_forward_analysis",
+      "optimization_targets": [
+        "risk_adjusted_returns",
+        "maximum_drawdown",
+        "regime_classification_accuracy",
+        "engine_transition_efficiency"
+      ]
+    }
+  },
+
+  "monitoring_and_analytics": {
+    "key_metrics": {
+      "regime_detection": [
+        "current_regime_classification",
+        "regime_confidence_score",
+        "regime_switch_frequency",
+        "false_signal_rate"
+      ],
+      "engine_performance": [
+        "individual_engine_pnl",
+        "engine_win_rates",
+        "average_trade_duration",
+        "risk_adjusted_returns_by_engine"
+      ],
+      "system_health": [
+        "position_count_by_engine",
+        "total_exposure_by_engine",
+        "transition_success_rate",
+        "overseer_intervention_frequency"
+      ]
+    },
+    "alerting_system": {
+      "regime_switches": "immediate_notification_with_reasoning",
+      "risk_limit_breaches": "escalating_alert_system",
+      "system_errors": "critical_alerts_with_auto_response",
+      "performance_degradation": "daily_performance_summaries"
+    },
+    "reporting": {
+      "daily_reports": "engine_performance_and_regime_analysis",
+      "weekly_reports": "strategy_effectiveness_and_optimization_suggestions",
+      "monthly_reports": "comprehensive_system_analysis_and_parameter_review"
+    }
+  },
+
+  "deployment_strategy": {
+    "environment_progression": {
+      "development": {
+        "purpose": "feature_development_and_unit_testing",
+        "data_source": "historical_data_replay",
+        "risk_limits": "no_real_money"
+      },
+      "staging": {
+        "purpose": "integration_testing_and_validation",
+        "data_source": "live_market_data_paper_trading",
+        "risk_limits": "simulated_conservative_limits"
+      },
+      "production": {
+        "purpose": "live_trading_with_real_capital",
+        "data_source": "live_market_data",
+        "risk_limits": "strict_production_limits"
+      }
+    },
+    "rollout_plan": {
+      "phase_1": "single_symbol_low_capital_validation",
+      "phase_2": "multi_symbol_moderate_capital_testing",
+      "phase_3": "full_deployment_with_complete_capital_allocation"
+    },
+    "fallback_mechanisms": {
+      "system_failure": "automatic_revert_to_enhanced_dca_bot",
+      "poor_performance": "gradual_capital_reduction_with_analysis",
+      "market_crisis": "emergency_flatten_with_manual_override"
+    }
+  },
+
+  "success_metrics": {
+    "technical_metrics": {
+      "regime_accuracy": ">85%_correct_classifications",
+      "transition_efficiency": "<0.1%_portfolio_cost_per_transition",
+      "system_uptime": ">99.5%_availability",
+      "execution_latency": "<500ms_average_order_execution"
+    },
+    "financial_metrics": {
+      "risk_adjusted_returns": ">1.5_sharpe_ratio",
+      "maximum_drawdown": "<8%_peak_to_trough",
+      "profit_factor": ">1.3_gross_profit_vs_gross_loss",
+      "win_rate": ">60%_profitable_trades"
+    },
+    "operational_metrics": {
+      "regime_switch_frequency": "optimal_balance_between_adaptation_and_stability",
+      "engine_utilization": "appropriate_time_allocation_based_on_market_conditions",
+      "risk_management_effectiveness": "zero_limit_breaches_in_normal_operations"
+    }
+  },
+
+  "potential_challenges": {
+    "technical_challenges": [
+      {
+        "challenge": "regime_detection_accuracy",
+        "risk": "high",
+        "mitigation": "extensive_backtesting_and_confidence_scoring"
+      },
+      {
+        "challenge": "engine_transition_complexity",
+        "risk": "medium",
+        "mitigation": "comprehensive_transition_management_system_with_position_evaluation_matrix_and_multi_tier_decision_logic",
+        "detailed_solution": "See regime_transition_solution.json for complete transition handling framework"
+      },
+      {
+        "challenge": "system_complexity_management",
+        "risk": "high",
+        "mitigation": "modular_architecture_and_extensive_documentation"
+      }
+    ],
+    "market_challenges": [
+      {
+        "challenge": "regime_ambiguity_periods",
+        "risk": "medium",
+        "mitigation": "confidence_thresholds_and_conservative_defaults"
+      },
+      {
+        "challenge": "black_swan_events",
+        "risk": "high",
+        "mitigation": "circuit_breakers_and_emergency_stops"
+      },
+      {
+        "challenge": "correlation_breakdown",
+        "risk": "medium",
+        "mitigation": "dynamic_correlation_monitoring_and_limits"
+      }
+    ]
+  },
+
+  "future_enhancements": {
+    "machine_learning_integration": {
+      "regime_detection_ml": "neural_network_for_pattern_recognition",
+      "parameter_optimization": "reinforcement_learning_for_adaptive_parameters",
+      "market_microstructure": "order_book_analysis_for_entry_timing"
+    },
+    "multi_asset_support": {
+      "cross_asset_regimes": "detect_regimes_across_multiple_instruments",
+      "portfolio_optimization": "dynamic_allocation_between_different_markets",
+      "correlation_trading": "exploit_regime_changes_in_asset_correlations"
+    },
+    "advanced_features": {
+      "sentiment_integration": "news_and_social_sentiment_regime_factors",
+      "options_strategies": "volatility_trading_during_regime_transitions",
+      "high_frequency_components": "microsecond_execution_for_grid_engine"
+    }
+  }
+}

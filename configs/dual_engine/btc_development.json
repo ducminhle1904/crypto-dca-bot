@@ -1,0 +1,236 @@
+{
+  "version": "1.0.0-dev",
+  "environment": "development",
+  "created_at": "2025-01-02T14:30:00Z",
+  "updated_at": "2025-01-02T14:30:00Z",
+
+  "main_config": {
+    "symbol": "BTCUSDT",
+    "exchange": "bybit",
+    "interval": "5m",
+    "base_amount": 100.0,
+    "log_level": "debug",
+    "data_directory": "data",
+    "state_directory": "state",
+    "max_concurrency": 10,
+    "update_interval": "30s",
+    "demo_mode": true,
+    "safe_mode": true,
+    "manual_override": false
+  },
+
+  "exchange_config": {
+    "bybit": {
+      "api_key": "demo-key-placeholder",
+      "api_secret": "demo-secret-placeholder",
+      "demo": true,
+      "testnet": false
+    }
+  },
+
+  "regime_detection": {
+    "trend_detection": {
+      "ema_periods": [50, 200],
+      "adx_period": 14,
+      "adx_trend_threshold": 20,
+      "ema_distance_threshold": 0.005,
+      "donchian_period": 20
+    },
+    "volatility_assessment": {
+      "atr_period": 14,
+      "bb_period": 20,
+      "bb_std_dev": 2,
+      "volatility_normalization": "price_percentage"
+    },
+    "noise_detection": {
+      "rsi_period": 14,
+      "rsi_noise_range": [45, 55],
+      "noise_bars_threshold": 8
+    },
+    "hysteresis": {
+      "confirmation_bars": 3,
+      "regime_switch_cooldown": 2
+    },
+    "confidence_thresholds": {
+      "trending": 0.75,
+      "ranging": 0.7,
+      "volatile": 0.65,
+      "uncertain": 0.6
+    }
+  },
+
+  "trend_engine": {
+    "timeframe_hierarchy": {
+      "bias_timeframe": "30m",
+      "execution_timeframes": ["5m", "1m"]
+    },
+    "entry_conditions": {
+      "pullback_levels": [0.382, 0.618],
+      "momentum_indicators": ["macd_histogram", "rsi_5"],
+      "entry_methods": ["limit_first", "market_fallback"]
+    },
+    "risk_management": {
+      "stop_loss_method": "swing_low_or_atr",
+      "atr_multiplier": 1.2,
+      "take_profit_scaling": [0.5, 1.0],
+      "trailing_method": "atr_or_chandelier",
+      "chandelier_multiplier": 3
+    },
+    "position_management": {
+      "max_add_ons": 2,
+      "add_on_conditions": ["unrealized_pnl_positive", "adx_rising"]
+    },
+    "max_position_size": 0.2,
+    "max_daily_trades": 5,
+    "max_daily_loss": 0.01
+  },
+
+  "grid_engine": {
+    "anchor_methods": ["anchored_vwap", "ema_100"],
+    "band_calculation": {
+      "atr_multiplier": 0.75,
+      "grid_spacing_multiplier": 0.25,
+      "max_bands": 3
+    },
+    "hedge_management": {
+      "symmetric_placement": true,
+      "inventory_limits": {
+        "max_long_notional": 0.3,
+        "max_short_notional": 0.3,
+        "max_net_exposure": 0.05
+      }
+    },
+    "exit_conditions": {
+      "take_profit_multiplier": 0.7,
+      "stop_loss_multiplier": 1.5,
+      "time_based_exit": true,
+      "max_bars_in_trade": 24
+    },
+    "safety_mechanisms": {
+      "bb_width_exit_threshold": 1.5,
+      "adx_popup_threshold": 22,
+      "regime_flip_exit": true
+    },
+    "max_total_exposure": 0.6,
+    "max_legs_per_side": 4,
+    "max_daily_loss": 0.01
+  },
+
+  "risk_management": {
+    "global_limits": {
+      "max_portfolio_risk": 0.03,
+      "max_daily_loss": 0.02,
+      "max_drawdown": 0.05,
+      "correlation_limits": {
+        "max_engine_correlation": 0.5,
+        "position_concentration": 0.3
+      }
+    },
+    "circuit_breakers": {
+      "volatility_spike": {
+        "threshold": "2x_daily_atr",
+        "action": "reduce_positions"
+      },
+      "regime_uncertainty": {
+        "threshold": "confidence_below_70%",
+        "action": "pause_new_entries"
+      },
+      "system_errors": {
+        "exchange_disconnection": "emergency_flatten",
+        "data_feed_issues": "pause_trading",
+        "calculation_errors": "alert_and_hold"
+      }
+    },
+    "auto_flatten_on_emergency": true,
+    "require_manual_confirmation": true,
+    "emergency_notifications": true
+  },
+
+  "transition_rules": {
+    "max_daily_transitions": 5,
+    "max_daily_transition_cost": 0.005,
+    "regime_confidence_threshold": 0.75,
+    "min_regime_duration": 900000000000,
+    "transition_cooldown": 600000000000,
+    "max_transition_cost": 0.0005,
+    "emergency_exit_threshold": -0.02,
+    "default_policy": "conservative",
+    "trend_to_chop_rules": {
+      "immediate_exit_threshold": -0.015,
+      "graceful_migration_age": 3600000000000,
+      "protective_hold_threshold": -0.005
+    },
+    "chop_to_trend_rules": {
+      "flatten_hedge_adx_threshold": 23,
+      "convert_to_trend_threshold": 0.005,
+      "gradual_unwind_adx_range": {
+        "min": 18,
+        "max": 23
+      }
+    }
+  },
+
+  "orchestration": {
+    "default_engine": "grid",
+    "engine_selection_mode": "regime_based",
+    "regime_compatibility": {
+      "trending": [
+        { "engine": "trend", "compatibility": 1.0, "priority": 1 },
+        { "engine": "grid", "compatibility": 0.3, "priority": 2 }
+      ],
+      "ranging": [
+        { "engine": "grid", "compatibility": 1.0, "priority": 1 },
+        { "engine": "trend", "compatibility": 0.2, "priority": 2 }
+      ],
+      "volatile": [
+        { "engine": "grid", "compatibility": 0.8, "priority": 1 },
+        { "engine": "trend", "compatibility": 0.4, "priority": 2 }
+      ],
+      "uncertain": [
+        { "engine": "grid", "compatibility": 0.6, "priority": 1 },
+        { "engine": "trend", "compatibility": 0.3, "priority": 2 }
+      ]
+    },
+    "switching_enabled": true,
+    "min_engine_runtime": 1800000000000,
+    "switching_cooldown": 900000000000,
+    "performance_window": 86400000000000,
+    "min_performance_diff": 0.02
+  },
+
+  "monitoring": {
+    "enable_metrics": true,
+    "metrics_interval": 30000000000,
+    "metrics_retention": 604800000000000,
+    "track_performance": true,
+    "performance_metrics": [
+      "pnl",
+      "sharpe",
+      "drawdown",
+      "win_rate",
+      "avg_trade"
+    ],
+    "health_checks": ["exchange", "data_feed", "memory", "disk"],
+    "health_check_interval": 60000000000,
+    "alert_thresholds": {
+      "daily_loss": -0.02,
+      "drawdown": 0.05,
+      "memory_usage": 0.8,
+      "disk_usage": 0.85,
+      "error_rate": 0.05
+    }
+  },
+
+  "notifications": {
+    "enable_telegram": false,
+    "enable_email": false,
+    "enable_webhook": false,
+    "notify_regime_changes": true,
+    "notify_engine_switch": true,
+    "notify_risk_violations": true,
+    "notify_emergency_actions": true,
+    "notify_performance": false,
+    "max_notifications_per_hour": 10,
+    "notification_cooldown": 300000000000
+  }
+}

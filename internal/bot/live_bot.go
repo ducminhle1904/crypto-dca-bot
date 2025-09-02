@@ -15,6 +15,7 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/adapters"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/logger"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/regime"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
@@ -59,6 +60,18 @@ type LiveBot struct {
 	
 	// Position synchronization
 	positionMutex  sync.RWMutex      // Protect position data access
+	
+	// Regime detection (Phase 1) - Foundation for dual engine system
+	regimeDetector    *regime.RegimeDetector     // Market regime detection
+	currentRegime     regime.RegimeType          // Current detected regime
+	lastRegimeSignal  *regime.RegimeSignal       // Last regime detection result
+	regimeHistory     []*regime.RegimeChange     // History of regime changes
+	regimeMutex       sync.RWMutex               // Protect regime data access
+	
+	// Market data buffer for regime detection
+	marketDataBuffer  []types.OHLCV              // Historical data for regime analysis
+	bufferSize        int                        // Maximum buffer size
+	bufferMutex       sync.RWMutex               // Protect buffer access
 }
 
 // NewLiveBot creates a new live trading bot instance
@@ -99,6 +112,18 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		stopChan: make(chan struct{}),
 		activeTPOrders: make(map[string]*TPOrderInfo),
 		tpOrderMutex: sync.RWMutex{},
+		
+		// Initialize regime detection (Phase 1)
+		regimeDetector:    regime.NewRegimeDetector(),
+		currentRegime:     regime.RegimeUncertain,
+		lastRegimeSignal:  nil,
+		regimeHistory:     make([]*regime.RegimeChange, 0, 100),
+		regimeMutex:       sync.RWMutex{},
+		
+		// Initialize market data buffer (500 periods = ~40 hours of 5m data)
+		marketDataBuffer:  make([]types.OHLCV, 0, 500),
+		bufferSize:        500,
+		bufferMutex:       sync.RWMutex{},
 	}
 
 	// Initialize strategy
@@ -402,6 +427,10 @@ func (bot *LiveBot) checkAndTrade() {
 	if len(klines) < bot.config.Strategy.WindowSize {
 		bot.logger.LogWarning("Limited data", "Using %d data points (less than configured %d, but sufficient for analysis)", len(klines), bot.config.Strategy.WindowSize)
 	}
+
+	// Update market data buffer and detect regime (Phase 1)
+	bot.updateMarketDataBuffer(klines)
+	bot.detectAndUpdateRegime()
 
 	// Analyze market conditions
 	decision, action := bot.analyzeMarket(klines, currentPrice)
@@ -1451,4 +1480,162 @@ func (bot *LiveBot) placeFallbackTPOrder(quantity float64, avgEntryPrice float64
 		level, formattedQty, bot.symbol, formattedPrice, levelPercent*100, tpOrder.OrderID)
 	
 	return nil
+}
+
+// updateMarketDataBuffer maintains a rolling buffer of market data for regime analysis
+func (bot *LiveBot) updateMarketDataBuffer(klines []types.OHLCV) {
+	bot.bufferMutex.Lock()
+	defer bot.bufferMutex.Unlock()
+	
+	// Add new candle data (use the most recent candle)
+	if len(klines) > 0 {
+		latestCandle := klines[len(klines)-1]
+		
+		// Add to buffer
+		bot.marketDataBuffer = append(bot.marketDataBuffer, latestCandle)
+		
+		// Maintain buffer size
+		if len(bot.marketDataBuffer) > bot.bufferSize {
+			// Remove oldest entries to maintain buffer size
+			excess := len(bot.marketDataBuffer) - bot.bufferSize
+			bot.marketDataBuffer = bot.marketDataBuffer[excess:]
+		}
+	}
+}
+
+// detectAndUpdateRegime performs regime detection and updates bot state
+func (bot *LiveBot) detectAndUpdateRegime() {
+	bot.bufferMutex.RLock()
+	dataBuffer := make([]types.OHLCV, len(bot.marketDataBuffer))
+	copy(dataBuffer, bot.marketDataBuffer)
+	bot.bufferMutex.RUnlock()
+	
+	// Need sufficient data for regime detection
+	minDataForRegime := 250 // Same as our regime analyzer tool
+	if len(dataBuffer) < minDataForRegime {
+		// Not enough data yet - keep current regime as uncertain
+		bot.regimeMutex.Lock()
+		if bot.currentRegime == regime.RegimeUncertain {
+			bot.logger.Info("Regime Detection: Insufficient data for regime analysis (%d/%d points)", len(dataBuffer), minDataForRegime)
+		}
+		bot.regimeMutex.Unlock()
+		return
+	}
+	
+	// Perform regime detection
+	signal, err := bot.regimeDetector.DetectRegime(dataBuffer)
+	if err != nil {
+		bot.logger.LogWarning("Regime Detection Error", "%v", err)
+		return
+	}
+	
+	// Update regime state
+	bot.regimeMutex.Lock()
+	defer bot.regimeMutex.Unlock()
+	
+	oldRegime := bot.currentRegime
+	bot.currentRegime = signal.Type
+	bot.lastRegimeSignal = signal
+	
+	// Log regime change if occurred
+	if oldRegime != signal.Type && oldRegime != regime.RegimeUncertain {
+		regimeChange := &regime.RegimeChange{
+			Timestamp:    signal.Timestamp,
+			OldRegime:    oldRegime,
+			NewRegime:    signal.Type,
+			Confidence:   signal.Confidence,
+			Reason:       fmt.Sprintf("Trend: %.2f, Volatility: %.2f, Noise: %.2f", signal.TrendStrength, signal.Volatility, signal.NoiseLevel),
+			TriggerPrice: dataBuffer[len(dataBuffer)-1].Close,
+		}
+		
+		// Add to history
+		bot.regimeHistory = append(bot.regimeHistory, regimeChange)
+		if len(bot.regimeHistory) > 50 {
+			// Keep only last 50 regime changes
+			bot.regimeHistory = bot.regimeHistory[1:]
+		}
+		
+		// Log regime change
+		bot.logger.Trade("🔄 REGIME CHANGE: %s → %s (Confidence: %.1f%%) | Trend: %.2f, Vol: %.2f, Noise: %.2f",
+			oldRegime.String(),
+			signal.Type.String(),
+			signal.Confidence*100,
+			signal.TrendStrength,
+			signal.Volatility,
+			signal.NoiseLevel,
+		)
+		
+		// Log to console for visibility
+		fmt.Printf("🔄 REGIME CHANGE: %s → %s (%.1f%% confidence)\n", 
+			oldRegime.String(), signal.Type.String(), signal.Confidence*100)
+			
+	} else if signal.TransitionFlag {
+		// Log transition detection even if regime hasn't officially changed
+		bot.logger.Info("Regime Transition: Potential transition detected - confidence: %.1f%%, current: %s", signal.Confidence*100, signal.Type.String())
+	}
+	
+	// Periodic regime status logging (every 20 detections ≈ every ~2 hours for 5m intervals)
+	detectionCount := len(bot.regimeHistory) + 1
+	if detectionCount%20 == 0 {
+		bot.logger.Info("Regime Status: Current: %s | Confidence: %.1f%% | Trend: %.2f | Volatility: %.2f | Noise: %.2f",
+			signal.Type.String(),
+			signal.Confidence*100,
+			signal.TrendStrength,
+			signal.Volatility,
+			signal.NoiseLevel,
+		)
+	}
+}
+
+// GetCurrentRegime returns the current market regime (thread-safe)
+func (bot *LiveBot) GetCurrentRegime() regime.RegimeType {
+	bot.regimeMutex.RLock()
+	defer bot.regimeMutex.RUnlock()
+	return bot.currentRegime
+}
+
+// GetLastRegimeSignal returns the most recent regime detection signal (thread-safe)
+func (bot *LiveBot) GetLastRegimeSignal() *regime.RegimeSignal {
+	bot.regimeMutex.RLock()
+	defer bot.regimeMutex.RUnlock()
+	if bot.lastRegimeSignal == nil {
+		return nil
+	}
+	// Return a copy to prevent concurrent access issues
+	signalCopy := *bot.lastRegimeSignal
+	return &signalCopy
+}
+
+// GetRegimeHistory returns the recent regime change history (thread-safe)
+func (bot *LiveBot) GetRegimeHistory() []*regime.RegimeChange {
+	bot.regimeMutex.RLock()
+	defer bot.regimeMutex.RUnlock()
+	
+	// Return a copy to prevent concurrent access issues
+	historyCopy := make([]*regime.RegimeChange, len(bot.regimeHistory))
+	copy(historyCopy, bot.regimeHistory)
+	return historyCopy
+}
+
+// GetRegimeAnalytics returns basic analytics about regime detection performance
+func (bot *LiveBot) GetRegimeAnalytics() map[string]interface{} {
+	bot.regimeMutex.RLock()
+	defer bot.regimeMutex.RUnlock()
+	
+	analytics := map[string]interface{}{
+		"current_regime":        bot.currentRegime.String(),
+		"total_regime_changes":  len(bot.regimeHistory),
+		"buffer_size":          len(bot.marketDataBuffer),
+		"detection_ready":      len(bot.marketDataBuffer) >= 250,
+	}
+	
+	if bot.lastRegimeSignal != nil {
+		analytics["last_confidence"] = bot.lastRegimeSignal.Confidence
+		analytics["last_trend_strength"] = bot.lastRegimeSignal.TrendStrength
+		analytics["last_volatility"] = bot.lastRegimeSignal.Volatility
+		analytics["last_noise_level"] = bot.lastRegimeSignal.NoiseLevel
+		analytics["last_detection"] = bot.lastRegimeSignal.Timestamp.Format("2006-01-02 15:04:05")
+	}
+	
+	return analytics
 }
