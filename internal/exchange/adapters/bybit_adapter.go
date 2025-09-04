@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"log"
+	"strconv"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/bybit"
@@ -150,6 +151,106 @@ func (b *BybitAdapter) GetTradableBalance(ctx context.Context, accountType excha
 	}
 	
 	return balance, nil
+}
+
+// GetInstrumentConstraints retrieves trading constraints for a symbol
+func (b *BybitAdapter) GetInstrumentConstraints(ctx context.Context, category, symbol string) (*exchange.InstrumentConstraints, error) {
+	if !b.connected {
+		return nil, &exchange.ExchangeError{
+			Code:    "NOT_CONNECTED",
+			Message: "Adapter not connected to exchange",
+			IsRetryable: false,
+		}
+	}
+
+	// Get instrument manager from client
+	instrumentManager := b.client.GetInstrumentManager()
+	if instrumentManager == nil {
+		return nil, &exchange.ExchangeError{
+			Code:    "INSTRUMENT_MANAGER_UNAVAILABLE",
+			Message: "Instrument manager not available",
+			IsRetryable: false,
+		}
+	}
+
+	// Get instrument info
+	instrumentInfo, err := instrumentManager.GetInstrumentInfo(ctx, category, symbol)
+	if err != nil {
+		return nil, &exchange.ExchangeError{
+			Code:    "INSTRUMENT_INFO_FAILED",
+			Message: err.Error(),
+			IsRetryable: true,
+		}
+	}
+
+	// Parse constraints from instrument info
+	constraints := &exchange.InstrumentConstraints{
+		MinOrderQty: parseFloat64(instrumentInfo.LotSizeFilter.MinOrderQty),
+		MaxOrderQty: parseFloat64(instrumentInfo.LotSizeFilter.MaxOrderQty),
+		QtyStep:     parseFloat64(instrumentInfo.LotSizeFilter.QtyStep),
+		TickSize:    parseFloat64(instrumentInfo.PriceFilter.TickSize),
+		MinPrice:    parseFloat64(instrumentInfo.PriceFilter.MinPrice),
+		MaxPrice:    parseFloat64(instrumentInfo.PriceFilter.MaxPrice),
+		MinNotional: parseFloat64(instrumentInfo.LotSizeFilter.MinNotionalValue),
+		MaxLeverage: parseFloat64(instrumentInfo.LeverageFilter.MaxLeverage),
+		MinLeverage: parseFloat64(instrumentInfo.LeverageFilter.MinLeverage),
+	}
+
+	return constraints, nil
+}
+
+// ValidateAndAdjustQuantity validates and adjusts quantity based on exchange constraints
+func (b *BybitAdapter) ValidateAndAdjustQuantity(ctx context.Context, category, symbol string, quantity float64) (float64, error) {
+	if !b.connected {
+		return 0, &exchange.ExchangeError{
+			Code:    "NOT_CONNECTED",
+			Message: "Adapter not connected to exchange",
+			IsRetryable: false,
+		}
+	}
+
+	// Get instrument manager from client
+	instrumentManager := b.client.GetInstrumentManager()
+	if instrumentManager == nil {
+		return 0, &exchange.ExchangeError{
+			Code:    "INSTRUMENT_MANAGER_UNAVAILABLE",
+			Message: "Instrument manager not available",
+			IsRetryable: false,
+		}
+	}
+
+	// Convert quantity to string for the instrument manager
+	qtyStr := strconv.FormatFloat(quantity, 'f', -1, 64)
+	
+	// Use the existing ValidateAndAdjustQuantity method
+	adjustedQtyStr, err := instrumentManager.ValidateAndAdjustQuantity(ctx, category, symbol, qtyStr)
+	if err != nil {
+		return 0, &exchange.ExchangeError{
+			Code:    "QUANTITY_ADJUSTMENT_FAILED",
+			Message: err.Error(),
+			IsRetryable: false,
+		}
+	}
+
+	// Convert back to float64
+	adjustedQty, err := strconv.ParseFloat(adjustedQtyStr, 64)
+	if err != nil {
+		return 0, &exchange.ExchangeError{
+			Code:    "QUANTITY_PARSE_FAILED",
+			Message: err.Error(),
+			IsRetryable: false,
+		}
+	}
+
+	return adjustedQty, nil
+}
+
+// Helper function to parse float64 from string (matches the one in bybit package)
+func parseFloat64(s string) float64 {
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return 0.0
 }
 
 // GetPositions retrieves current positions
