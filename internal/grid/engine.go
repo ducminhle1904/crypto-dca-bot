@@ -2,6 +2,7 @@ package grid
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
@@ -56,6 +57,7 @@ type GridEngine struct {
 	
 	// Grid Management
 	gridLevels     []*GridLevel       `json:"grid_levels"`      // All grid levels
+	levelIndex     map[int]*GridLevel `json:"-"`                // Fast lookup map for levels by level number
 	activePositions map[int]*GridPosition `json:"active_positions"` // Active positions by level
 	closedPositions []*GridPosition   `json:"closed_positions"` // Historical closed positions for reporting
 	
@@ -92,6 +94,7 @@ func NewGridEngine(config *config.GridConfig) (*GridEngine, error) {
 	engine := &GridEngine{
 		config:           config,
 		gridLevels:       make([]*GridLevel, 0, len(config.GridLevels)),
+		levelIndex:       make(map[int]*GridLevel),
 		activePositions:  make(map[int]*GridPosition),
 		closedPositions:  make([]*GridPosition, 0), // Historical positions for reporting
 		availableBalance: config.InitialBalance,
@@ -129,6 +132,7 @@ func (ge *GridEngine) initializeGridLevels() error {
 				ProfitTarget: profitTarget,
 			}
 			ge.gridLevels = append(ge.gridLevels, level)
+			ge.levelIndex[level.Level] = level
 			
 		case config.TradingModeShort:
 			// For short positions, profit target is below entry price
@@ -142,26 +146,39 @@ func (ge *GridEngine) initializeGridLevels() error {
 				ProfitTarget: profitTarget,
 			}
 			ge.gridLevels = append(ge.gridLevels, level)
+			ge.levelIndex[level.Level] = level
 			
 		case config.TradingModeBoth:
-			// Create both long and short levels at the same price
-			longLevel := &GridLevel{
-				Level:        i*2 + 1,
-				Price:        price,
-				Direction:    "long",
-				IsActive:     false,
-				Position:     nil,
-				ProfitTarget: price * (1.0 + ge.config.ProfitPercent),
+			// For "both" mode, create realistic long/short distribution:
+			// - Lower half of price range: long positions (buy when price drops)
+			// - Upper half of price range: short positions (sell when price rises)
+			midPrice := (ge.config.LowerBound + ge.config.UpperBound) / 2
+			
+			if price <= midPrice {
+				// Lower half: create long positions to buy on dips
+				level := &GridLevel{
+					Level:        i + 1,
+					Price:        price,
+					Direction:    "long",
+					IsActive:     false,
+					Position:     nil,
+					ProfitTarget: price * (1.0 + ge.config.ProfitPercent),
+				}
+				ge.gridLevels = append(ge.gridLevels, level)
+				ge.levelIndex[level.Level] = level
+			} else {
+				// Upper half: create short positions to sell on rallies
+				level := &GridLevel{
+					Level:        i + 1,
+					Price:        price,
+					Direction:    "short",
+					IsActive:     false,
+					Position:     nil,
+					ProfitTarget: price * (1.0 - ge.config.ProfitPercent),
+				}
+				ge.gridLevels = append(ge.gridLevels, level)
+				ge.levelIndex[level.Level] = level
 			}
-			shortLevel := &GridLevel{
-				Level:        i*2 + 2,
-				Price:        price,
-				Direction:    "short",
-				IsActive:     false,
-				Position:     nil,
-				ProfitTarget: price * (1.0 - ge.config.ProfitPercent),
-			}
-			ge.gridLevels = append(ge.gridLevels, longLevel, shortLevel)
 			
 		default:
 			return fmt.Errorf("unsupported trading mode: %s", ge.config.TradingMode)
@@ -222,18 +239,35 @@ func (ge *GridEngine) checkGridTriggersOHLCV(tick types.OHLCV, currentTime time.
 		// Sort levels by price to process them in the order they would be hit
 		sortedLevels := ge.sortLevelsByExecutionOrder(triggeredLevels, tick)
 		
-		// Process each triggered level
+		// Track available balance for this processing cycle to avoid race conditions
+		availableForCycle := ge.availableBalance
+		
+		// Process each triggered level with running balance check
 		for _, level := range sortedLevels {
-			// Double-check that we still have sufficient balance and level is still inactive
+			// Double-check that level is still inactive
 			if level.IsActive {
 				continue
 			}
 			
-			// Open position at the grid level price (not the close price)
+			// Calculate margin required for this position
+			quantity := ge.config.CalculateQuantityForGrid(level.Price)
+			positionNotional := quantity * level.Price
+			marginRequired := positionNotional / ge.config.Leverage
+			
+			// Check if we have enough balance remaining in this cycle
+			if marginRequired > availableForCycle {
+				// Not enough balance for this level, skip remaining levels
+				break
+			}
+			
+			// Open position at the grid level price
 			if err := ge.openPosition(level, level.Price, currentTime); err != nil {
 				// Log the error but continue processing other levels
 				continue
 			}
+			
+			// Update available balance for remaining levels in this cycle
+			availableForCycle -= marginRequired
 		}
 	}
 	
@@ -257,22 +291,14 @@ func (ge *GridEngine) sortLevelsByExecutionOrder(levels []*GridLevel, tick types
 	
 	if priceMovedUp {
 		// Price moved up: levels would be hit from lowest to highest
-		for i := 0; i < len(sortedLevels)-1; i++ {
-			for j := i + 1; j < len(sortedLevels); j++ {
-				if sortedLevels[i].Price > sortedLevels[j].Price {
-					sortedLevels[i], sortedLevels[j] = sortedLevels[j], sortedLevels[i]
-				}
-			}
-		}
+		sort.Slice(sortedLevels, func(i, j int) bool {
+			return sortedLevels[i].Price < sortedLevels[j].Price
+		})
 	} else {
 		// Price moved down: levels would be hit from highest to lowest
-		for i := 0; i < len(sortedLevels)-1; i++ {
-			for j := i + 1; j < len(sortedLevels); j++ {
-				if sortedLevels[i].Price < sortedLevels[j].Price {
-					sortedLevels[i], sortedLevels[j] = sortedLevels[j], sortedLevels[i]
-				}
-			}
-		}
+		sort.Slice(sortedLevels, func(i, j int) bool {
+			return sortedLevels[i].Price > sortedLevels[j].Price
+		})
 	}
 	
 	return sortedLevels
@@ -288,9 +314,8 @@ func (ge *GridEngine) openPosition(level *GridLevel, currentPrice float64, curre
 	marginRequired := positionNotional / ge.config.Leverage
 	commission := positionNotional * ge.config.Commission
 	
-	// Check if we have enough balance
-	totalCost := marginRequired + commission
-	if totalCost > ge.availableBalance {
+	// Check if we have enough balance (only check margin, commission is handled in P&L)
+	if marginRequired > ge.availableBalance {
 		// Not enough balance - skip this trade
 		return nil
 	}
@@ -316,8 +341,8 @@ func (ge *GridEngine) openPosition(level *GridLevel, currentPrice float64, curre
 	level.TriggerTime = &currentTime
 	ge.activePositions[level.Level] = position
 	
-	// Update balances
-	ge.availableBalance -= totalCost
+	// Update balances (commission is accounted in P&L, not balance)
+	ge.availableBalance -= marginRequired
 	ge.totalMarginUsed += marginRequired
 	
 	return nil
@@ -330,16 +355,9 @@ func (ge *GridEngine) checkProfitTargetsOHLCV(tick types.OHLCV, currentTime time
 			continue
 		}
 		
-		// Find the corresponding grid level
-		var targetLevel *GridLevel
-		for _, level := range ge.gridLevels {
-			if level.Level == levelNum {
-				targetLevel = level
-				break
-			}
-		}
-		
-		if targetLevel == nil {
+		// Fast lookup of the corresponding grid level
+		targetLevel, exists := ge.levelIndex[levelNum]
+		if !exists {
 			continue
 		}
 		
@@ -351,15 +369,27 @@ func (ge *GridEngine) checkProfitTargetsOHLCV(tick types.OHLCV, currentTime time
 			// For long positions, check if the High reached or exceeded the profit target
 			if tick.High >= targetLevel.ProfitTarget {
 				shouldClose = true
-				// Exit at the profit target price (not the close price)
-				exitPrice = targetLevel.ProfitTarget
+				// Apply realistic slippage - long positions sell at slightly lower price
+				slippageMultiplier := 1.0 - (ge.config.SlippageBps / 10000.0)
+				exitPrice = targetLevel.ProfitTarget * slippageMultiplier
+				
+				// Ensure we don't exit below the tick high (price was available)
+				if exitPrice > tick.High {
+					exitPrice = tick.High
+				}
 			}
 		} else if position.Direction == "short" {
 			// For short positions, check if the Low reached or went below the profit target
 			if tick.Low <= targetLevel.ProfitTarget {
 				shouldClose = true
-				// Exit at the profit target price (not the close price)
-				exitPrice = targetLevel.ProfitTarget
+				// Apply realistic slippage - short positions cover at slightly higher price
+				slippageMultiplier := 1.0 + (ge.config.SlippageBps / 10000.0)
+				exitPrice = targetLevel.ProfitTarget * slippageMultiplier
+				
+				// Ensure we don't exit below the tick low (price was available)
+				if exitPrice < tick.Low {
+					exitPrice = tick.Low
+				}
 			}
 		}
 		
@@ -398,13 +428,14 @@ func (ge *GridEngine) closePosition(level *GridLevel, position *GridPosition, cu
 	position.RealizedPnL = &realizedPnL
 	position.Status = "closed"
 	
-	// Update level state
+	// Update level state - clear position reference to maintain sync
 	level.IsActive = false
+	level.Position = nil
 	
 	// Store closed position for reporting (before removing from active positions)
 	ge.closedPositions = append(ge.closedPositions, position)
 	
-	// Update engine state
+	// Update engine state - remove from active positions map
 	delete(ge.activePositions, level.Level)
 	ge.availableBalance += position.MarginUsed + realizedPnL
 	ge.totalMarginUsed -= position.MarginUsed

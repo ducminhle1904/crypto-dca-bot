@@ -4,36 +4,51 @@
     "category": "linear",
     "trading_mode": "both",
     "interval": "5m",
-    "lower_bound": 20000.0,
-    "upper_bound": 90000.0,
-    "grid_count": 15,
-    "grid_spacing_percent": 10.0,
-    "profit_percent": 0.025,
-    "position_size": 200.0,
-    "leverage": 2.0,
+    "lower_bound": 85000.0,
+    "upper_bound": 105000.0,
+    "grid_count": 20,
+    "grid_spacing_percent": 2.5,
+    "profit_percent": 0.015,
+    "slippage_bps": 8,
+    "position_size": 500.0,
+    "leverage": 3.0,
     "use_exchange_constraints": true
   },
   "exchange": {
-    "name": "bybit",
-    "bybit": {
-      "api_key": "${BYBIT_API_KEY}",
-      "api_secret": "${BYBIT_API_SECRET}",
-      "testnet": false,
-      "demo": true
-    }
+    "name": "bybit"
   },
   "risk": {
     "initial_balance": 15000.0,
-    "commission": 0.0002,
+    "commission": 0.0006,
     "min_order_qty": 0.001,
     "qty_step": 0.001,
     "tick_size": 0.1,
-    "min_notional": 5.0,
-    "max_leverage": 100.0
+    "min_notional": 10.0,
+    "max_leverage": 50.0
   },
-  "notifications": {
-    "enabled": false,
-    "telegram_token": "${TELEGRAM_TOKEN}",
-    "telegram_chat": "${TELEGRAM_CHAT_ID}"
+  "metadata": {
+    "description": "BTC Grid Trading Strategy - Both Mode",
+    "strategy_type": "grid_both",
+    "risk_level": "medium",
+    "timeframe": "5m",
+    "created": "2024-01-20",
+    "notes": [
+      "Lower price range (85k-95k): Long positions to buy dips",
+      "Upper price range (95k-105k): Short positions to sell rallies",
+      "Grid spacing: 2.5% between levels",
+      "Profit target: 1.5% per trade",
+      "Slippage: 8 basis points (0.08%)",
+      "Position size: $500 per level with 3x leverage",
+      "Total required margin: ~$3,500 + buffer"
+    ]
+  },
+  "backtest": {
+    "data_file": "data/bybit/linear/BTCUSDT/5/candles.csv",
+    "validation": {
+      "min_balance_required": 4000.0,
+      "max_concurrent_positions": 20,
+      "expected_margin_per_position": 166.67,
+      "price_range_coverage": 23.5
+    }
   }
 }

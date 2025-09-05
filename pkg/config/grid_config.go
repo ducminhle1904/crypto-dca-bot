@@ -24,6 +24,7 @@ type GridConfig struct {
 	
 	// Profit Configuration
 	ProfitPercent float64 `json:"profit_percent"` // Profit target per grid (e.g., 0.01 = 1%)
+	SlippageBps   float64 `json:"slippage_bps"`   // Slippage in basis points (e.g., 5 = 0.05%)
 	
 	// Position Sizing
 	PositionSize  float64 `json:"position_size"`  // Fixed amount per grid level in USDT
@@ -113,6 +114,15 @@ func (gc *GridConfig) Validate() error {
 		return fmt.Errorf("profit_percent seems too high (>100%%), got: %f", gc.ProfitPercent)
 	}
 	
+	// Slippage validation (optional parameter, default to 0 if not set)
+	if gc.SlippageBps < 0 {
+		return fmt.Errorf("slippage_bps must be non-negative, got: %f", gc.SlippageBps)
+	}
+	
+	if gc.SlippageBps > 100 {
+		return fmt.Errorf("slippage_bps seems too high (>1%%), got: %f", gc.SlippageBps)
+	}
+	
 	// Position sizing validation
 	if gc.PositionSize <= 0 {
 		return fmt.Errorf("position_size must be positive, got: %f", gc.PositionSize)
@@ -176,10 +186,9 @@ func (gc *GridConfig) CalculateGridLevels() error {
 	
 	// Calculate max positions based on trading mode
 	switch gc.TradingMode {
-	case TradingModeLong, TradingModeShort:
+	case TradingModeLong, TradingModeShort, TradingModeBoth:
+		// For "both" mode, we now have one position per level (not two)
 		gc.MaxPositions = len(gc.GridLevels)
-	case TradingModeBoth:
-		gc.MaxPositions = len(gc.GridLevels) * 2 // Long and short for each level
 	}
 	
 	if len(gc.GridLevels) == 0 {
@@ -208,23 +217,11 @@ func (gc *GridConfig) CalculateRequiredBalance() float64 {
 	
 	// Calculate required balance based on trading mode
 	switch gc.TradingMode {
-	case TradingModeLong:
-		// For long mode, we buy at each level
+	case TradingModeLong, TradingModeShort, TradingModeBoth:
+		// For all modes, we now need margin for one position per level
 		for range gc.GridLevels {
 			margin := gc.PositionSize / gc.Leverage
 			totalRequired += margin
-		}
-	case TradingModeShort:
-		// For short mode, we sell at each level (margin requirement)
-		for range gc.GridLevels {
-			margin := gc.PositionSize / gc.Leverage
-			totalRequired += margin
-		}
-	case TradingModeBoth:
-		// For both modes, we need margin for both directions
-		for range gc.GridLevels {
-			margin := gc.PositionSize / gc.Leverage
-			totalRequired += margin * 2 // Long and short
 		}
 	}
 	
