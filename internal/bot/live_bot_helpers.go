@@ -31,9 +31,21 @@ func (bot *LiveBot) syncPositionData() error {
 	// Look for our symbol position
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, _ := parseFloat(pos.PositionValue)
-			avgPrice, _ := parseFloat(pos.AvgPrice)
-			positionSize, _ := parseFloat(pos.Size)
+			positionValue, err := parseFloat(pos.PositionValue)
+			if err != nil {
+				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
+				continue
+			}
+			avgPrice, err := parseFloat(pos.AvgPrice)
+			if err != nil {
+				log.Printf("⚠️ Failed to parse average price '%s': %v", pos.AvgPrice, err)
+				continue
+			}
+			positionSize, err := parseFloat(pos.Size)
+			if err != nil {
+				log.Printf("⚠️ Failed to parse position size '%s': %v", pos.Size, err)
+				continue
+			}
 			
 			if positionValue > 0 && avgPrice > 0 {
 				// Check if average price has changed (indicating new DCA entry)
@@ -44,14 +56,16 @@ func (bot *LiveBot) syncPositionData() error {
 				}
 				
 				// Use exchange data directly - no self-calculation
+				// Note: Already protected by positionMutex from calling function
 				bot.currentPosition = positionValue
 				bot.averagePrice = avgPrice
 				bot.totalInvested = positionValue
 				
 				// Only estimate DCA level if we don't have it tracked properly
-				// This is a fallback for when bot restarts mid-DCA cycle
+				// This should ONLY happen during bot startup recovery, not during active trading
 				if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
-					estimatedLevel := max(1, int(positionValue / bot.config.Strategy.BaseAmount))
+					// Add zero-value check to prevent division by zero
+					estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
 					bot.dcaLevel = estimatedLevel
 					log.Printf("🔄 Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
 						bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
@@ -77,6 +91,7 @@ func (bot *LiveBot) syncPositionData() error {
 	// No position found - reset state if bot thinks it has one
 	if bot.currentPosition > 0 {
 		log.Printf("🔄 No exchange position found - resetting bot state")
+		// Note: Already protected by positionMutex from calling function
 		bot.currentPosition = 0
 		bot.averagePrice = 0
 		bot.totalInvested = 0
@@ -131,16 +146,23 @@ func (bot *LiveBot) closeOpenPositions() error {
 			positionValue, _ := parseFloat(pos.PositionValue)
 			saleValue := positionSize * currentPrice
 			profit := saleValue - positionValue
-			profitPercent := (profit / positionValue) * 100
+			
+			// Add zero-value check to prevent division by zero
+			var profitPercent float64
+			if positionValue > 0 {
+				profitPercent = (profit / positionValue) * 100
+			}
 			
 			bot.logger.Info("🔄 POSITION CLOSED (SHUTDOWN) - Order: %s, Qty: %s %s, Entry: $%.2f, Exit: $%.2f, P&L: $%.2f (%.2f%%)", 
 				order.OrderID, pos.Size, bot.symbol, avgPrice, currentPrice, profit, profitPercent)
 			
-			// Reset bot state
+			// Reset bot state with mutex protection
+			bot.positionMutex.Lock()
 			bot.currentPosition = 0
 			bot.averagePrice = 0
 			bot.totalInvested = 0
 			bot.dcaLevel = 0
+			bot.positionMutex.Unlock()
 			
 			// Refresh balance after closing position
 			if err := bot.syncAccountBalance(); err != nil {

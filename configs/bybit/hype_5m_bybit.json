@@ -8,6 +8,8 @@
     "window_size": 100,
     "tp_percent": 0.02,
     "use_tp_levels": true,
+    "auto_tp_orders": true,
+    "cancel_orphaned_orders": false,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
     "use_advanced_combo": true,

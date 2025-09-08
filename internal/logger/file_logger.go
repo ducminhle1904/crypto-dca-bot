@@ -122,8 +122,8 @@ func (l *Logger) Status(format string, args ...interface{}) {
 	l.Log(LogLevelStatus, format, args...)
 }
 
-// LogMarketStatus logs comprehensive market status
-func (l *Logger) LogMarketStatus(currentPrice float64, action string, balance float64, position float64, avgPrice float64, dcaLevel int, exchangePnL string) {
+// LogMarketStatus logs comprehensive market status with TP information
+func (l *Logger) LogMarketStatus(currentPrice float64, action string, balance float64, position float64, avgPrice float64, dcaLevel int, exchangePnL string, filledTPOrders string, activeTPCount int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -149,6 +149,17 @@ func (l *Logger) LogMarketStatus(currentPrice float64, action string, balance fl
 			unrealizedPnL := currentValue - position
 			statusLog += fmt.Sprintf(`
 💹 Unrealized P&L: ~$%.2f (calculated)`, unrealizedPnL)
+		}
+		
+		// Add TP order information for active positions
+		if activeTPCount > 0 {
+			statusLog += fmt.Sprintf(`
+🎯 Active TP Orders: %d`, activeTPCount)
+		}
+		
+		if filledTPOrders != "" {
+			statusLog += fmt.Sprintf(`
+🏆 Filled TP Orders: %s`, filledTPOrders)
 		}
 	} else {
 		statusLog += "\n📊 Position Status: NO ACTIVE POSITION"
