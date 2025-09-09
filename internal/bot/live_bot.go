@@ -55,6 +55,7 @@ type LiveBot struct {
 	
 	// TP order management - multi-level support
 	activeTPOrders map[string]*TPOrderInfo // orderID -> TP order info mapping
+	filledTPOrders map[string]*TPOrderInfo // orderID -> filled TP order info mapping
 	tpOrderMutex   sync.RWMutex            // Protect TP order map access
 	
 	// Position synchronization
@@ -98,6 +99,7 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		balance:  config.Risk.InitialBalance,
 		stopChan: make(chan struct{}),
 		activeTPOrders: make(map[string]*TPOrderInfo),
+		filledTPOrders: make(map[string]*TPOrderInfo),
 		tpOrderMutex: sync.RWMutex{},
 	}
 
@@ -158,17 +160,34 @@ func (bot *LiveBot) Stop() {
 		
 		fmt.Printf("🛑 Stopping bot...\n")
 		
+		// Signal trading loop to stop FIRST - this prevents new trading operations
+		close(bot.stopChan)
+		
+		// Give trading loop a moment to exit gracefully
+		fmt.Printf("⏱️ Waiting for trading loop to stop...\n")
+		time.Sleep(2 * time.Second)
+		
+		// Use timeout for cleanup operations to prevent hanging
+		cleanupTimeout := 30 * time.Second
+		cleanupDone := make(chan struct{})
+		
+		go func() {
+			defer close(cleanupDone)
+			
 		// Cancel all active TP orders before closing positions
+			fmt.Printf("🧹 Cleaning up TP orders...\n")
 		if err := bot.cancelAllTPOrders(); err != nil {
 			bot.logger.Error("Error canceling TP orders during shutdown: %v", err)
 		}
 		
 		// Close any open positions before stopping
+			fmt.Printf("🔄 Closing open positions...\n")
 		if err := bot.closeOpenPositions(); err != nil {
 			bot.logger.Error("Error closing positions during shutdown: %v", err)
 		}
 		
 		// Disconnect from exchange
+			fmt.Printf("🔌 Disconnecting from exchange...\n")
 		if err := bot.exchange.Disconnect(); err != nil {
 			bot.logger.Error("Error disconnecting from exchange: %v", err)
 		}
@@ -177,8 +196,15 @@ func (bot *LiveBot) Stop() {
 		if bot.logger != nil {
 			bot.logger.Close()
 		}
+		}()
 		
-		close(bot.stopChan)
+		// Wait for cleanup or timeout
+		select {
+		case <-cleanupDone:
+			fmt.Printf("✅ Cleanup completed successfully\n")
+		case <-time.After(cleanupTimeout):
+			fmt.Printf("⚠️ Cleanup timed out after %v - forcing exit\n", cleanupTimeout)
+		}
 	}
 }
 
@@ -290,17 +316,33 @@ func (bot *LiveBot) syncExistingPosition() error {
 		return fmt.Errorf("failed to get existing positions: %w", err)
 	}
 	
-	// Look for our symbol position
+	// Look for our symbol position with enhanced identification
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, _ := parseFloat(pos.PositionValue)
-			avgPrice, _ := parseFloat(pos.AvgPrice)
+			positionValue, err := parseFloat(pos.PositionValue)
+			if err != nil {
+				bot.logger.LogWarning("Position Sync", "Failed to parse position value '%s': %v", pos.PositionValue, err)
+				continue
+			}
+			avgPrice, err := parseFloat(pos.AvgPrice)
+			if err != nil {
+				bot.logger.LogWarning("Position Sync", "Failed to parse average price '%s': %v", pos.AvgPrice, err)
+				continue
+			}
 			
 			if positionValue > 0 && avgPrice > 0 {
+				// Protect state modifications with mutex
+				bot.positionMutex.Lock()
 				bot.currentPosition = positionValue
 				bot.averagePrice = avgPrice
 				bot.totalInvested = positionValue
-				bot.dcaLevel = 1 // Assume at least level 1
+				// Estimate DCA level based on position size (more accurate than assuming 1)
+				if bot.config.Strategy.BaseAmount > 0 {
+					bot.dcaLevel = max(1, int(positionValue/bot.config.Strategy.BaseAmount))
+				} else {
+					bot.dcaLevel = 1 // Fallback to level 1
+				}
+				bot.positionMutex.Unlock()
 				
 				bot.logger.LogPositionSync(positionValue, avgPrice, pos.Size, pos.UnrealisedPnl)
 				// Show brief console message
@@ -310,11 +352,13 @@ func (bot *LiveBot) syncExistingPosition() error {
 		}
 	}
 	
-	// No existing position found
+	// No existing position found - protect state reset with mutex
+	bot.positionMutex.Lock()
 	bot.currentPosition = 0
 	bot.averagePrice = 0
 	bot.totalInvested = 0
 	bot.dcaLevel = 0
+	bot.positionMutex.Unlock()
 	fmt.Printf("✅ No existing position found - starting fresh\n")
 	
 	return nil
@@ -350,6 +394,11 @@ func (bot *LiveBot) tradingLoop() {
 	}
 }
 
+// shouldStop checks if the bot should stop (non-blocking)
+func (bot *LiveBot) shouldStop() bool {
+	return !bot.running
+}
+
 // checkAndTrade performs market analysis and executes trades
 func (bot *LiveBot) checkAndTrade() {
 	defer func() {
@@ -357,6 +406,11 @@ func (bot *LiveBot) checkAndTrade() {
 			bot.logger.Error("Error in trading loop: %v", r)
 		}
 	}()
+
+	// Check for stop signal before starting
+	if bot.shouldStop() {
+		return
+	}
 
 	ctx := context.Background()
 
@@ -366,10 +420,20 @@ func (bot *LiveBot) checkAndTrade() {
 		// Continue despite balance sync failure
 	}
 
+	// Check for stop signal after balance sync
+	if bot.shouldStop() {
+		return
+	}
+
 	// Sync position data
 	if err := bot.syncPositionData(); err != nil {
 		bot.logger.LogWarning("Could not sync position data", "%v", err)
 		// Continue despite position sync failure
+	}
+
+	// Check for stop signal after position sync
+	if bot.shouldStop() {
+		return
 	}
 
 	// Get current market price
@@ -406,9 +470,24 @@ func (bot *LiveBot) checkAndTrade() {
 	// Analyze market conditions
 	decision, action := bot.analyzeMarket(klines, currentPrice)
 
-	// Log market status to file
+	// Check for filled TP orders and gather TP information
+	filledOrders := bot.detectFilledTPOrders()
+	filledTPSummary := bot.getFilledTPSummary()
+	
+	// Count active TP orders
+	bot.tpOrderMutex.RLock()
+	activeTPCount := len(bot.activeTPOrders)
+	bot.tpOrderMutex.RUnlock()
+	
+	// Notify about newly filled orders
+	if len(filledOrders) > 0 {
+		bot.logger.Info("🎯 TP Orders FILLED: %s", strings.Join(filledOrders, ", "))
+		fmt.Printf("🎯 TP Orders Filled: %s\n", strings.Join(filledOrders, ", "))
+	}
+	
+	// Log market status to file with TP information
 	exchangePnL := bot.getExchangePnL()
-	bot.logger.LogMarketStatus(currentPrice, action, bot.balance, bot.currentPosition, bot.averagePrice, bot.dcaLevel, exchangePnL)
+	bot.logger.LogMarketStatus(currentPrice, action, bot.balance, bot.currentPosition, bot.averagePrice, bot.dcaLevel, exchangePnL, filledTPSummary, activeTPCount)
 
 	// Execute trading action
 	if action != "HOLD" {
@@ -537,7 +616,11 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		return
 	}
 
-	// Calculate quantity and apply constraints
+	// Calculate quantity and apply constraints with zero-value check
+	if price <= 0 {
+		bot.logger.LogWarning("Order constraints", "Invalid price: %.4f", price)
+		return
+	}
 	quantity := amount / price
 
 	// Apply minimum quantity constraint using floor to avoid overshooting
@@ -609,19 +692,10 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 					if pos.Symbol == bot.symbol && pos.Side == "Buy" {
 						bot.logger.Info("🎯 Setting up TP orders - Position Size: %s, Avg Price: $%.4f", pos.Size, avgPrice)
 						
-						// Add recovery mechanism for TP placement
-						func() {
-							defer func() {
-								if r := recover(); r != nil {
-									bot.logger.Error("TP placement panic recovered: %v", r)
-								}
-							}()
-							
-							if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
-								bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
-								// Continue execution - don't let TP failure stop the bot
-							}
-						}()
+						// Place TP orders with proper error handling (no panic recovery needed)
+						if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
+							bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
+						}
 						break
 					}
 				}
@@ -634,9 +708,32 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 
 // placeMultiLevelTPOrders places multiple take profit limit orders after a buy
 func (bot *LiveBot) placeMultiLevelTPOrders(totalQuantity string, avgEntryPrice float64) error {
-	// Use a longer timeout for placing multiple orders
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Use timeout for placing multiple orders (reduced with rate limiting delays)
+	// 5 levels * (10s max per order + 0.5s delay) = ~55s + buffer = 90s
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	
+	// First, cancel any existing TP orders to prevent duplicates
+	bot.tpOrderMutex.Lock()
+	existingOrders := make(map[string]*TPOrderInfo)
+	for orderID, tpInfo := range bot.activeTPOrders {
+		existingOrders[orderID] = &TPOrderInfo{
+			Level:   tpInfo.Level,
+			OrderID: orderID,
+		}
+	}
+	// Clear active orders map
+	for k := range bot.activeTPOrders {
+		delete(bot.activeTPOrders, k)
+	}
+	bot.tpOrderMutex.Unlock()
+	
+	// Cancel existing orders without holding mutex
+	for orderID, tpInfo := range existingOrders {
+		if err := bot.cancelOrderWithRetry(bot.category, bot.symbol, orderID); err != nil {
+			bot.logger.LogWarning("TP Cleanup", "Failed to cancel existing TP Level %d order %s: %v", tpInfo.Level, orderID, err)
+		}
+	}
 	
 	// Add a channel to handle timeout gracefully
 	done := make(chan error, 1)
@@ -649,13 +746,15 @@ func (bot *LiveBot) placeMultiLevelTPOrders(totalQuantity string, avgEntryPrice 
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		bot.logger.LogWarning("TP Placement Timeout", "TP order placement timed out after 60 seconds")
+		bot.logger.LogWarning("TP Placement Timeout", "TP order placement timed out after 90 seconds")
 		return fmt.Errorf("TP order placement timed out")
 	}
 }
 
 // placeMultiLevelTPOrdersInternal is the internal implementation
 func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQuantity string, avgEntryPrice float64) error {
+	startTime := time.Now()
+	
 	
 	// Parse total quantity
 	totalQty, err := parseFloat(totalQuantity)
@@ -665,10 +764,15 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 	
 	// Get trading constraints for proper rounding
 	constraints, err := bot.exchange.GetTradingConstraints(ctx, bot.category, bot.symbol)
+	
 	if err != nil {
 		bot.logger.LogWarning("TP Constraints", "Could not get trading constraints: %v", err)
 		// Continue with default constraints
 		constraints = &exchange.TradingConstraints{QtyStep: 0.001, MinPriceStep: 0.0001}
+		bot.logger.Info("🐛 DEBUG: Using default constraints")
+	} else {
+		bot.logger.Info("🐛 DEBUG: Constraints - MinQty: %.6f, QtyStep: %.6f, MinValue: %.2f, PriceStep: %.4f", 
+			constraints.MinOrderQty, constraints.QtyStep, constraints.MinOrderValue, constraints.MinPriceStep)
 	}
 	
 	// Pre-calculate quantities for all TP levels to ensure proper distribution
@@ -682,15 +786,35 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 	
 	// Place TP orders for each level using pre-calculated quantities
 	for level := 1; level <= bot.config.Strategy.TPLevels; level++ {
-		// Check for context cancellation
+		// Check for context cancellation and timeout safety
 		select {
 		case <-ctx.Done():
-			bot.logger.LogWarning("TP Placement", "Context cancelled during TP level %d placement", level)
-			return fmt.Errorf("context cancelled during TP placement")
+			bot.logger.LogWarning("TP Placement", "Context cancelled during TP level %d placement, stopping", level)
+			// Return partial success if we placed some orders
+			if successCount > 0 {
+				bot.logger.Info("✅ Partial TP success: %d/%d levels placed before timeout", successCount, bot.config.Strategy.TPLevels)
+			}
+			return fmt.Errorf("context cancelled during TP placement at level %d", level)
 		default:
 		}
 		
-		// Get pre-calculated quantity for this level
+		// Additional safety check: if we're close to timeout, stop placing more orders  
+		deadline, hasDeadline := ctx.Deadline()
+		if hasDeadline && time.Until(deadline) < 20*time.Second {
+			bot.logger.LogWarning("TP Placement", "Stopping at level %d - insufficient time remaining (<%ds)", level, 20)
+			// Return partial success if we've placed some orders
+			if successCount > 0 {
+				bot.logger.Info("✅ Partial TP success due to timeout: %d/%d levels placed", successCount, bot.config.Strategy.TPLevels)
+			}
+			break
+		}
+		
+		// Get pre-calculated quantity for this level with bounds checking
+		if level < 1 || level > len(levelQuantities) {
+			bot.logger.LogWarning("TP Level %d", "Invalid level index: %d (valid range: 1-%d)", level, level, len(levelQuantities))
+			skippedLevels++
+			continue
+		}
 		levelQty := levelQuantities[level-1] // Array is 0-indexed
 		if levelQty <= 0 {
 			skippedLevels++
@@ -698,6 +822,12 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 		}
 		
 		// Calculate TP price for this level based on actual average entry
+		// Add zero-value check to prevent division by zero
+		if bot.config.Strategy.TPLevels <= 0 {
+			bot.logger.LogWarning("TP Level %d", "Invalid TP levels configuration: %d", level, bot.config.Strategy.TPLevels)
+			skippedLevels++
+			continue
+		}
 		levelPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
 		tpPrice := avgEntryPrice * (1 + levelPercent)
 		
@@ -728,13 +858,21 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 			Price:     formattedPrice,
 		}
 		
-		// Add extra timeout protection for TP order placement
-		bot.logger.Info("📤 Placing TP Level %d: %s %s at $%s (%.2f%%)", 
-			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100)
+		// Add debugging and timing for individual order placement
+		orderStartTime := time.Now()
+		timeRemaining := "unknown"
+		if hasDeadline {
+			timeRemaining = fmt.Sprintf("%.0fs", time.Until(deadline).Seconds())
+		}
+		
+		bot.logger.Info("📤 Placing TP Level %d: %s %s at $%s (%.2f%%) - Time remaining: %s", 
+			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100, timeRemaining)
 		
 		tpOrder, err := bot.placeOrderWithRetry(orderParams, false) // false for limit order
+		orderDuration := time.Since(orderStartTime)
+		
 		if err != nil {
-			bot.logger.LogWarning("TP Level %d", "Failed to place TP order: %v", level, err)
+			bot.logger.LogWarning("TP Level %d", "Failed to place TP order after %v: %v", level, orderDuration, err)
 			skippedLevels++
 			continue
 		}
@@ -752,18 +890,26 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 			Filled:    false,
 			FilledQty: "0",
 		}
-		bot.tpOrderMutex.Unlock()
-		
+		bot.tpOrderMutex.Unlock() // Unlock immediately, not with defer
 		bot.logger.Info("✅ TP Level %d placed: %s %s at $%s (%.2f%%) - Order ID: %s", 
 			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100, tpOrder.OrderID)
 		
 		// Track successful placement
 		successCount++
+		
+		// Add rate limiting delay between orders (except for the last one)
+		if level < bot.config.Strategy.TPLevels {
+			delayMs := 500 // 500ms delay between orders to avoid rate limiting
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
 	}
 	
 	if skippedLevels > 0 {
 		bot.logger.LogWarning("TP Placement", "%d levels skipped due to constraints", skippedLevels)
 	}
+	
+	// Add comprehensive completion logging
+	totalDuration := time.Since(startTime)
 	
 	// Log summary to console
 	if successCount > 0 {
@@ -772,49 +918,69 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 		for _, qty := range levelQuantities {
 			allocatedQty += qty
 		}
-		fmt.Printf("🎯 Multi-Level TP: %d/%d orders placed successfully (%.6f %s allocated, %.1f%%)\n", 
-			successCount, bot.config.Strategy.TPLevels, allocatedQty, bot.symbol, (allocatedQty/totalQty)*100)
+		fmt.Printf("🎯 Multi-Level TP: %d/%d orders placed successfully (%.6f %s allocated, %.1f%%) in %v\n", 
+			successCount, bot.config.Strategy.TPLevels, allocatedQty, bot.symbol, (allocatedQty/totalQty)*100, totalDuration)
 		
 		if skippedLevels > 0 {
-			fmt.Printf("⚠️  %d TP levels skipped due to minStep constraints\n", skippedLevels)
+			fmt.Printf("⚠️  %d TP levels skipped due to constraints\n", skippedLevels)
 		}
+		
+		return nil // Don't fail if we placed some orders
 
 	} else {
 		return fmt.Errorf("failed to place any TP orders")
 	}
-	
-	return nil
 }
 
 // updateMultiLevelTPOrders updates existing multi-level TP orders when average price changes
 func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
+	// First, collect order information and clear map while holding mutex
 	bot.tpOrderMutex.Lock()
-	defer bot.tpOrderMutex.Unlock()
+	memoryOrderCount := len(bot.activeTPOrders)
 	
-	if len(bot.activeTPOrders) == 0 {
+	if memoryOrderCount == 0 {
+		bot.tpOrderMutex.Unlock()
+		bot.logger.Info("✅ No TP orders in memory to update")
 		return nil // No TP orders to update
 	}
 	
 	ctx := context.Background()
 	
 	// First, sync with exchange to get current TP orders (some may have been filled)
-	if err := bot.syncTPOrdersFromExchange(ctx); err != nil {
-		bot.logger.LogWarning("TP Sync", "Failed to sync TP orders from exchange: %v", err)
-		// Continue with internal state as fallback
+	ordersToCancel := make(map[string]*TPOrderInfo)
+	for orderID, tpInfo := range bot.activeTPOrders {
+		ordersToCancel[orderID] = &TPOrderInfo{
+			Level:    tpInfo.Level,
+			OrderID:  orderID,
+			Quantity: tpInfo.Quantity,
+		}
 	}
 	
-	// Check again after sync - some orders might have been filled
-	if len(bot.activeTPOrders) == 0 {
-		bot.logger.Info("✅ No active TP orders found after sync - all may have been filled")
+	// Clear the map properly while still holding mutex
+	for k := range bot.activeTPOrders {
+		delete(bot.activeTPOrders, k)
+	}
+	bot.tpOrderMutex.Unlock()
+	
+	// Now perform sync and cancellation operations without holding mutex
+	if err := bot.syncTPOrdersFromExchange(ctx); err != nil {
+		bot.logger.LogWarning("TP Sync", "Failed to sync TP orders from exchange: %v", err)
+		// Continue with collected order data as fallback
+	} else {
+	}
+	
+	if len(ordersToCancel) == 0 {
+		bot.logger.Info("✅ No active TP orders found to cancel after exchange sync")
 		return nil
 	}
 	
-	bot.logger.Info("🔄 Updating TP orders: New avg $%.4f (%d active orders)", newAveragePrice, len(bot.activeTPOrders))
+	bot.logger.Info("🔄 Updating TP orders: New avg $%.4f (%d orders to cancel)", newAveragePrice, len(ordersToCancel))
 	
-	// Cancel all remaining TP orders with retry logic
+	// Cancel orders without holding mutex (to avoid blocking other operations)
 	cancelledCount := 0
 	failedCancellations := 0
-	for orderID, tpInfo := range bot.activeTPOrders {
+	for orderID, tpInfo := range ordersToCancel {
+		
 		if err := bot.cancelOrderWithRetry(bot.category, bot.symbol, orderID); err != nil {
 			bot.logger.LogWarning("TP Order Update", "Failed to cancel TP Level %d order %s: %v", tpInfo.Level, orderID, err)
 			failedCancellations++
@@ -827,11 +993,6 @@ func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
 	
 	if failedCancellations > 0 {
 		bot.logger.LogWarning("TP Update", "%d TP orders failed to cancel, continuing with new orders", failedCancellations)
-	}
-	
-	// Clear the map properly
-	for k := range bot.activeTPOrders {
-		delete(bot.activeTPOrders, k)
 	}
 	
 	// Get current total position size after any TP fills
@@ -851,23 +1012,30 @@ func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
 	}
 	
 	if totalPositionSize == "" || totalPositionSize == "0" {
-		bot.logger.LogWarning("TP Update", "No position found for TP update")
+		bot.logger.LogWarning("TP Update", "No position found for TP update - possibly all TP orders executed")
 		return nil
 	}
 	
-	exchangeAvgPriceFloat, _ := parseFloat(exchangeAvgPrice)
+	exchangeAvgPriceFloat, err := parseFloat(exchangeAvgPrice)
+	if err != nil {
+		bot.logger.LogWarning("TP Update", "Failed to parse exchange avg price '%s': %v", exchangeAvgPrice, err)
+		exchangeAvgPriceFloat = newAveragePrice // Use bot's price as fallback
+	}
 	
 	// Use exchange average price if there's a significant difference (safety check)
-	if math.Abs(newAveragePrice-exchangeAvgPriceFloat) > 0.001 {
-		bot.logger.LogWarning("TP Update", "Price mismatch: bot $%.4f → exchange $%.4f", 
-			newAveragePrice, exchangeAvgPriceFloat)
+	priceDiff := math.Abs(newAveragePrice - exchangeAvgPriceFloat)
+	if priceDiff > 0.001 {
+		bot.logger.LogWarning("TP Update", "Price mismatch: bot $%.4f vs exchange $%.4f (diff: $%.4f)", 
+			newAveragePrice, exchangeAvgPriceFloat, priceDiff)
 		newAveragePrice = exchangeAvgPriceFloat
 	}
 	
 	// Place new multi-level TP orders based on new average price
 	if err := bot.placeMultiLevelTPOrders(totalPositionSize, newAveragePrice); err != nil {
+		bot.logger.LogWarning("TP Update", "Failed to place updated multi-level TP orders: %v", err)
 		return fmt.Errorf("failed to place updated multi-level TP orders: %w", err)
 	}
+	
 	
 	// Log to console for visibility
 	fmt.Printf("🔄 Multi-Level TP Updated: Cancelled %d old orders → %d new TP levels placed at avg $%.4f\n", 
@@ -933,6 +1101,11 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		bot.logger.LogWarning("Could not refresh balance after trade", "%v", err)
 	}
 	
+	// Capture DCA level BEFORE position sync to avoid interference
+	bot.positionMutex.RLock()
+	previousDCALevel := bot.dcaLevel
+	bot.positionMutex.RUnlock()
+	
 	// Sync position data with exchange
 	if err := bot.syncPositionData(); err != nil {
 		bot.logger.LogWarning("Could not sync position after trade", "%v", err)
@@ -941,29 +1114,70 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 	
 	// Update DCA level for buy trades
 	if tradeType == "BUY" {
-		bot.dcaLevel++
+		// Protect DCA level operations with mutex
+		bot.positionMutex.Lock()
+		// Use the captured previousDCALevel (before position sync interference)
+		// This ensures proper DCA level progression regardless of sync side effects
+		if previousDCALevel == 0 {
+			bot.dcaLevel = 1 // First trade: 0 → 1
+		} else {
+			bot.dcaLevel = previousDCALevel + 1 // Subsequent trades: increment
+		}
 		
-		// Log trade execution details
-		bot.logger.LogTradeExecution(tradeType, order.OrderID, order.CumExecQty, order.AvgPrice, order.CumExecValue, bot.dcaLevel, bot.currentPosition, bot.averagePrice)
+		// Validation: ensure DCA level makes sense relative to position size
+		if bot.config.Strategy.BaseAmount > 0 {
+			expectedLevel := max(1, int(bot.currentPosition/bot.config.Strategy.BaseAmount))
+			if bot.dcaLevel != expectedLevel {
+				// For large discrepancies, use position-based calculation
+				diff := bot.dcaLevel - expectedLevel
+				if diff < 0 {
+					diff = -diff // abs
+				}
+				if diff > 1 {
+					bot.dcaLevel = expectedLevel
+				}
+			}
+		}
+		
+		currentDCALevel := bot.dcaLevel
+		currentPosition := bot.currentPosition
+		avgPrice := bot.averagePrice
+		bot.positionMutex.Unlock()
+		
+		// Debug log for DCA level tracking
+		bot.logger.Info("📊 DCA Level Update: %d → %d (position: $%.2f)", previousDCALevel, currentDCALevel, currentPosition)
+		
+		// Log trade execution details with reliable data (don't rely on potentially empty order response fields)
+		// Use the calculated values and exchange-synced data instead
+		var executedQty string
+		if avgPrice > 0 {
+			executedQty = fmt.Sprintf("%.6f", currentPosition/avgPrice) // Calculate from position
+		} else {
+			executedQty = "0.000000" // Safety fallback
+		}
+		executedPrice := fmt.Sprintf("%.4f", avgPrice)
+		executedValue := fmt.Sprintf("%.2f", currentPosition)
+		
+		bot.logger.LogTradeExecution(tradeType, order.OrderID, executedQty, executedPrice, executedValue, currentDCALevel, currentPosition, avgPrice)
 		
 		// Update multi-level TP orders if this is not the first buy (DCA level > 1)
 		// Note: We do this in syncAfterTrade to ensure it happens after position sync
-		if bot.dcaLevel > 1 && bot.config.Strategy.AutoTPOrders {
-			bot.logger.Info("🔄 DCA Level %d detected - updating TP orders for new average price", bot.dcaLevel)
+		if currentDCALevel > 1 && bot.config.Strategy.AutoTPOrders {
+			bot.logger.Info("🔄 DCA Level %d detected - updating TP orders for new average price $%.4f", currentDCALevel, avgPrice)
+			fmt.Printf("🔄 DCA Trade Detected: Updating TP orders for level %d with new avg price $%.4f\n", currentDCALevel, avgPrice)
 			
-			// Add recovery mechanism for TP update
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						bot.logger.Error("TP update panic recovered: %v", r)
-					}
-				}()
-				
-				if err := bot.updateMultiLevelTPOrders(bot.averagePrice); err != nil {
-					bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
-					// Continue execution - don't let TP update failure stop the bot
-				}
-			}()
+			// Update TP orders with proper error handling (no panic recovery needed)
+			if err := bot.updateMultiLevelTPOrders(avgPrice); err != nil {
+				bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
+				fmt.Printf("⚠️ TP update failed but bot continues normally\n")
+				// Continue execution - don't let TP update failure stop the bot
+			} else {
+				fmt.Printf("✅ TP orders updated successfully for DCA level %d\n", currentDCALevel)
+			}
+		} else if currentDCALevel == 1 && bot.config.Strategy.AutoTPOrders {
+			bot.logger.Info("🐛 DEBUG: First trade (level %d) - initial TP orders should be placed by executeBuy", currentDCALevel)
+		} else if !bot.config.Strategy.AutoTPOrders {
+			bot.logger.Info("🐛 DEBUG: AutoTPOrders disabled - skipping TP order management")
 		}
 		
 	} else if tradeType == "SELL" {
@@ -972,35 +1186,52 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		
 		// For sell trades, calculate realized P&L from position data before sync
 		if currentPrice, err := bot.exchange.GetLatestPrice(cleanupCtx, bot.symbol); err == nil {
-			if bot.averagePrice > 0 && currentPrice > 0 {
-				profitPercent := (currentPrice - bot.averagePrice) / bot.averagePrice * 100
+			// Get average price safely with mutex protection
+			bot.positionMutex.RLock()
+			avgPrice := bot.averagePrice
+			bot.positionMutex.RUnlock()
+			
+			// Add zero-value checks to prevent division by zero
+			if avgPrice > 0 && currentPrice > 0 {
+				profitPercent := (currentPrice - avgPrice) / avgPrice * 100
 				
 				// Log cycle completion
-				bot.logger.LogCycleCompletion(currentPrice, bot.averagePrice, profitPercent)
+				bot.logger.LogCycleCompletion(currentPrice, avgPrice, profitPercent)
 			}
 		}
 		
 		// Clean up multi-level TP orders since position is closed
+		// First, collect order information while holding mutex
 		bot.tpOrderMutex.Lock()
+		ordersToCancel := make(map[string]*TPOrderInfo)
 		for orderID, tpInfo := range bot.activeTPOrders {
-			// Cancel any remaining TP orders with retry logic
+			ordersToCancel[orderID] = &TPOrderInfo{
+				Level:   tpInfo.Level,
+				OrderID: orderID,
+			}
+		}
+		// Clear map while still holding mutex
+		for k := range bot.activeTPOrders {
+			delete(bot.activeTPOrders, k)
+		}
+		bot.tpOrderMutex.Unlock()
+		
+		// Now cancel orders without holding mutex (to avoid blocking other operations)
+		for orderID, tpInfo := range ordersToCancel {
 			if err := bot.cancelOrderWithRetry(bot.category, bot.symbol, orderID); err != nil {
 				bot.logger.LogWarning("TP Cleanup", "Failed to cancel TP Level %d order %s: %v", tpInfo.Level, orderID, err)
 			} else {
 				bot.logger.Info("🧹 Cancelled TP Level %d order %s (position closed)", tpInfo.Level, orderID)
 			}
 		}
-		// Clear map properly instead of recreating
-		for k := range bot.activeTPOrders {
-			delete(bot.activeTPOrders, k)
-		}
-		bot.tpOrderMutex.Unlock()
 		
 		// Log trade execution details
 		bot.logger.LogTradeExecution(tradeType, order.OrderID, order.CumExecQty, order.AvgPrice, order.CumExecValue, 0, 0, 0)
 		
-		// Reset internal counters after sell
+		// Reset internal counters after sell with mutex protection
+		bot.positionMutex.Lock()
 		bot.dcaLevel = 0
+		bot.positionMutex.Unlock()
 		
 		// Notify strategy of cycle completion if configured
 		if bot.config.Strategy.Cycle {
@@ -1070,6 +1301,11 @@ func (bot *LiveBot) syncExistingOrders() error {
 // calculateTPLevelQuantities pre-calculates quantities for all TP levels to ensure proper distribution
 func (bot *LiveBot) calculateTPLevelQuantities(totalQty float64, constraints *exchange.TradingConstraints) []float64 {
 	numLevels := bot.config.Strategy.TPLevels
+	// Add safety check for invalid configuration
+	if numLevels <= 0 {
+		bot.logger.LogWarning("TP Calculation", "Invalid TP levels configuration: %d", numLevels)
+		return []float64{} // Return empty slice
+	}
 	quantities := make([]float64, numLevels)
 	
 	// Calculate base quantity per level
@@ -1170,11 +1406,24 @@ func (bot *LiveBot) syncTPOrdersFromExchange(ctx context.Context) error {
 		return fmt.Errorf("failed to get open orders: %w", err)
 	}
 	
-	// Create a map of current TP orders on exchange
+	// Get current average price for TP order validation
+	positions, posErr := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	var currentAvgPrice float64 = 0
+	if posErr == nil {
+		for _, pos := range positions {
+			if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+				if avgPrice, err := parseFloat(pos.AvgPrice); err == nil {
+					currentAvgPrice = avgPrice
+				}
+				break
+			}
+		}
+	}
+	
+	// Create a map of current TP orders on exchange with proper identification
 	exchangeTPOrders := make(map[string]*exchange.Order)
 	for _, order := range orders {
-		// Check if this looks like a TP order (sell side, limit order)
-		if order.Side == "Sell" && order.OrderType == "Limit" {
+		if bot.isTPOrder(order, currentAvgPrice) {
 			exchangeTPOrders[order.OrderID] = order
 		}
 	}
@@ -1245,33 +1494,82 @@ func (bot *LiveBot) cancelOrphanedOrders(orders []*exchange.Order) error {
 
 // cancelAllTPOrders cancels all active TP orders during shutdown
 func (bot *LiveBot) cancelAllTPOrders() error {
-	bot.tpOrderMutex.Lock()
-	defer bot.tpOrderMutex.Unlock()
+	// First, sync with exchange to get REAL state (not just memory)
+	ctx := context.Background()
+	fmt.Printf("🔍 Checking exchange for active TP orders...\n")
 	
-	if len(bot.activeTPOrders) == 0 {
-		bot.logger.Info("✅ No active TP orders to cancel")
+	orders, err := bot.exchange.GetOpenOrders(ctx, bot.category, bot.symbol)
+	if err != nil {
+		bot.logger.LogWarning("Shutdown Cleanup", "Failed to get open orders from exchange: %v", err)
+		fmt.Printf("⚠️ Failed to fetch exchange orders, using memory fallback\n")
+		// Fall back to memory-based cancellation
+		return bot.cancelTPOrdersFromMemory()
+	}
+	
+	// Find TP orders on exchange with proper identification
+	exchangeTPOrders := make(map[string]*exchange.Order)
+	
+	// Get current position to validate TP order prices
+	positions, posErr := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	var currentAvgPrice float64 = 0
+	if posErr == nil {
+		for _, pos := range positions {
+			if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+				if avgPrice, err := parseFloat(pos.AvgPrice); err == nil {
+					currentAvgPrice = avgPrice
+				}
+				break
+			}
+		}
+	}
+	
+	for _, order := range orders {
+		if bot.isTPOrder(order, currentAvgPrice) {
+			exchangeTPOrders[order.OrderID] = order
+		}
+	}
+	
+	orderCount := len(exchangeTPOrders)
+	
+	if orderCount == 0 {
+		bot.logger.Info("✅ No active TP orders found on exchange")
+		fmt.Printf("✅ No active TP orders found on exchange\n")
 		return nil
 	}
 	
-	bot.logger.Info("🧹 Canceling %d active TP orders during shutdown...", len(bot.activeTPOrders))
+	bot.logger.Info("🧹 Canceling %d active TP orders from exchange...", orderCount)
+	fmt.Printf("🧹 Found %d TP orders on exchange to cancel...\n", orderCount)
 	
+	// Cancel orders directly from exchange data (no need for memory collection)
+	// Clear our internal tracking since we're cancelling everything
+	bot.tpOrderMutex.Lock()
+	for k := range bot.activeTPOrders {
+		delete(bot.activeTPOrders, k)
+	}
+	bot.tpOrderMutex.Unlock()
+	
+	// Now cancel orders based on exchange data
 	cancelledCount := 0
 	failedCount := 0
 	
-	for orderID, tpInfo := range bot.activeTPOrders {
+	// Create level counter for better logging (since we don't know actual levels from exchange)
+	level := 1
+	for orderID, order := range exchangeTPOrders {
+		fmt.Printf("🔄 Cancelling TP order %d/%d...\n", level, orderCount)
+		
+		// Use existing method with built-in timeout and retry logic
 		if err := bot.cancelOrderWithRetry(bot.category, bot.symbol, orderID); err != nil {
-			bot.logger.LogWarning("Shutdown Cleanup", "Failed to cancel TP Level %d order %s: %v", tpInfo.Level, orderID, err)
+			bot.logger.LogWarning("Shutdown Cleanup", "Failed to cancel TP order %s: %v", orderID, err)
+			fmt.Printf("❌ Failed to cancel TP order %d: %v\n", level, err)
 			failedCount++
+			level++
 			continue
 		}
 		
-		bot.logger.Info("❌ Cancelled TP Level %d order: %s (qty: %s)", tpInfo.Level, orderID, tpInfo.Quantity)
+		bot.logger.Info("❌ Cancelled TP order: %s (qty: %s, price: %s)", orderID, order.Quantity, order.Price)
+		fmt.Printf("✅ Cancelled TP order %d successfully\n", level)
 		cancelledCount++
-	}
-	
-	// Clear the map
-	for k := range bot.activeTPOrders {
-		delete(bot.activeTPOrders, k)
+		level++
 	}
 	
 	if failedCount > 0 {
@@ -1284,10 +1582,227 @@ func (bot *LiveBot) cancelAllTPOrders() error {
 	return nil
 }
 
-// parseFloat safely parses a string to float64
+// cancelTPOrdersFromMemory is a fallback when exchange fetch fails
+func (bot *LiveBot) cancelTPOrdersFromMemory() error {
+	// First, collect order information while holding mutex
+	bot.tpOrderMutex.Lock()
+	orderCount := len(bot.activeTPOrders)
+	
+	if orderCount == 0 {
+		bot.tpOrderMutex.Unlock()
+		bot.logger.Info("✅ No active TP orders in memory to cancel")
+		fmt.Printf("✅ No active TP orders found in memory\n")
+		return nil
+	}
+	
+	bot.logger.Info("🧹 Canceling %d TP orders from memory...", orderCount)
+	fmt.Printf("🧹 Found %d TP orders in memory to cancel...\n", orderCount)
+	
+	// Collect order information to cancel
+	ordersToCancel := make(map[string]*TPOrderInfo)
+	for orderID, tpInfo := range bot.activeTPOrders {
+		ordersToCancel[orderID] = &TPOrderInfo{
+			Level:    tpInfo.Level,
+			OrderID:  orderID,
+			Quantity: tpInfo.Quantity,
+		}
+	}
+	
+	// Clear the map while still holding mutex
+	for k := range bot.activeTPOrders {
+		delete(bot.activeTPOrders, k)
+	}
+	bot.tpOrderMutex.Unlock()
+	
+	// Now cancel orders without holding mutex
+	cancelledCount := 0
+	failedCount := 0
+	
+	for orderID, tpInfo := range ordersToCancel {
+		fmt.Printf("🔄 Cancelling TP Level %d order...\n", tpInfo.Level)
+		
+		// Use existing method with built-in timeout and retry logic
+		if err := bot.cancelOrderWithRetry(bot.category, bot.symbol, orderID); err != nil {
+			bot.logger.LogWarning("Shutdown Cleanup", "Failed to cancel TP Level %d order %s: %v", tpInfo.Level, orderID, err)
+			fmt.Printf("❌ Failed to cancel TP Level %d: %v\n", tpInfo.Level, err)
+			failedCount++
+			continue
+		}
+		
+		bot.logger.Info("❌ Cancelled TP Level %d order: %s (qty: %s)", tpInfo.Level, orderID, tpInfo.Quantity)
+		fmt.Printf("✅ Cancelled TP Level %d successfully\n", tpInfo.Level)
+		cancelledCount++
+	}
+	
+	if failedCount > 0 {
+		bot.logger.LogWarning("Shutdown Cleanup", "Cancelled %d TP orders, %d failed", cancelledCount, failedCount)
+		fmt.Printf("⚠️ Cancelled %d TP orders, %d failed to cancel\n", cancelledCount, failedCount)
+	} else {
+		fmt.Printf("✅ Cancelled %d TP orders successfully\n", cancelledCount)
+	}
+	
+	return nil
+}
+
+// isTPOrder determines if an order is a take profit order placed by this bot
+func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bool {
+	// Must be a sell limit order
+	if order.Side != "Sell" || order.OrderType != "Limit" {
+		return false
+	}
+	
+	// Must be for our symbol (should already be filtered, but safety check)
+	if order.Symbol != bot.symbol {
+		return false
+	}
+	
+	// Parse order price
+	orderPrice, err := parseFloat(order.Price)
+	if err != nil {
+		bot.logger.LogWarning("TP Identification", "Failed to parse order price '%s': %v", order.Price, err)
+		return false
+	}
+	
+	// If we don't have current avg price, we can't validate - be conservative
+	if currentAvgPrice <= 0 {
+		bot.logger.Info("🐛 DEBUG: No avg price available, checking if order is in tracked TP orders")
+		// Check if this order is in our internal tracking
+		bot.tpOrderMutex.RLock()
+		_, isTracked := bot.activeTPOrders[order.OrderID]
+		bot.tpOrderMutex.RUnlock()
+		return isTracked
+	}
+	
+	// TP orders should be ABOVE average price (for profit)
+	if orderPrice <= currentAvgPrice {
+		bot.logger.Info("🐛 DEBUG: Order price $%.4f <= avg price $%.4f, not a TP order", orderPrice, currentAvgPrice)
+		return false
+	}
+	
+	// TP orders should be within reasonable profit range (0.1% to 15% above avg price)
+	profitPercent := (orderPrice - currentAvgPrice) / currentAvgPrice * 100
+	minProfitPercent := 0.1  // 0.1% minimum
+	maxProfitPercent := 15.0 // 15% maximum (beyond this is likely not a TP order)
+	
+	if profitPercent < minProfitPercent || profitPercent > maxProfitPercent {
+		bot.logger.Info("🐛 DEBUG: Order profit %.2f%% outside TP range (%.1f%%-%.1f%%), not a TP order", 
+			profitPercent, minProfitPercent, maxProfitPercent)
+		return false
+	}
+	
+	// Check quantity - TP orders typically have smaller quantities than full position
+	orderQty, qtyErr := parseFloat(order.Quantity)
+	if qtyErr == nil && currentAvgPrice > 0 {
+		// Estimate full position size from our current position value
+		bot.positionMutex.RLock()
+		fullPositionQty := bot.currentPosition / currentAvgPrice
+		bot.positionMutex.RUnlock()
+		
+		if fullPositionQty > 0 {
+			qtyPercent := orderQty / fullPositionQty * 100
+			// TP orders are typically 10%-50% of position (not 100%+ which would be full exit)
+			if qtyPercent > 70 {
+				bot.logger.Info("🐛 DEBUG: Order quantity %.1f%% of position suggests full exit, not TP order", qtyPercent)
+				return false
+			}
+		}
+	}
+	
+	return true
+}
+
+// detectFilledTPOrders detects which TP orders have been filled since last check
+func (bot *LiveBot) detectFilledTPOrders() []string {
+	ctx := context.Background()
+	
+	// Get current open orders
+	orders, err := bot.exchange.GetOpenOrders(ctx, bot.category, bot.symbol)
+	if err != nil {
+		bot.logger.LogWarning("TP Fill Detection", "Failed to get open orders: %v", err)
+		return nil
+	}
+	
+	// Get current average price for TP validation
+	positions, posErr := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	var currentAvgPrice float64 = 0
+	if posErr == nil {
+		for _, pos := range positions {
+			if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+				if avgPrice, err := parseFloat(pos.AvgPrice); err == nil {
+					currentAvgPrice = avgPrice
+				}
+				break
+			}
+		}
+	}
+	
+	// Create map of currently active TP orders on exchange
+	activeOnExchange := make(map[string]bool)
+	for _, order := range orders {
+		if bot.isTPOrder(order, currentAvgPrice) {
+			activeOnExchange[order.OrderID] = true
+		}
+	}
+	
+	// Find filled TP orders (in our tracking but not on exchange)
+	bot.tpOrderMutex.Lock()
+	var filledOrderDetails []string
+	
+	for orderID, tpInfo := range bot.activeTPOrders {
+		if !activeOnExchange[orderID] {
+			// Order is no longer on exchange - likely filled
+			bot.logger.Info("🎯 TP Order FILLED: Level %d at $%s (%.2f%%) - OrderID: %s", 
+				tpInfo.Level, tpInfo.Price, tpInfo.Percent*100, orderID)
+			
+			// Move to filled orders tracking
+			tpInfo.Filled = true
+			bot.filledTPOrders[orderID] = tpInfo
+			
+			// Create detailed string for display
+			filledDetail := fmt.Sprintf("TP%d@$%s(%.1f%%)", tpInfo.Level, tpInfo.Price, tpInfo.Percent*100)
+			filledOrderDetails = append(filledOrderDetails, filledDetail)
+			
+			// Remove from active orders
+			delete(bot.activeTPOrders, orderID)
+		}
+	}
+	
+	bot.tpOrderMutex.Unlock()
+	
+	return filledOrderDetails
+}
+
+// getFilledTPSummary returns a summary of filled TP orders for display
+func (bot *LiveBot) getFilledTPSummary() string {
+	bot.tpOrderMutex.RLock()
+	defer bot.tpOrderMutex.RUnlock()
+	
+	if len(bot.filledTPOrders) == 0 {
+		return ""
+	}
+	
+	var filledSummary []string
+	for _, tpInfo := range bot.filledTPOrders {
+		summary := fmt.Sprintf("TP%d@$%s", tpInfo.Level, tpInfo.Price)
+		filledSummary = append(filledSummary, summary)
+	}
+	
+	return strings.Join(filledSummary, ", ")
+}
+
+// parseFloat safely parses a string to float64 with comprehensive validation
 func parseFloat(s string) (float64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty string")
+	}
+	// Trim whitespace that might cause parsing errors
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("string contains only whitespace")
+	}
+	// Check for common invalid values
+	if s == "null" || s == "undefined" || s == "NaN" {
+		return 0, fmt.Errorf("invalid numeric value: %s", s)
 	}
 	return strconv.ParseFloat(s, 64)
 }
@@ -1388,6 +1903,11 @@ func (bot *LiveBot) cancelOrderWithRetry(category, symbol, orderID string) error
 
 // placeFallbackTPOrder places a single TP order for leftover quantity at level 5
 func (bot *LiveBot) placeFallbackTPOrder(quantity float64, avgEntryPrice float64, constraints *exchange.TradingConstraints, level int) error {
+	// Add zero-value check to prevent division by zero
+	if bot.config.Strategy.TPLevels <= 0 {
+		return fmt.Errorf("invalid TP levels configuration: %d", bot.config.Strategy.TPLevels)
+	}
+	
 	// Use level 5 TP percentage for fallback order (highest level)
 	levelPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
 	tpPrice := avgEntryPrice * (1 + levelPercent)
@@ -1436,6 +1956,7 @@ func (bot *LiveBot) placeFallbackTPOrder(quantity float64, avgEntryPrice float64
 	
 	// Track the fallback TP order
 	bot.tpOrderMutex.Lock()
+	defer bot.tpOrderMutex.Unlock()
 	bot.activeTPOrders[tpOrder.OrderID] = &TPOrderInfo{
 		Level:     level, // Use next available level number
 		Percent:   levelPercent,
@@ -1445,7 +1966,6 @@ func (bot *LiveBot) placeFallbackTPOrder(quantity float64, avgEntryPrice float64
 		Filled:    false,
 		FilledQty: "0",
 	}
-	bot.tpOrderMutex.Unlock()
 	
 	bot.logger.Info("✅ Fallback TP combined with Level %d: %s %s at $%s (%.2f%%) - Order ID: %s", 
 		level, formattedQty, bot.symbol, formattedPrice, levelPercent*100, tpOrder.OrderID)
