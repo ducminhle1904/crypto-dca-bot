@@ -154,6 +154,9 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 
 	// Set price threshold for DCA entry spacing
 	dca.SetPriceThreshold(cfg.PriceThreshold)
+	
+	// Set maximum position multiplier from configuration
+	dca.SetMaxMultiplier(cfg.MaxMultiplier)
 
 	// Indicator inclusion map
 	include := make(map[string]bool)

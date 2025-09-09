@@ -458,6 +458,9 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
 	dca.SetPriceThreshold(cfg.PriceThreshold)
 	
+	// Set maximum position multiplier from configuration
+	dca.SetMaxMultiplier(cfg.MaxMultiplier)
+	
 	// Create a set for efficient lookup
 	include := make(map[string]bool)
 	for _, name := range cfg.Indicators {

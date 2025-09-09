@@ -728,19 +728,16 @@ func (b *BacktestEngine) calculateCurrentAvgEntry() float64 {
     return 0
 }
 
-// isCycleComplete checks if all TP levels are hit
+// isCycleComplete checks if all remaining quantity has been sold via TPs
 func (b *BacktestEngine) isCycleComplete() bool {
 	if !b.useTPLevels {
 		return false
 	}
 	
-	// Check if all 5 TP levels are hit
-	for i := 0; i < len(b.tpLevels); i++ {
-		if !b.tpLevels[i].Hit {
-			return false
-		}
-	}
-	return true
+	// Instead of checking Hit status (which gets reset), check if remaining quantity is near zero
+	// This accounts for TP resets during DCA entries within the same cycle
+	const tolerance = 1e-8  // Small tolerance for floating point precision
+	return b.cycleRemainingQty <= tolerance
 }
 
 // completeCycle finalizes the cycle when all TPs are hit
