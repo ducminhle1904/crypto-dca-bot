@@ -21,6 +21,7 @@ type MainBacktestConfig struct {
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Progressive DCA spacing multiplier
 	
 	// Combo selection  
 	UseAdvancedCombo bool `json:"use_advanced_combo"`
@@ -79,6 +80,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		BaseAmount:     cfg.BaseAmount,
 		MaxMultiplier:  cfg.MaxMultiplier,
 		PriceThreshold: cfg.PriceThreshold,
+		PriceThresholdMultiplier: cfg.PriceThresholdMultiplier,
 		Interval:       interval,
 		WindowSize:     cfg.WindowSize,
 		TPPercent:      cfg.TPPercent,

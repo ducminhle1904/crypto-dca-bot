@@ -50,6 +50,9 @@ func (m *DCAConfigManager) LoadConfig(configFile, dataFile, symbol string, balan
 	if priceThreshold, ok := params["price_threshold"].(float64); ok {
 		cfg.PriceThreshold = priceThreshold
 	}
+	if priceThresholdMultiplier, ok := params["price_threshold_multiplier"].(float64); ok {
+		cfg.PriceThresholdMultiplier = priceThresholdMultiplier
+	}
 	if useAdvancedCombo, ok := params["use_advanced_combo"].(bool); ok {
 		cfg.UseAdvancedCombo = useAdvancedCombo
 	}
@@ -102,6 +105,7 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	cfg.BaseAmount = strategy.BaseAmount
 	cfg.MaxMultiplier = strategy.MaxMultiplier
 	cfg.PriceThreshold = strategy.PriceThreshold
+	cfg.PriceThresholdMultiplier = strategy.PriceThresholdMultiplier
 	cfg.WindowSize = strategy.WindowSize
 	cfg.TPPercent = strategy.TPPercent
 	cfg.UseTPLevels = strategy.UseTPLevels
@@ -190,6 +194,7 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		BaseAmount:     dcaCfg.BaseAmount,
 		MaxMultiplier:  dcaCfg.MaxMultiplier,
 		PriceThreshold: dcaCfg.PriceThreshold,
+		PriceThresholdMultiplier: dcaCfg.PriceThresholdMultiplier,
 		Interval:       interval,
 		WindowSize:     dcaCfg.WindowSize,
 		TPPercent:      dcaCfg.TPPercent,

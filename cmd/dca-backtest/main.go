@@ -28,6 +28,7 @@ const (
 	DefaultBaseAmount     = 40.0
 	DefaultMaxMultiplier  = 3.0
 	DefaultPriceThreshold = 0.02 // 2%
+	DefaultPriceThresholdMultiplier = 1.0 // 1.0x = no multiplier
 	DefaultTPPercent      = 0.02 // 2%
 	DefaultDataRoot       = "data"
 	DefaultExchange       = "bybit"
@@ -50,6 +51,7 @@ func main() {
 		baseAmount       = flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount")
 		maxMultiplier    = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
 		priceThreshold   = flag.Float64("price-threshold", DefaultPriceThreshold, "Price drop % for next DCA (0.02 = 2%)")
+		priceThresholdMultiplier = flag.Float64("price-threshold-multiplier", DefaultPriceThresholdMultiplier, "Progressive multiplier for DCA spacing (1.1 = 10% increase per level)")
 		useAdvancedCombo = flag.Bool("advanced-combo", false, "Use advanced indicators (Hull MA, MFI, Keltner, WaveTrend)")
 		
 		// Analysis options
@@ -98,7 +100,7 @@ func main() {
 	// Load configuration
 	cfg, err := loadDCAConfiguration(*configFile, *dataFile, *symbol, *interval, 
 		*initialBalance, *commission, *windowSize, *baseAmount, *maxMultiplier, 
-		*priceThreshold, *useAdvancedCombo)
+		*priceThreshold, *priceThresholdMultiplier, *useAdvancedCombo)
 	if err != nil {
 		log.Fatalf("❌ Configuration error: %v", err)
 	}
@@ -157,6 +159,9 @@ EXAMPLES:
   
   # Advanced combo with custom parameters
   dca-backtest -symbol BTCUSDT -advanced-combo -base-amount 50 -max-multiplier 2.5
+  
+  # Progressive DCA spacing (1%->1.1%->1.21%->1.33%...)
+  dca-backtest -symbol BTCUSDT -price-threshold 0.01 -price-threshold-multiplier 1.1
 
 CONFIGURATION:
   -config FILE          Load configuration from JSON file
@@ -169,10 +174,11 @@ ACCOUNT SETTINGS:
   -commission RATE      Trading commission (default: 0.0005)
 
 DCA STRATEGY:
-  -base-amount AMOUNT   Base DCA amount (default: 40)
-  -max-multiplier MULT  Maximum position multiplier (default: 3.0)
-  -price-threshold PCT  Price drop %% for next DCA (default: 0.02)
-  -advanced-combo       Use advanced indicators instead of classic
+  -base-amount AMOUNT           Base DCA amount (default: 40)
+  -max-multiplier MULT          Maximum position multiplier (default: 3.0)
+  -price-threshold PCT          Price drop %% for next DCA (default: 0.02)
+  -price-threshold-multiplier X Progressive multiplier for DCA spacing (default: 1.0)
+  -advanced-combo               Use advanced indicators instead of classic
 
 ANALYSIS:
   -optimize             Run genetic algorithm optimization
@@ -209,7 +215,7 @@ func loadEnvironment(envFile string) {
 
 func loadDCAConfiguration(configFile, dataFile, symbol, interval string, 
 	initialBalance, commission float64, windowSize int, baseAmount, maxMultiplier, 
-	priceThreshold float64, useAdvancedCombo bool) (*config.DCAConfig, error) {
+	priceThreshold, priceThresholdMultiplier float64, useAdvancedCombo bool) (*config.DCAConfig, error) {
 	
 	// Resolve config file path
 	if configFile != "" && !strings.ContainsAny(configFile, "/\\") {
@@ -219,10 +225,11 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	// Load configuration using the config manager
 	configManager := config.NewDCAConfigManager()
 	params := map[string]interface{}{
-		"base_amount":        baseAmount,
-		"max_multiplier":     maxMultiplier,
-		"price_threshold":    priceThreshold,
-		"use_advanced_combo": useAdvancedCombo,
+		"base_amount":                 baseAmount,
+		"max_multiplier":              maxMultiplier,
+		"price_threshold":             priceThreshold,
+		"price_threshold_multiplier":  priceThresholdMultiplier,
+		"use_advanced_combo":          useAdvancedCombo,
 	}
 	
 	cfgInterface, err := configManager.LoadConfig(configFile, dataFile, symbol, 
@@ -251,21 +258,29 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		}
 	}
 	
+	// Preserve interval from config file, or use command line value if no config file
+	effectiveInterval := interval
+	if cfg.Interval != "" {
+		effectiveInterval = cfg.Interval
+		log.Printf("📊 Using interval from config file: %s", effectiveInterval)
+	} else {
+		cfg.Interval = interval
+		log.Printf("📊 Using interval from command line: %s", effectiveInterval)
+	}
+	
 	// Resolve data file if not set and not scanning all intervals
 	if strings.TrimSpace(cfg.DataFile) == "" {
-		dataFile := datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), interval)
+		dataFile := datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), effectiveInterval)
 		if dataFile == "" {
 			return nil, fmt.Errorf("no data file found for symbol %s with interval %s\n"+
 				"💡 Expected data structure: data/bybit/{category}/%s/%s/candles.csv\n"+
 				"   Where {category} is one of: spot, linear, inverse\n"+
 				"   Please ensure data files exist or provide explicit -data flag", 
-				cfg.Symbol, interval, strings.ToUpper(cfg.Symbol), interval)
+				cfg.Symbol, effectiveInterval, strings.ToUpper(cfg.Symbol), effectiveInterval)
 		}
 		cfg.DataFile = dataFile
 		log.Printf("📁 Auto-detected data file: %s", filepath.Base(dataFile))
 	}
-
-	cfg.Interval = interval
 	
 	// Log configuration summary
 	printConfigSummary(cfg)
@@ -279,7 +294,12 @@ func printConfigSummary(cfg *config.DCAConfig) {
 	fmt.Printf("   Balance: $%.2f\n", cfg.InitialBalance)
 	fmt.Printf("   Base Amount: $%.2f\n", cfg.BaseAmount)
 	fmt.Printf("   Max Multiplier: %.2fx\n", cfg.MaxMultiplier)
-	fmt.Printf("   Price Threshold: %.2f%%\n", cfg.PriceThreshold*100)
+	fmt.Printf("   Price Threshold: %.2f%%", cfg.PriceThreshold*100)
+	if cfg.PriceThresholdMultiplier > 1.0 {
+		fmt.Printf(" (Progressive: %.2fx per level)\n", cfg.PriceThresholdMultiplier)
+	} else {
+		fmt.Printf(" (Fixed)\n")
+	}
 	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", cfg.TPPercent*100)
 	
 	comboName := "Classic (RSI, MACD, BB, EMA)"
@@ -305,7 +325,7 @@ func runSingleBacktest(orch orchestrator.Orchestrator, cfg *config.DCAConfig,
 	reporting.OutputConsoleWithContext(results, cfg.Symbol, interval)
 	
 	if !consoleOnly {
-		saveResults(results, cfg.Symbol, interval, "trades.xlsx")
+		saveResults(results, cfg.Symbol, interval, "optimized_trades.xlsx")
 	}
 }
 
@@ -406,15 +426,19 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 	
 	best := results.BestResult
 	fmt.Printf("\n🏆 BEST: %s (%.2f%% return)\n", best.Interval, best.Results.TotalReturn*100)
-	fmt.Printf("Settings: Base=$%.0f, Mult=%.2fx, TP=%.2f%%, Thresh=%.2f%%\n\n",
+	thresholdInfo := fmt.Sprintf("%.2f%%", best.OptimizedCfg.PriceThreshold*100)
+	if best.OptimizedCfg.PriceThresholdMultiplier > 1.0 {
+		thresholdInfo += fmt.Sprintf(" (%.2fx)", best.OptimizedCfg.PriceThresholdMultiplier)
+	}
+	fmt.Printf("Settings: Base=$%.0f, Mult=%.2fx, TP=%.2f%%, Thresh=%s\n\n",
 		best.OptimizedCfg.BaseAmount, best.OptimizedCfg.MaxMultiplier,
-		best.OptimizedCfg.TPPercent*100, best.OptimizedCfg.PriceThreshold*100)
+		best.OptimizedCfg.TPPercent*100, thresholdInfo)
 	
 	// Show detailed results for best interval
 	reporting.OutputConsole(best.Results)
 	
 	if !consoleOnly {
-		saveResults(best.Results, results.Symbol, best.Interval, "best_interval_trades.xlsx")
+		saveResults(best.Results, results.Symbol, best.Interval, "optimized_trades.xlsx")
 		saveOptimizedConfig(best.OptimizedCfg, results.Symbol, best.Interval)
 	}
 }
@@ -426,7 +450,12 @@ func printOptimizationResults(bestConfig *config.DCAConfig, bestResults *backtes
 	fmt.Printf("Combo: %s\n", getComboName(bestConfig.UseAdvancedCombo))
 	fmt.Printf("Base Amount: $%.2f\n", bestConfig.BaseAmount)
 	fmt.Printf("Max Multiplier: %.2fx\n", bestConfig.MaxMultiplier)
-	fmt.Printf("Price Threshold: %.2f%%\n", bestConfig.PriceThreshold*100)
+	fmt.Printf("Price Threshold: %.2f%%", bestConfig.PriceThreshold*100)
+	if bestConfig.PriceThresholdMultiplier > 1.0 {
+		fmt.Printf(" (Progressive: %.2fx per level)\n", bestConfig.PriceThresholdMultiplier)
+	} else {
+		fmt.Printf(" (Fixed)\n")
+	}
 	fmt.Printf("TP System: 5-level (%.2f%% max)\n", bestConfig.TPPercent*100)
 	fmt.Printf("Indicators: %s\n\n", strings.Join(bestConfig.Indicators, ", "))
 }
@@ -479,6 +508,7 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		BaseAmount:          cfg.BaseAmount,
 		MaxMultiplier:       cfg.MaxMultiplier,
 		PriceThreshold:      cfg.PriceThreshold,
+		PriceThresholdMultiplier: cfg.PriceThresholdMultiplier,
 		UseAdvancedCombo:    cfg.UseAdvancedCombo,
 		RSIPeriod:           cfg.RSIPeriod,
 		RSIOversold:         cfg.RSIOversold,

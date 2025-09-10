@@ -24,6 +24,7 @@ type BacktestConfig interface {
 	SetMaxMultiplier(val float64)
 	SetTPPercent(val float64)
 	SetPriceThreshold(val float64)
+	SetPriceThresholdMultiplier(val float64) // Progressive DCA spacing multiplier
 	SetHullMAPeriod(val int)
 	SetMFIPeriod(val int)
 	SetMFIOversold(val float64)

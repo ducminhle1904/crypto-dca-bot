@@ -6,6 +6,7 @@ const (
 	DefaultBaseAmount     = 40.0
 	DefaultMaxMultiplier  = 3.0
 	DefaultPriceThreshold = 0.02 // 2%
+	DefaultPriceThresholdMultiplier = 1.0 // 1.0x = no multiplier (disabled by default)
 	DefaultTPPercent      = 0.02 // 2%
 	
 	// Multiple TP configuration
@@ -63,6 +64,7 @@ type DCAConfig struct {
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
 	
 	// Combo selection  
 	UseAdvancedCombo bool  `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
@@ -172,6 +174,10 @@ func (c *DCAConfig) SetPriceThreshold(val float64) {
 	c.PriceThreshold = val
 }
 
+func (c *DCAConfig) SetPriceThresholdMultiplier(val float64) {
+	c.PriceThresholdMultiplier = val
+}
+
 func (c *DCAConfig) SetHullMAPeriod(val int) {
 	c.HullMAPeriod = val
 }
@@ -253,6 +259,7 @@ func NewDefaultDCAConfig() *DCAConfig {
 		BaseAmount:     DefaultBaseAmount,
 		MaxMultiplier:  DefaultMaxMultiplier,
 		PriceThreshold: DefaultPriceThreshold,
+		PriceThresholdMultiplier: DefaultPriceThresholdMultiplier,
 		UseAdvancedCombo: false,
 		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,

@@ -5,6 +5,7 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	Multipliers:     []float64{1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
 	TPCandidates:    []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.055, 0.06},
 	PriceThresholds: []float64{0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05},
+	PriceThresholdMultipliers: []float64{1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4},
 	RSIPeriods:      []int{10, 12, 14, 16, 18, 20, 22, 25},
 	RSIOversold:     []float64{20, 25, 30, 35, 40},
 	MACDFast:        []int{6, 8, 10, 12, 14, 16, 18},

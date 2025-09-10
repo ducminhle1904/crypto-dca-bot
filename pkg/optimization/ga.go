@@ -272,6 +272,7 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	// Randomize strategy parameters using predefined ranges
 	dcaConfig.MaxMultiplier = RandomChoice(ranges.Multipliers, rng)
 	dcaConfig.PriceThreshold = RandomChoice(ranges.PriceThresholds, rng)
+	dcaConfig.PriceThresholdMultiplier = RandomChoice(ranges.PriceThresholdMultipliers, rng)
 	dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
 	
 	// Set indicators based on combo type
@@ -380,6 +381,9 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 	}
 	if rng.Float64() < 0.1 {
 		dcaConfig.PriceThreshold = RandomChoice(ranges.PriceThresholds, rng)
+	}
+	if rng.Float64() < 0.1 {
+		dcaConfig.PriceThresholdMultiplier = RandomChoice(ranges.PriceThresholdMultipliers, rng)
 	}
 	if rng.Float64() < 0.1 {
 		dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)

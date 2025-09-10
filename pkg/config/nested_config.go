@@ -14,6 +14,7 @@ type StrategyConfig struct {
 	BaseAmount     float64            `json:"base_amount"`
 	MaxMultiplier  float64            `json:"max_multiplier"`
 	PriceThreshold float64            `json:"price_threshold"`
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"`
 	Interval       string             `json:"interval"`
 	WindowSize     int                `json:"window_size"`
 	TPPercent      float64            `json:"tp_percent"`

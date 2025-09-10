@@ -15,8 +15,10 @@ type EnhancedDCAStrategy struct {
 	maxMultiplier    float64
 	minConfidence    float64
 	lastTradeTime    time.Time
-	priceThreshold   float64  // Minimum price drop % for next DCA entry
+	priceThreshold   float64  // Base price drop % for first DCA entry
+	priceThresholdMultiplier float64  // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
 	lastEntryPrice   float64  // Track last entry price for threshold calculation
+	dcaLevel         int      // Current DCA level (0 = first entry, 1+ = subsequent entries)
 }
 
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
@@ -27,13 +29,20 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		maxMultiplier:    3.0,
 		minConfidence:    0.5,
 		priceThreshold:   0.0, // Default: no threshold (disabled)
+		priceThresholdMultiplier: 1.0, // Default: no multiplier (1.0x)
 		lastEntryPrice:   0.0, // No previous entry
+		dcaLevel:         0,   // Start at level 0
 	}
 }
 
-// SetPriceThreshold sets the minimum price drop % required for next DCA entry
+// SetPriceThreshold sets the base price drop % required for DCA entries
 func (s *EnhancedDCAStrategy) SetPriceThreshold(threshold float64) {
 	s.priceThreshold = threshold
+}
+
+// SetPriceThresholdMultiplier sets the multiplier for progressive DCA spacing
+func (s *EnhancedDCAStrategy) SetPriceThresholdMultiplier(multiplier float64) {
+	s.priceThresholdMultiplier = multiplier
 }
 
 // AddIndicator adds a technical indicator to the strategy
@@ -87,12 +96,13 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		// Apply price threshold check for DCA entries
 		if s.priceThreshold > 0 && s.lastEntryPrice > 0 {
 			priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
+			requiredThreshold := s.calculateCurrentThreshold()
 			
-			if priceDrop < s.priceThreshold {
+			if priceDrop < requiredThreshold {
 				return &TradeDecision{
 					Action: ActionHold,
-					Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%%", 
-						priceDrop*100, s.priceThreshold*100),
+					Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d)", 
+						priceDrop*100, requiredThreshold*100, s.dcaLevel),
 				}, nil
 			}
 		}
@@ -105,9 +115,10 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		
 		amount := s.calculatePositionSize(netStrength, confidence)
 		
-		// Update last entry price and time
+		// Update last entry price, time, and increment DCA level
 		s.lastEntryPrice = currentPrice
 		s.lastTradeTime = currentCandle.Timestamp
+		s.dcaLevel++ // Increment for next threshold calculation
 		
 		return &TradeDecision{
 			Action:     ActionBuy,
@@ -124,6 +135,25 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d signals (%.1f%% < %.1f%%)", 
 				buySignals, activeSignals, confidence*100, s.minConfidence*100),
 	}, nil
+}
+
+// calculateCurrentThreshold calculates the progressive price threshold based on DCA level
+func (s *EnhancedDCAStrategy) calculateCurrentThreshold() float64 {
+	if s.priceThresholdMultiplier <= 1.0 {
+		return s.priceThreshold // No multiplier effect
+	}
+	
+	// Progressive threshold: baseThreshold * multiplier^dcaLevel
+	// Level 0: 1% × 1.1^0 = 1%
+	// Level 1: 1% × 1.1^1 = 1.1% 
+	// Level 2: 1% × 1.1^2 = 1.21%
+	// Level 3: 1% × 1.1^3 = 1.33%
+	threshold := s.priceThreshold
+	for i := 0; i < s.dcaLevel; i++ {
+		threshold *= s.priceThresholdMultiplier
+	}
+	
+	return threshold
 }
 
 func (s *EnhancedDCAStrategy) calculatePositionSize(strength, confidence float64) float64 {
@@ -146,6 +176,8 @@ func (s *EnhancedDCAStrategy) GetName() string {
 func (s *EnhancedDCAStrategy) OnCycleComplete() {
 	// Reset the last entry price so the next cycle starts fresh
 	s.lastEntryPrice = 0.0
+	// Reset DCA level for next cycle
+	s.dcaLevel = 0
 	// Clear indicator cache to start fresh for next cycle
 	s.indicatorManager.ClearCache()
 }
@@ -178,13 +210,16 @@ func (s *EnhancedDCAStrategy) SetMaxMultiplier(multiplier float64) {
 // GetConfiguration returns current strategy configuration
 func (s *EnhancedDCAStrategy) GetConfiguration() map[string]interface{} {
 	return map[string]interface{}{
-		"base_amount":      s.baseAmount,
-		"max_multiplier":   s.maxMultiplier,
-		"min_confidence":   s.minConfidence,
-		"price_threshold":  s.priceThreshold,
-		"indicator_count":  s.GetIndicatorCount(),
-		"last_entry_price": s.lastEntryPrice,
-		"last_trade_time":  s.lastTradeTime,
+		"base_amount":                 s.baseAmount,
+		"max_multiplier":              s.maxMultiplier,
+		"min_confidence":              s.minConfidence,
+		"price_threshold":             s.priceThreshold,
+		"price_threshold_multiplier":  s.priceThresholdMultiplier,
+		"current_dca_level":           s.dcaLevel,
+		"current_threshold":           s.calculateCurrentThreshold(),
+		"indicator_count":             s.GetIndicatorCount(),
+		"last_entry_price":            s.lastEntryPrice,
+		"last_trade_time":             s.lastTradeTime,
 	}
 }
 
@@ -196,6 +231,7 @@ func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
 	// Reset strategy state
 	s.lastEntryPrice = 0.0
 	s.lastTradeTime = time.Time{}
+	s.dcaLevel = 0
 }
 
 

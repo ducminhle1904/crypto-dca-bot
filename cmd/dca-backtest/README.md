@@ -129,9 +129,8 @@ dca-backtest -symbol BTCUSDT -optimize -wf-enable -wf-rolling \
 
 Results are saved to `results/<SYMBOL>_<INTERVAL>/`:
 
-- `trades.xlsx` - Detailed Excel report with analysis
+- `optimized_trades.xlsx` - Detailed Excel report with analysis
 - `best_config.json` - Optimized configuration
-- `trades.csv` - Raw trade data (if requested)
 
 ## Examples
 
@@ -144,6 +143,7 @@ Results are saved to `results/<SYMBOL>_<INTERVAL>/`:
     "base_amount": 50,
     "max_multiplier": 3.5,
     "price_threshold": 0.025,
+    "price_threshold_multiplier": 1.15,
     "tp_percent": 0.02,
     "use_advanced_combo": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"]
@@ -153,6 +153,16 @@ Results are saved to `results/<SYMBOL>_<INTERVAL>/`:
     "commission": 0.0005
   }
 }
+```
+
+### Progressive DCA Spacing Example
+
+```bash
+# Run with progressive price threshold multiplier from config
+dca-backtest -config config.json
+
+# Command line with progressive threshold (1.2x per level)
+dca-backtest -symbol BTCUSDT -price-threshold 0.01 -price-threshold-multiplier 1.2
 ```
 
 ### Command Line Options

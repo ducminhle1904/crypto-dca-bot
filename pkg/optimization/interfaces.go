@@ -62,6 +62,7 @@ type OptimizationRanges struct {
 	Multipliers        []float64
 	TPCandidates       []float64
 	PriceThresholds    []float64
+	PriceThresholdMultipliers []float64 // Progressive DCA spacing multipliers
 	RSIPeriods         []int
 	RSIOversold        []float64
 	MACDFast           []int
