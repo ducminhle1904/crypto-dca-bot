@@ -115,6 +115,24 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 	return bot, nil
 }
 
+// syncStrategyState synchronizes the strategy's internal state with the bot's current state
+func (bot *LiveBot) syncStrategyState() {
+	bot.positionMutex.RLock()
+	currentDCALevel := bot.dcaLevel
+	avgPrice := bot.averagePrice
+	currentPosition := bot.currentPosition
+	bot.positionMutex.RUnlock()
+	
+	if currentPosition > 0 && avgPrice > 0 {
+		// Active position - sync strategy state with bot state
+		bot.strategy.SetDCALevel(currentDCALevel)
+		bot.strategy.SetLastEntryPrice(avgPrice)
+	} else {
+		// No position - reset strategy state completely
+		bot.strategy.OnCycleComplete()
+	}
+}
+
 // Start initializes and starts the bot
 func (bot *LiveBot) Start() error {
 	bot.running = true
@@ -234,6 +252,7 @@ func (bot *LiveBot) initializeStrategy() error {
 	// Create strategy
 	bot.strategy = strategy.NewEnhancedDCAStrategy(bot.config.Strategy.BaseAmount)
 	bot.strategy.SetPriceThreshold(bot.config.Strategy.PriceThreshold)
+	bot.strategy.SetPriceThresholdMultiplier(bot.config.Strategy.PriceThresholdMultiplier)
 
 	// Add indicators based on configuration
 	for _, indName := range bot.config.Strategy.Indicators {
@@ -368,6 +387,10 @@ func (bot *LiveBot) syncExistingPosition() error {
 				bot.logger.LogPositionSync(positionValue, avgPrice, pos.Size, pos.UnrealisedPnl)
 				// Show brief console message
 				fmt.Printf("🔄 Existing position synced (see log for details)\n")
+				
+				// Sync strategy state after position sync
+				bot.syncStrategyState()
+				
 				return nil
 			}
 		}
@@ -381,6 +404,9 @@ func (bot *LiveBot) syncExistingPosition() error {
 	bot.dcaLevel = 0
 	bot.positionMutex.Unlock()
 	fmt.Printf("✅ No existing position found - starting fresh\n")
+	
+	// Sync strategy state after position sync
+	bot.syncStrategyState()
 	
 	return nil
 }
@@ -1227,6 +1253,9 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 			bot.logger.Info("🐛 DEBUG: AutoTPOrders disabled - skipping TP order management")
 		}
 		
+		// Sync strategy state after BUY trade to keep DCA level and entry price current
+		bot.syncStrategyState()
+		
 	} else if tradeType == "SELL" {
 		// Create dedicated context for cleanup operations
 		cleanupCtx := context.Background()
@@ -1280,12 +1309,11 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		bot.dcaLevel = 0
 		bot.positionMutex.Unlock()
 		
-		// Notify strategy of cycle completion if configured
-		if bot.config.Strategy.Cycle {
-			bot.strategy.OnCycleComplete()
-			// Reset hold log counter to ensure first HOLD decision after cycle completion is logged
-			bot.holdLogCounter = 0
-		}
+		// Sync strategy state after position closure (this will call OnCycleComplete)
+		bot.syncStrategyState()
+		
+		// Reset hold log counter to ensure first HOLD decision after cycle completion is logged
+		bot.holdLogCounter = 0
 	}
 }
 

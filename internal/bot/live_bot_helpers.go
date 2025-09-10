@@ -31,17 +31,17 @@ func (bot *LiveBot) syncPositionData() error {
 	// Look for our symbol position
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, err := parseFloat(pos.PositionValue)
+			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
 				continue
 			}
-			avgPrice, err := parseFloat(pos.AvgPrice)
+			avgPrice, err := strconv.ParseFloat(strings.TrimSpace(pos.AvgPrice), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse average price '%s': %v", pos.AvgPrice, err)
 				continue
 			}
-			positionSize, err := parseFloat(pos.Size)
+			positionSize, err := strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse position size '%s': %v", pos.Size, err)
 				continue
@@ -96,6 +96,9 @@ func (bot *LiveBot) syncPositionData() error {
 		bot.averagePrice = 0
 		bot.totalInvested = 0
 		bot.dcaLevel = 0
+		
+		// Sync strategy state after position reset
+		bot.syncStrategyState()
 	}
 	
 	return nil
@@ -114,7 +117,7 @@ func (bot *LiveBot) closeOpenPositions() error {
 	// Look for positions to close
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionSize, _ := parseFloat(pos.Size)
+			positionSize, _ := strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
 			if positionSize <= 0 {
 				continue
 			}
@@ -124,7 +127,7 @@ func (bot *LiveBot) closeOpenPositions() error {
 			// Get current price for P&L calculation
 			currentPrice, err := bot.exchange.GetLatestPrice(ctx, bot.symbol)
 			if err != nil {
-				currentPrice, _ = parseFloat(pos.MarkPrice) // Use mark price as fallback
+				currentPrice, _ = strconv.ParseFloat(strings.TrimSpace(pos.MarkPrice), 64) // Use mark price as fallback
 			}
 			
 			// Place market sell order to close entire position
@@ -142,8 +145,8 @@ func (bot *LiveBot) closeOpenPositions() error {
 			}
 			
 			// Calculate P&L based on real position data
-			avgPrice, _ := parseFloat(pos.AvgPrice)
-			positionValue, _ := parseFloat(pos.PositionValue)
+			avgPrice, _ := strconv.ParseFloat(strings.TrimSpace(pos.AvgPrice), 64)
+			positionValue, _ := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
 			saleValue := positionSize * currentPrice
 			profit := saleValue - positionValue
 			
@@ -163,6 +166,9 @@ func (bot *LiveBot) closeOpenPositions() error {
 			bot.totalInvested = 0
 			bot.dcaLevel = 0
 			bot.positionMutex.Unlock()
+			
+			// Sync strategy state after position closure
+			bot.syncStrategyState()
 			
 			// Refresh balance after closing position
 			if err := bot.syncAccountBalance(); err != nil {

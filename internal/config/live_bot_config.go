@@ -28,11 +28,12 @@ type LiveBotConfig struct {
 // StrategyConfig holds trading strategy configuration
 type StrategyConfig struct {
 	// Core DCA parameters
-	Symbol         string  `json:"symbol"`          // Trading symbol (e.g., BTCUSDT)
-	Category       string  `json:"category"`        // Trading category (spot, linear, inverse)
-	BaseAmount     float64 `json:"base_amount"`     // Base DCA amount in USD
-	MaxMultiplier  float64 `json:"max_multiplier"`  // Maximum multiplier for DCA
-	PriceThreshold float64 `json:"price_threshold"` // Price drop threshold to trigger DCA
+	Symbol                   string  `json:"symbol"`                     // Trading symbol (e.g., BTCUSDT)
+	Category                 string  `json:"category"`                   // Trading category (spot, linear, inverse)
+	BaseAmount               float64 `json:"base_amount"`               // Base DCA amount in USD
+	MaxMultiplier            float64 `json:"max_multiplier"`            // Maximum multiplier for DCA
+	PriceThreshold           float64 `json:"price_threshold"`           // Price drop threshold to trigger DCA
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
 	
 	// Market data settings
 	Interval   string `json:"interval"`    // Trading interval (5m, 15m, 1h, etc.)

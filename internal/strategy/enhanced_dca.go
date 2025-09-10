@@ -234,6 +234,16 @@ func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
 	s.dcaLevel = 0
 }
 
+// SetDCALevel sets the current DCA level (for live bot state synchronization)
+func (s *EnhancedDCAStrategy) SetDCALevel(level int) {
+	s.dcaLevel = level
+}
+
+// SetLastEntryPrice sets the last entry price (for live bot state synchronization)
+func (s *EnhancedDCAStrategy) SetLastEntryPrice(price float64) {
+	s.lastEntryPrice = price
+}
+
 
 
 
