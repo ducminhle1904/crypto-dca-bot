@@ -18,19 +18,25 @@ import (
 
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
+	log.Printf("🔒 [SYNC] Acquiring position mutex...")
 	bot.positionMutex.Lock()
 	defer bot.positionMutex.Unlock()
 	
+	log.Printf("📡 [SYNC] Fetching positions from exchange...")
 	ctx := context.Background()
 	
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
 	if err != nil {
+		log.Printf("❌ [SYNC] Failed to get positions: %v", err)
 		return fmt.Errorf("failed to get current positions: %w", err)
 	}
+	log.Printf("✅ [SYNC] Received %d positions from exchange", len(positions))
 	
 	// Look for our symbol position
+	log.Printf("🔍 [SYNC] Searching for %s Buy position...", bot.symbol)
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+			log.Printf("📊 [SYNC] Found %s position - parsing data...", bot.symbol)
 			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
@@ -49,9 +55,7 @@ func (bot *LiveBot) syncPositionData() error {
 			
 			if positionValue > 0 && avgPrice > 0 {
 				// Check if average price has changed (indicating new DCA entry)
-				priceChanged := false
 				if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
-					priceChanged = true
 					log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
 				}
 				
@@ -74,14 +78,8 @@ func (bot *LiveBot) syncPositionData() error {
 				log.Printf("📊 Position synced - Size: %.6f, Value: $%.2f, Entry: $%.2f, PnL: %s", 
 					positionSize, positionValue, avgPrice, pos.UnrealisedPnl)
 				
-				// Update TP orders if price changed and auto TP is enabled
-				// Note: This is a fallback for position sync outside of trade execution
-				if priceChanged && bot.config.Strategy.AutoTPOrders {
-					log.Printf("🔄 Position sync detected price change - updating TP orders")
-					if err := bot.updateMultiLevelTPOrders(avgPrice); err != nil {
-						log.Printf("⚠️ Failed to update TP orders: %v", err)
-					}
-				}
+				// Note: TP order updates are now handled exclusively in syncAfterTrade to avoid conflicts
+				// Price change already logged above if it occurred
 				
 				return nil
 			}
@@ -89,6 +87,7 @@ func (bot *LiveBot) syncPositionData() error {
 	}
 	
 	// No position found - reset state if bot thinks it has one
+	needsStrategySync := false
 	if bot.currentPosition > 0 {
 		log.Printf("🔄 No exchange position found - resetting bot state")
 		// Note: Already protected by positionMutex from calling function
@@ -96,11 +95,22 @@ func (bot *LiveBot) syncPositionData() error {
 		bot.averagePrice = 0
 		bot.totalInvested = 0
 		bot.dcaLevel = 0
-		
-		// Sync strategy state after position reset
-		bot.syncStrategyState()
+		needsStrategySync = true
 	}
 	
+	// Release mutex before calling syncStrategyState to avoid deadlock
+	if needsStrategySync {
+		log.Printf("🔄 [SYNC] Position reset detected - syncing strategy state...")
+		// Note: We're about to return, so defer unlock will happen first
+		// Need to manually unlock and then sync
+		bot.positionMutex.Unlock()
+		bot.syncStrategyState()
+		// Re-acquire lock for the defer statement (will be unlocked again immediately)
+		bot.positionMutex.Lock()
+		log.Printf("✅ [SYNC] Strategy state sync completed")
+	}
+	
+	log.Printf("✅ [SYNC] Position sync completed successfully")
 	return nil
 }
 
