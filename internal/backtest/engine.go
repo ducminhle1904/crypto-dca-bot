@@ -325,12 +325,14 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 			}
 		}
 
-		// Check and execute take profit orders
+		// Check and execute take profit orders using High price for realistic TP execution
 		if b.cycleOpen && b.position > 0 {
 			if b.useTPLevels {
-				b.checkAndExecuteMultipleTP(currentPrice, data[i].Timestamp)
+				// Use High price to check which TP levels were hit during the candle
+				b.checkAndExecuteMultipleTPWithHigh(data[i].High, data[i].Timestamp)
 			} else if b.tpPercent > 0 {
-				b.checkAndExecuteSingleTP(currentPrice, data[i].Timestamp)
+				// For single TP, use High price to check if target was reached
+				b.checkAndExecuteSingleTPWithHigh(data[i].High, data[i].Timestamp)
 			}
 		}
 
@@ -574,6 +576,71 @@ func (b *BacktestResults) PrintCycleDetails() {
 	}
 	fmt.Printf("Total Commission Paid: $%.2f\n", totalCommission)
 }
+// checkAndExecuteSingleTPWithHigh handles single TP logic using High price
+func (b *BacktestEngine) checkAndExecuteSingleTPWithHigh(highPrice float64, timestamp time.Time) {
+	// compute weighted average entry price across OPEN trades (of current cycle)
+	totalQty := 0.0
+	sumEntryCost := 0.0 // sum(entryPrice * qty)
+	for _, t := range b.results.Trades {
+		if t.ExitTime.IsZero() && t.Cycle == b.currentCycleNumber {
+			totalQty += t.Quantity
+			sumEntryCost += t.EntryPrice * t.Quantity
+		}
+	}
+	if totalQty > 0 {
+		avgEntry := sumEntryCost / totalQty
+		target := avgEntry * (1.0 + b.tpPercent)
+		if highPrice >= target {
+			// Execute at target price, not current price for realistic simulation
+			exitPrice := target
+			
+			// Realize PnL: sell all open quantity at target price
+			proceeds := totalQty * exitPrice
+			sellCommission := proceeds * b.commission
+			b.balance += proceeds - sellCommission
+			b.position -= totalQty
+
+			// Proportionally assign sell commission and finalize open trades for this cycle
+			realized := 0.0
+			for idx := range b.results.Trades {
+				if b.results.Trades[idx].ExitTime.IsZero() && b.results.Trades[idx].Cycle == b.currentCycleNumber {
+					q := b.results.Trades[idx].Quantity
+					share := 0.0
+					if totalQty > 0 { share = q / totalQty }
+					perTradeSellComm := sellCommission * share
+					b.results.Trades[idx].ExitTime = timestamp
+					b.results.Trades[idx].ExitPrice = exitPrice
+					pnl := (exitPrice-b.results.Trades[idx].EntryPrice)*q - b.results.Trades[idx].Commission - perTradeSellComm
+					b.results.Trades[idx].PnL = pnl
+					realized += pnl
+				}
+			}
+
+			// finalize cycle summary
+			avgGrossEntry := 0.0
+			if b.cycleGrossQtySum > 0 { avgGrossEntry = b.cycleGrossCostSum / b.cycleGrossQtySum }
+			b.results.Cycles = append(b.results.Cycles, CycleSummary{
+				CycleNumber:     b.currentCycleNumber,
+				StartTime:       b.cycleStartTime,
+				EndTime:         timestamp,
+				Entries:         b.cycleEntries,
+				AvgEntry:        avgEntry,          // Net average entry
+				AvgGrossEntry:   avgGrossEntry,     // Gross average entry
+				TargetPrice:     target,
+				RealizedPnL:     realized,
+				TotalCost:       b.cycleCostSum,        // Net cost
+				TotalGrossCost:  b.cycleGrossCostSum,   // Gross cost
+				TotalCommission: b.cycleCommissionSum,  // Commission
+				Completed:       true,
+			})
+			b.results.CompletedCycles++
+
+			// Reset position and cycle state for next DCA cycle
+			b.resetCycle()
+		}
+	}
+}
+
 // checkAndExecuteSingleTP handles single TP logic (original behavior)
 func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp time.Time) {
 	// compute weighted average entry price across OPEN trades (of current cycle)
@@ -636,8 +703,8 @@ func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp
 	}
 }
 
-// checkAndExecuteMultipleTP handles 5-level TP logic
-func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timestamp time.Time) {
+// checkAndExecuteMultipleTPWithHigh handles 5-level TP logic using High price for realistic simulation
+func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, timestamp time.Time) {
 	if b.cycleRemainingQty <= 0 {
 		return
 	}
@@ -645,15 +712,16 @@ func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timesta
 	// Calculate current average entry price
 	avgEntry := b.calculateCurrentAvgEntry()
 	
-	// Check each TP level
+	// Check each TP level sequentially using High price to determine if reached
 	for i, tpLevel := range b.tpLevels {
 		if tpLevel.Hit {
 			continue // Skip already hit levels
 		}
 		
 		target := avgEntry * (1.0 + tpLevel.Percent)
-		if currentPrice >= target {
-			b.executeTPLevel(i, currentPrice, timestamp, avgEntry)
+		if highPrice >= target {
+			// Execute at exact target price for realistic simulation
+			b.executeTPLevel(i, target, timestamp, avgEntry)
 		}
 	}
 	
@@ -661,6 +729,13 @@ func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timesta
 	if b.isCycleComplete() {
 		b.completeCycle(timestamp)
 	}
+}
+
+// Legacy function for backward compatibility (now uses High price internally)
+func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timestamp time.Time) {
+	// This is kept for compatibility but should not be used in new code
+	// Use checkAndExecuteMultipleTPWithHigh instead
+	b.checkAndExecuteMultipleTPWithHigh(currentPrice, timestamp)
 }
 
 func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64) {

@@ -76,7 +76,7 @@ func (r *DefaultBacktestRunner) RunWithFile(cfg *config.DCAConfig, selectedPerio
 			log.Printf("ℹ️ Using default minimum order quantity: %.6f", cfg.MinOrderQty)
 		}
 	} else {
-		log.Printf("✅ Using configured minimum order quantity: %.6f BTCUSDT", cfg.MinOrderQty)
+		log.Printf("✅ Using configured minimum order quantity: %.6f %s", cfg.MinOrderQty, cfg.Symbol)
 	}
 	
 	// Validate data file exists before attempting to load

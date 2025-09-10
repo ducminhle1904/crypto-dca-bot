@@ -260,15 +260,16 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	
 	// Preserve interval from config file, or use command line value if no config file
 	effectiveInterval := interval
+	intervalSource := "command line"
 	if cfg.Interval != "" {
 		effectiveInterval = cfg.Interval
-		log.Printf("📊 Using interval from config file: %s", effectiveInterval)
+		intervalSource = "config file"
 	} else {
 		cfg.Interval = interval
-		log.Printf("📊 Using interval from command line: %s", effectiveInterval)
 	}
 	
 	// Resolve data file if not set and not scanning all intervals
+	dataFileAutoDetected := false
 	if strings.TrimSpace(cfg.DataFile) == "" {
 		dataFile := datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), effectiveInterval)
 		if dataFile == "" {
@@ -279,27 +280,47 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 				cfg.Symbol, effectiveInterval, strings.ToUpper(cfg.Symbol), effectiveInterval)
 		}
 		cfg.DataFile = dataFile
+		dataFileAutoDetected = true
 		log.Printf("📁 Auto-detected data file: %s", filepath.Base(dataFile))
 	}
 	
-	// Log configuration summary
-	printConfigSummary(cfg)
+	// Log configuration summary with sources
+	printConfigSummary(cfg, intervalSource, dataFileAutoDetected)
 	
 	return cfg, nil
 }
 
-func printConfigSummary(cfg *config.DCAConfig) {
+func printConfigSummary(cfg *config.DCAConfig, intervalSource string, dataFileAutoDetected bool) {
 	fmt.Printf("📊 DCA Strategy Configuration\n")
 	fmt.Printf("   Symbol: %s\n", cfg.Symbol)
+	fmt.Printf("   Interval: %s (from %s)\n", cfg.Interval, intervalSource)
+	
+	// Data source info
+	if dataFileAutoDetected {
+		fmt.Printf("   Data: %s (auto-detected)\n", filepath.Base(cfg.DataFile))
+	} else {
+		fmt.Printf("   Data: %s\n", filepath.Base(cfg.DataFile))
+	}
+	
 	fmt.Printf("   Balance: $%.2f\n", cfg.InitialBalance)
 	fmt.Printf("   Base Amount: $%.2f\n", cfg.BaseAmount)
 	fmt.Printf("   Max Multiplier: %.2fx\n", cfg.MaxMultiplier)
+	
+	// Enhanced price threshold display
 	fmt.Printf("   Price Threshold: %.2f%%", cfg.PriceThreshold*100)
 	if cfg.PriceThresholdMultiplier > 1.0 {
-		fmt.Printf(" (Progressive: %.2fx per level)\n", cfg.PriceThresholdMultiplier)
+		fmt.Printf(" → Progressive DCA Spacing\n")
+		fmt.Printf("   Multiplier: %.2fx per level (%.2f%% → %.2f%% → %.2f%% → %.2f%% → %.2f%%)\n",
+			cfg.PriceThresholdMultiplier,
+			cfg.PriceThreshold*100,
+			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*100,
+			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100,
+			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100,
+			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100)
 	} else {
 		fmt.Printf(" (Fixed)\n")
 	}
+	
 	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", cfg.TPPercent*100)
 	
 	comboName := "Classic (RSI, MACD, BB, EMA)"
@@ -307,7 +328,7 @@ func printConfigSummary(cfg *config.DCAConfig) {
 		comboName = "Advanced (Hull MA, MFI, Keltner, WaveTrend)"
 	}
 	fmt.Printf("   Indicators: %s\n", comboName)
-	fmt.Printf("   Data: %s\n\n", filepath.Base(cfg.DataFile))
+	fmt.Printf("\n")
 }
 
 func runSingleBacktest(orch orchestrator.Orchestrator, cfg *config.DCAConfig, 
@@ -395,10 +416,10 @@ func runMultiIntervalAnalysis(orch orchestrator.Orchestrator, cfg *config.DCACon
 
 func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consoleOnly bool) {
 	fmt.Printf("\n📈 INTERVAL COMPARISON - %s\n", results.Symbol)
-	fmt.Printf("%s\n", strings.Repeat("=", 80))
-	fmt.Printf("%-8s | %7s | %6s | %5s | %7s | %5s | %8s | %s\n",
-		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Combo")
-	fmt.Printf("%s\n", strings.Repeat("-", 80))
+	fmt.Printf("%s\n", strings.Repeat("=", 90))
+	fmt.Printf("%-8s | %7s | %6s | %5s | %7s | %5s | %8s | %6s | %s\n",
+		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Mult", "Combo")
+	fmt.Printf("%s\n", strings.Repeat("-", 90))
 	
 	for _, r := range results.Results {
 		if r.Error != nil {
@@ -412,7 +433,13 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 			comboInfo = "Advanced"
 		}
 		
-		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %s\n",
+		// Format multiplier display
+		multDisplay := "1.00x"
+		if c.PriceThresholdMultiplier > 1.0 {
+			multDisplay = fmt.Sprintf("%.2fx", c.PriceThresholdMultiplier)
+		}
+		
+		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %6s | %s\n",
 			r.Interval,
 			r.Results.TotalReturn*100,
 			r.Results.TotalTrades,
@@ -420,6 +447,7 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 			c.MaxMultiplier,
 			c.TPPercent*100,
 			c.PriceThreshold*100,
+			multDisplay,
 			comboInfo,
 		)
 	}

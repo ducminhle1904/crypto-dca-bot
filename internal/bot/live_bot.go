@@ -60,6 +60,9 @@ type LiveBot struct {
 	
 	// Position synchronization
 	positionMutex  sync.RWMutex      // Protect position data access
+	
+	// Debugging counters
+	holdLogCounter int               // Counter for HOLD decision logging
 }
 
 // NewLiveBot creates a new live trading bot instance
@@ -568,15 +571,25 @@ func (bot *LiveBot) analyzeMarket(klines []types.OHLCV, currentPrice float64) (*
 		return nil, "HOLD"
 	}
 	
+	// Log strategy decision reasoning for better debugging
 	if decision.Action == strategy.ActionBuy {
+		bot.logger.Info("🎯 BUY Signal: %s (Confidence: %.1f%%, Strength: %.1f%%)", 
+			decision.Reason, decision.Confidence*100, decision.Strength*100)
+		// Reset hold log counter so next HOLD decision is logged
+		bot.holdLogCounter = 0
 		return decision, "BUY"
+	} else {
+		// Log HOLD reasoning every 10th check to avoid spam, but always log immediately after cycle completion
+		if bot.dcaLevel == 0 || bot.holdLogCounter%10 == 0 {
+			bot.logger.Info("⏸️ HOLD Decision: %s", decision.Reason)
+		}
+		bot.holdLogCounter++
+		return decision, "HOLD"
 	}
 
 	// Note: Take profit is now handled by exchange limit orders placed after each buy
 	// This eliminates the need to wait for candle closes and provides immediate TP protection
 	// The exchange will automatically execute TP orders when price reaches target levels
-
-	return decision, "HOLD"
 }
 
 // executeTrade executes the trading action
@@ -1236,6 +1249,8 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		// Notify strategy of cycle completion if configured
 		if bot.config.Strategy.Cycle {
 			bot.strategy.OnCycleComplete()
+			// Reset hold log counter to ensure first HOLD decision after cycle completion is logged
+			bot.holdLogCounter = 0
 		}
 	}
 }
