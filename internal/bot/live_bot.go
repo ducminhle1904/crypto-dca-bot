@@ -158,56 +158,74 @@ func (bot *LiveBot) Start() error {
 
 // Stop gracefully stops the bot
 func (bot *LiveBot) Stop() {
-	if bot.running {
-		bot.running = false
-		
-		fmt.Printf("🛑 Stopping bot...\n")
-		
-		// Signal trading loop to stop FIRST - this prevents new trading operations
+	if !bot.running {
+		return // Already stopped
+	}
+	
+	bot.running = false
+	fmt.Printf("🛑 Stopping bot...\n")
+	
+	// Signal trading loop to stop FIRST - this prevents new trading operations
+	// Use defer-recover to prevent panic if channel is already closed
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Channel was already closed, which is fine
+			}
+		}()
 		close(bot.stopChan)
+	}()
+	
+	// Give trading loop a moment to exit gracefully
+	fmt.Printf("⏱️ Waiting for trading loop to stop...\n")
+	time.Sleep(2 * time.Second)
+	
+	// Use timeout for cleanup operations to prevent hanging
+	cleanupTimeout := 15 * time.Second
+	cleanupDone := make(chan struct{})
+	
+	go func() {
+		defer close(cleanupDone)
 		
-		// Give trading loop a moment to exit gracefully
-		fmt.Printf("⏱️ Waiting for trading loop to stop...\n")
-		time.Sleep(2 * time.Second)
-		
-		// Use timeout for cleanup operations to prevent hanging
-		cleanupTimeout := 30 * time.Second
-		cleanupDone := make(chan struct{})
-		
-		go func() {
-			defer close(cleanupDone)
-			
 		// Cancel all active TP orders before closing positions
-			fmt.Printf("🧹 Cleaning up TP orders...\n")
+		fmt.Printf("🧹 Cleaning up TP orders...\n")
 		if err := bot.cancelAllTPOrders(); err != nil {
-			bot.logger.Error("Error canceling TP orders during shutdown: %v", err)
+			fmt.Printf("⚠️ Error canceling TP orders: %v\n", err)
+			if bot.logger != nil {
+				bot.logger.Error("Error canceling TP orders during shutdown: %v", err)
+			}
 		}
 		
 		// Close any open positions before stopping
-			fmt.Printf("🔄 Closing open positions...\n")
+		fmt.Printf("🔄 Closing open positions...\n")
 		if err := bot.closeOpenPositions(); err != nil {
-			bot.logger.Error("Error closing positions during shutdown: %v", err)
+			fmt.Printf("⚠️ Error closing positions: %v\n", err)
+			if bot.logger != nil {
+				bot.logger.Error("Error closing positions during shutdown: %v", err)
+			}
 		}
 		
 		// Disconnect from exchange
-			fmt.Printf("🔌 Disconnecting from exchange...\n")
+		fmt.Printf("🔌 Disconnecting from exchange...\n")
 		if err := bot.exchange.Disconnect(); err != nil {
-			bot.logger.Error("Error disconnecting from exchange: %v", err)
+			fmt.Printf("⚠️ Error disconnecting: %v\n", err)
+			if bot.logger != nil {
+				bot.logger.Error("Error disconnecting from exchange: %v", err)
+			}
 		}
 		
 		// Close logger
 		if bot.logger != nil {
 			bot.logger.Close()
 		}
-		}()
-		
-		// Wait for cleanup or timeout
-		select {
-		case <-cleanupDone:
-			fmt.Printf("✅ Cleanup completed successfully\n")
-		case <-time.After(cleanupTimeout):
-			fmt.Printf("⚠️ Cleanup timed out after %v - forcing exit\n", cleanupTimeout)
-		}
+	}()
+	
+	// Wait for cleanup or timeout
+	select {
+	case <-cleanupDone:
+		fmt.Printf("✅ Cleanup completed successfully\n")
+	case <-time.After(cleanupTimeout):
+		fmt.Printf("⚠️ Cleanup timed out after %v - forcing exit\n", cleanupTimeout)
 	}
 }
 
@@ -369,18 +387,27 @@ func (bot *LiveBot) syncExistingPosition() error {
 
 // tradingLoop runs the main trading logic
 func (bot *LiveBot) tradingLoop() {
-		// Calculate interval duration
+	// Calculate interval duration
 	intervalDuration := bot.getIntervalDuration()
 	bot.logger.Info("Trading interval: %s (%v)", bot.interval, intervalDuration)
 	
-	// Wait for next candle close
+	// Wait for next candle close - but make it interruptible
 	waitDuration := bot.getTimeUntilNextCandle()
 	bot.logger.Info("Waiting %.0f seconds for next %s candle close", waitDuration.Seconds(), bot.interval)
-	time.Sleep(waitDuration)
-
-	// Run initial check
-	bot.logger.Info("First candle closed - running initial check")
-	bot.checkAndTrade()
+	
+	// Use interruptible wait instead of blocking sleep
+	waitTimer := time.NewTimer(waitDuration)
+	defer waitTimer.Stop()
+	
+	select {
+	case <-waitTimer.C:
+		// Timer expired - continue to initial check
+		bot.logger.Info("First candle closed - running initial check")
+		bot.checkAndTrade()
+	case <-bot.stopChan:
+		bot.logger.Info("Stop signal received during initial wait - ending trading loop")
+		return
+	}
 
 	// Create ticker for regular checks
 	ticker := time.NewTicker(intervalDuration)
@@ -389,6 +416,11 @@ func (bot *LiveBot) tradingLoop() {
 	for {
 		select {
 		case <-ticker.C:
+			// Check for stop signal before processing
+			if bot.shouldStop() {
+				bot.logger.Info("Stop signal detected - ending trading loop")
+				return
+			}
 			bot.checkAndTrade()
 		case <-bot.stopChan:
 			bot.logger.Info("Stop signal received - ending trading loop")
@@ -415,7 +447,9 @@ func (bot *LiveBot) checkAndTrade() {
 		return
 	}
 
-	ctx := context.Background()
+	// Use context with timeout to prevent hanging on API calls
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// Refresh account balance
 	if err := bot.syncAccountBalance(); err != nil {

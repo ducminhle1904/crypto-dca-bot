@@ -78,13 +78,19 @@ func main() {
 		log.Fatalf("Failed to start bot: %v", err)
 	}
 
-	// Wait for shutdown signal
+	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	<-sigChan
-	fmt.Println("\n🛑 Shutdown signal received...")
+	// Wait for shutdown signal with immediate response
+	fmt.Println("📡 Bot is ready. Press Ctrl+C to stop...")
+	
+	select {
+	case sig := <-sigChan:
+		fmt.Printf("\n🛑 Shutdown signal (%v) received...\n", sig)
+	}
 
+	// Stop the bot gracefully
 	liveBot.Stop()
 	fmt.Println("✅ Bot stopped successfully")
 }

@@ -1,12 +1,14 @@
 {
   "strategy": {
     "symbol": "HYPEUSDT",
+    "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 1.5,
+    "max_multiplier": 3,
     "price_threshold": 0.01,
+    "price_threshold_multiplier": 1.4,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.02,
+    "tp_percent": 0.01,
     "use_tp_levels": true,
     "auto_tp_orders": true,
     "cancel_orphaned_orders": false,
@@ -18,18 +20,18 @@
     },
     "mfi": {
       "period": 10,
-      "oversold": 20,
+      "oversold": 30,
       "overbought": 85
     },
     "keltner_channels": {
-      "period": 20,
-      "multiplier": 2
+      "period": 25,
+      "multiplier": 2.2
     },
     "wavetrend": {
-      "n1": 12,
-      "n2": 32,
-      "overbought": 70,
-      "oversold": -80
+      "n1": 8,
+      "n2": 28,
+      "overbought": 50,
+      "oversold": -70
     }
   },
   "exchange": {
