@@ -1,0 +1,56 @@
+{
+  "strategy": {
+    "symbol": "BTCUSDT",
+    "data_file": "data\\bybit\\linear\\BTCUSDT\\5\\candles.csv",
+    "base_amount": 100,
+    "max_multiplier": 2,
+    "price_threshold": 0.01,
+    "price_threshold_multiplier": 1.05,
+    "interval": "5m",
+    "window_size": 100,
+    "tp_percent": 0.03,
+    "use_tp_levels": true,
+    "auto_tp_orders": true,
+    "cancel_orphaned_orders": false,
+    "cycle": true,
+    "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
+    "use_advanced_combo": true,
+    "hull_ma": {
+      "period": 10
+    },
+    "mfi": {
+      "period": 10,
+      "oversold": 30,
+      "overbought": 80
+    },
+    "keltner_channels": {
+      "period": 25,
+      "multiplier": 3
+    },
+    "wavetrend": {
+      "n1": 8,
+      "n2": 32,
+      "overbought": 80,
+      "oversold": -60
+    }
+  },
+  "exchange": {
+    "name": "bybit",
+    "bybit": {
+      "api_key": "${BYBIT_API_KEY}",
+      "api_secret": "${BYBIT_API_SECRET}",
+      "testnet": false,
+      "demo": true
+    }
+  },
+  "risk": {
+    "initial_balance": 500,
+    "commission": 0.0005,
+    "min_order_qty": 0.001
+  },
+  "notifications": {
+    "enabled": false,
+    "telegram_token": "${TELEGRAM_TOKEN}",
+    "telegram_chat": "${TELEGRAM_CHAT_ID}"
+  }
+}

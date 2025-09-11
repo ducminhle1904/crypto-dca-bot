@@ -125,7 +125,6 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		// Update last entry price, time, and increment DCA level
 		s.lastEntryPrice = currentPrice
 		s.lastTradeTime = currentCandle.Timestamp
-		s.dcaLevel++ // Increment for next threshold calculation
 		
 		return &TradeDecision{
 			Action:     ActionBuy,
@@ -149,11 +148,6 @@ func (s *EnhancedDCAStrategy) calculateCurrentThreshold() float64 {
 		return s.priceThreshold // No multiplier effect
 	}
 	
-	// Progressive threshold: baseThreshold * multiplier^dcaLevel
-	// Level 0: 1% × 1.1^0 = 1%
-	// Level 1: 1% × 1.1^1 = 1.1% 
-	// Level 2: 1% × 1.1^2 = 1.21%
-	// Level 3: 1% × 1.1^3 = 1.33%
 	threshold := s.priceThreshold
 	for i := 0; i < s.dcaLevel; i++ {
 		threshold *= s.priceThresholdMultiplier

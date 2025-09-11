@@ -130,6 +130,8 @@ func (bot *LiveBot) syncStrategyState() {
 	} else {
 		// No position - reset strategy state completely
 		bot.strategy.OnCycleComplete()
+		// Clear filled TP orders tracking for fresh cycle
+		bot.clearFilledTPOrders()
 	}
 }
 
@@ -1000,7 +1002,7 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
 	bot.logger.Info("🔄 Updating TP orders for new average price $%.4f", newAveragePrice)
 	
-	// First, collect order information and clear map while holding mutex
+	// First, collect order information and clear maps while holding mutex
 	bot.tpOrderMutex.Lock()
 	memoryOrderCount := len(bot.activeTPOrders)
 	
@@ -1009,6 +1011,12 @@ func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
 		bot.logger.Info("✅ No TP orders in memory to update")
 		return nil // No TP orders to update
 	}
+	
+	// Clear filled TP orders from previous cycles to prevent duplicates in display
+	for k := range bot.filledTPOrders {
+		delete(bot.filledTPOrders, k)
+	}
+	bot.logger.Info("🧹 Cleared old filled TP orders during TP update to prevent duplicates")
 	
 	ctx := context.Background()
 	
@@ -1188,20 +1196,8 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 			bot.dcaLevel = previousDCALevel + 1 // Subsequent trades: increment
 		}
 		
-		// Validation: ensure DCA level makes sense relative to position size
-		if bot.config.Strategy.BaseAmount > 0 {
-			expectedLevel := max(1, int(bot.currentPosition/bot.config.Strategy.BaseAmount))
-			if bot.dcaLevel != expectedLevel {
-				// For large discrepancies, use position-based calculation
-				diff := bot.dcaLevel - expectedLevel
-				if diff < 0 {
-					diff = -diff // abs
-				}
-				if diff > 1 {
-					bot.dcaLevel = expectedLevel
-				}
-			}
-		}
+		// Keep DCA level progression simple and predictable
+		// No position-based validation that can cause level jumping
 		
 		currentDCALevel := bot.dcaLevel
 		currentPosition := bot.currentPosition
@@ -1295,6 +1291,9 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		
 		// Sync strategy state after position closure (this will call OnCycleComplete)
 		bot.syncStrategyState()
+		
+		// Clear filled TP orders tracking since cycle is complete
+		bot.clearFilledTPOrders()
 		
 		// Reset hold log counter to ensure first HOLD decision after cycle completion is logged
 		bot.holdLogCounter = 0
@@ -1644,6 +1643,19 @@ func (bot *LiveBot) cancelAllTPOrders() error {
 	}
 	
 	return nil
+}
+
+// clearFilledTPOrders clears the filled TP orders tracking (called when cycle completes)
+func (bot *LiveBot) clearFilledTPOrders() {
+	bot.tpOrderMutex.Lock()
+	defer bot.tpOrderMutex.Unlock()
+	
+	// Clear all filled TP order tracking
+	for k := range bot.filledTPOrders {
+		delete(bot.filledTPOrders, k)
+	}
+	
+	bot.logger.Info("🧹 Cleared filled TP orders tracking for new cycle")
 }
 
 // cancelTPOrdersFromMemory is a fallback when exchange fetch fails
