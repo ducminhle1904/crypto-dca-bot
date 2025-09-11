@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 )
 
 // DCAValidator implements validation for DCA configurations
@@ -62,8 +63,16 @@ func (v *DCAValidator) validateDCAConfig(cfg *DCAConfig) error {
 		return err
 	}
 	
-	// Validate advanced combo indicator parameters
-	if cfg.UseAdvancedCombo {
+	// Validate advanced indicators if they are present in indicators list
+	hasAdvancedIndicators := false
+	for _, ind := range cfg.Indicators {
+		switch strings.ToLower(ind) {
+		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
+			hasAdvancedIndicators = true
+			break
+		}
+	}
+	if hasAdvancedIndicators {
 		if err := v.validateAdvancedIndicators(cfg); err != nil {
 			return err
 		}
@@ -129,6 +138,10 @@ func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
 func (v *DCAValidator) validateAdvancedIndicators(cfg *DCAConfig) error {
 	if cfg.HullMAPeriod < MinHullMAPeriod {
 		return fmt.Errorf("Hull MA period must be at least %d, got: %d", MinHullMAPeriod, cfg.HullMAPeriod)
+	}
+	
+	if cfg.SuperTrendPeriod < MinSuperTrendPeriod {
+		return fmt.Errorf("SuperTrend period must be at least %d, got: %d", MinSuperTrendPeriod, cfg.SuperTrendPeriod)
 	}
 	
 	if cfg.MFIPeriod < MinMFIPeriod {

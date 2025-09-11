@@ -41,7 +41,9 @@ type MainBacktestConfig struct {
 	EMAPeriod      int     `json:"ema_period"`
 	
 	// Advanced combo indicator parameters
-	HullMAPeriod   int     `json:"hull_ma_period"`
+	HullMAPeriod         int     `json:"hull_ma_period"`
+	SuperTrendPeriod     int     `json:"supertrend_period"`
+	SuperTrendMultiplier float64 `json:"supertrend_multiplier"`
 	MFIPeriod      int     `json:"mfi_period"`
 	MFIOversold    float64 `json:"mfi_oversold"`
 	MFIOverbought  float64 `json:"mfi_overbought"`
@@ -95,6 +97,10 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		// Only include advanced combo parameters
 		strategyConfig.HullMA = &HullMAConfig{
 			Period: cfg.HullMAPeriod,
+		}
+		strategyConfig.SuperTrend = &SuperTrendConfig{
+			Period:     cfg.SuperTrendPeriod,
+			Multiplier: cfg.SuperTrendMultiplier,
 		}
 		strategyConfig.MFI = &MFIConfig{
 			Period:     cfg.MFIPeriod,

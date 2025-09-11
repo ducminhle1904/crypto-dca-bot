@@ -21,7 +21,6 @@ type StrategyConfig struct {
 	UseTPLevels    bool               `json:"use_tp_levels"`
 	Cycle          bool               `json:"cycle"`
 	Indicators     []string           `json:"indicators"`
-	UseAdvancedCombo bool             `json:"use_advanced_combo"`
 	// Classic combo - use pointers so they can be omitted when not used
 	RSI            *RSIConfig         `json:"rsi,omitempty"`
 	MACD           *MACDConfig        `json:"macd,omitempty"`
@@ -29,6 +28,7 @@ type StrategyConfig struct {
 	EMA            *EMAConfig         `json:"ema,omitempty"`
 	// Advanced combo - use pointers so they can be omitted when not used
 	HullMA         *HullMAConfig      `json:"hull_ma,omitempty"`
+	SuperTrend     *SuperTrendConfig  `json:"supertrend,omitempty"`
 	MFI            *MFIConfig         `json:"mfi,omitempty"`
 	KeltnerChannels *KeltnerChannelsConfig `json:"keltner_channels,omitempty"`
 	WaveTrend      *WaveTrendConfig   `json:"wavetrend,omitempty"`
@@ -82,6 +82,11 @@ type NotificationsConfig struct {
 // Advanced combo indicator configs
 type HullMAConfig struct {
 	Period int `json:"period"`
+}
+
+type SuperTrendConfig struct {
+	Period     int     `json:"period"`
+	Multiplier float64 `json:"multiplier"`
 }
 
 type MFIConfig struct {

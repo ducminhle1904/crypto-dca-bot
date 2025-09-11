@@ -32,8 +32,6 @@ func (r *DefaultBacktestRunner) RunWithData(cfg *config.DCAConfig, data []types.
 		return nil, fmt.Errorf("no data provided")
 	}
 	
-	start := time.Now()
-	
 	// Log configuration summary
 	r.logBacktestConfig(cfg, data)
 	
@@ -58,8 +56,6 @@ func (r *DefaultBacktestRunner) RunWithData(cfg *config.DCAConfig, data []types.
 	
 	// Update all metrics
 	results.UpdateMetrics()
-	
-	log.Printf("⏱️ Backtest completed in: %s", time.Since(start).Truncate(time.Millisecond))
 	
 	return results, nil
 }
@@ -167,49 +163,52 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		include[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 
-	if cfg.UseAdvancedCombo {
-		// Advanced combo indicators
-		if include["hull_ma"] {
-			hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
-			dca.AddIndicator(hullMA)
-		}
-		if include["mfi"] {
-			mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
-			mfi.SetOversold(cfg.MFIOversold)
-			mfi.SetOverbought(cfg.MFIOverbought)
-			dca.AddIndicator(mfi)
-		}
-		if include["keltner"] {
-			keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
-			dca.AddIndicator(keltner)
-		}
-		if include["wavetrend"] {
-			wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
-			wavetrend.SetOverbought(cfg.WaveTrendOverbought)
-			wavetrend.SetOversold(cfg.WaveTrendOversold)
-			dca.AddIndicator(wavetrend)
-		}
-	} else {
-		// Classic combo indicators (with optimizations)
-		if include["rsi"] {
-			rsi := indicators.NewRSI(cfg.RSIPeriod)
-			rsi.SetOversold(cfg.RSIOversold)
-			rsi.SetOverbought(cfg.RSIOverbought)
-			dca.AddIndicator(rsi)
-		}
-		if include["macd"] {
-			macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
-			dca.AddIndicator(macd)
-		}
-		if include["bb"] {
-			// Use optimized Bollinger Bands for better performance
-			bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
-			dca.AddIndicator(bb)
-		}
-		if include["ema"] {
-			ema := indicators.NewEMA(cfg.EMAPeriod)
-			dca.AddIndicator(ema)
-		}
+	// Instantiate indicators based on what's actually in the indicators list
+	// Classic indicators
+	if include["rsi"] {
+		rsi := indicators.NewRSI(cfg.RSIPeriod)
+		rsi.SetOversold(cfg.RSIOversold)
+		rsi.SetOverbought(cfg.RSIOverbought)
+		dca.AddIndicator(rsi)
+	}
+	if include["macd"] {
+		macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		dca.AddIndicator(macd)
+	}
+	if include["bb"] || include["bollinger"] {
+		// Use optimized Bollinger Bands for better performance
+		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+		dca.AddIndicator(bb)
+	}
+	if include["ema"] {
+		ema := indicators.NewEMA(cfg.EMAPeriod)
+		dca.AddIndicator(ema)
+	}
+	
+	// Advanced indicators
+	if include["hullma"] || include["hull_ma"] {
+		hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
+		dca.AddIndicator(hullMA)
+	}
+	if include["supertrend"] || include["st"] {
+		supertrend := indicators.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		dca.AddIndicator(supertrend)
+	}
+	if include["mfi"] {
+		mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
+		mfi.SetOversold(cfg.MFIOversold)
+		mfi.SetOverbought(cfg.MFIOverbought)
+		dca.AddIndicator(mfi)
+	}
+	if include["keltner"] || include["kc"] {
+		keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		dca.AddIndicator(keltner)
+	}
+	if include["wavetrend"] || include["wt"] {
+		wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
+		wavetrend.SetOverbought(cfg.WaveTrendOverbought)
+		wavetrend.SetOversold(cfg.WaveTrendOversold)
+		dca.AddIndicator(wavetrend)
 	}
 
 	return dca, nil
@@ -217,23 +216,86 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 
 // logBacktestConfig logs the backtest configuration
 func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []types.OHLCV) {
-	// Combo information
-	comboType := "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
-	if cfg.UseAdvancedCombo {
-		comboType = "ADVANCED COMBO: Hull MA + MFI + Keltner + WaveTrend"
-	}
+	// Combo information - use actual indicators
+	comboType := r.getActualComboDescription(cfg.Indicators)
 	log.Printf("🎯 COMBO: %s", comboType)
-	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f",
-		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty)
-	
-	// DCA Strategy details
-	if cfg.Cycle {
-		log.Printf("🔄 DCA Strategy: TP=%.2f%%, PriceThreshold=%.2f%%", 
-			cfg.TPPercent*100, cfg.PriceThreshold*100)
-	} else {
-		log.Printf("🔄 DCA Strategy: Hold mode (no TP), PriceThreshold=%.2f%%", 
-			cfg.PriceThreshold*100)
+	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f, TP=%.2f%%, PriceThreshold=%.2f%%",
+		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty, cfg.TPPercent*100, cfg.PriceThreshold*100)
+}
+
+// getActualComboDescription returns a description based on the actual indicators used
+func (r *DefaultBacktestRunner) getActualComboDescription(indicators []string) string {
+	if len(indicators) == 0 {
+		return "No indicators"
 	}
+	
+	// Check if it matches known preset combos
+	if len(indicators) == 4 {
+		// Classic combo check
+		hasRSI := contains(indicators, "rsi")
+		hasMACD := contains(indicators, "macd") 
+		hasBB := contains(indicators, "bb")
+		hasEMA := contains(indicators, "ema")
+		
+		if hasRSI && hasMACD && hasBB && hasEMA {
+			return "RSI + MACD + Bollinger Bands + EMA"
+		}
+		
+		// Advanced combo check
+		hasSuperTrend := contains(indicators, "supertrend")
+		hasMFI := contains(indicators, "mfi")
+		hasKeltner := contains(indicators, "keltner")
+		hasWaveTrend := contains(indicators, "wavetrend")
+		
+		if hasSuperTrend && hasMFI && hasKeltner && hasWaveTrend {
+			return "SuperTrend + MFI + Keltner + WaveTrend"
+		}
+		
+		// Original advanced combo with Hull MA
+		hasHullMA := contains(indicators, "hullma") || contains(indicators, "hull_ma")
+		if hasHullMA && hasMFI && hasKeltner && hasWaveTrend {
+			return "Hull MA + MFI + Keltner + WaveTrend"
+		}
+	}
+	
+	// Custom combination - format the indicators nicely
+	var formattedIndicators []string
+	for _, ind := range indicators {
+		switch strings.ToLower(ind) {
+		case "rsi":
+			formattedIndicators = append(formattedIndicators, "RSI")
+		case "macd":
+			formattedIndicators = append(formattedIndicators, "MACD")
+		case "bb", "bollinger":
+			formattedIndicators = append(formattedIndicators, "Bollinger Bands")
+		case "ema":
+			formattedIndicators = append(formattedIndicators, "EMA")
+		case "hullma", "hull_ma":
+			formattedIndicators = append(formattedIndicators, "Hull MA")
+		case "supertrend", "st":
+			formattedIndicators = append(formattedIndicators, "SuperTrend")
+		case "mfi":
+			formattedIndicators = append(formattedIndicators, "MFI")
+		case "keltner", "kc":
+			formattedIndicators = append(formattedIndicators, "Keltner")
+		case "wavetrend", "wt":
+			formattedIndicators = append(formattedIndicators, "WaveTrend")
+		default:
+			formattedIndicators = append(formattedIndicators, strings.ToUpper(ind))
+		}
+	}
+	
+	return "CUSTOM COMBO: " + strings.Join(formattedIndicators, " + ")
+}
+
+// contains checks if a slice contains a string (case-insensitive)
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if strings.ToLower(s) == strings.ToLower(item) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateDataFile validates that the data file exists and is accessible
@@ -266,6 +328,5 @@ func validateDataFile(dataFile string) error {
 		return fmt.Errorf("cannot access data file '%s': %w", absPath, err)
 	}
 	
-	log.Printf("✅ Data file validated: %s", filepath.Base(dataFile))
 	return nil
 }

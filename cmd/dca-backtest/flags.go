@@ -21,10 +21,24 @@ type DCAFlags struct {
 	Commission       *float64
 	
 	// DCA strategy parameters
-	BaseAmount       *float64
-	MaxMultiplier    *float64
-	PriceThreshold   *float64
-	UseAdvancedCombo *bool
+	BaseAmount               *float64
+	MaxMultiplier            *float64
+	PriceThreshold           *float64
+	PriceThresholdMultiplier *float64
+	
+	// Indicator selection (flexible system)
+	Indicators       *string  // Comma-separated list of indicators
+	
+	// Individual indicator flags
+	UseRSI           *bool
+	UseMACD          *bool
+	UseBB            *bool
+	UseEMA           *bool
+	UseHullMA        *bool
+	UseSuperTrend    *bool
+	UseMFI           *bool
+	UseKeltner       *bool
+	UseWaveTrend     *bool
 	
 	// Analysis options
 	Optimize         *bool
@@ -65,10 +79,24 @@ func NewDCAFlags() *DCAFlags {
 		Commission:       flag.Float64("commission", DefaultCommission, "Trading commission (0.0005 = 0.05%)"),
 		
 		// DCA strategy parameters
-		BaseAmount:       flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount"),
-		MaxMultiplier:    flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier"),
-		PriceThreshold:   flag.Float64("price-threshold", DefaultPriceThreshold, "Price drop % for next DCA (0.02 = 2%)"),
-		UseAdvancedCombo: flag.Bool("advanced-combo", false, "Use advanced indicators (Hull MA, MFI, Keltner, WaveTrend)"),
+		BaseAmount:               flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount"),
+		MaxMultiplier:            flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier"),
+		PriceThreshold:           flag.Float64("price-threshold", DefaultPriceThreshold, "Price drop % for next DCA (0.02 = 2%)"),
+		PriceThresholdMultiplier: flag.Float64("price-threshold-multiplier", DefaultPriceThresholdMultiplier, "Progressive multiplier for DCA spacing (1.1 = 10% increase per level)"),
+		
+		// Indicator selection (flexible system)
+		Indicators:       flag.String("indicators", "", "Comma-separated list of indicators (e.g., rsi,macd,supertrend)"),
+		
+		// Individual indicator flags
+		UseRSI:           flag.Bool("rsi", false, "Include RSI indicator"),
+		UseMACD:          flag.Bool("macd", false, "Include MACD indicator"), 
+		UseBB:            flag.Bool("bb", false, "Include Bollinger Bands indicator"),
+		UseEMA:           flag.Bool("ema", false, "Include EMA indicator"),
+		UseHullMA:        flag.Bool("hullma", false, "Include Hull MA indicator"),
+		UseSuperTrend:    flag.Bool("supertrend", false, "Include SuperTrend indicator"),
+		UseMFI:           flag.Bool("mfi", false, "Include MFI indicator"),
+		UseKeltner:       flag.Bool("keltner", false, "Include Keltner Channels indicator"),
+		UseWaveTrend:     flag.Bool("wavetrend", false, "Include WaveTrend indicator"),
 		
 		// Analysis options
 		Optimize:         flag.Bool("optimize", false, "Run genetic algorithm optimization"),
@@ -265,20 +293,133 @@ func ResolveConfigPath(configFile string) string {
 	return configFile
 }
 
-// GetDCAStrategyDescription returns a description of the DCA strategy configuration
-func GetDCAStrategyDescription(useAdvanced bool, baseAmount, maxMultiplier, priceThreshold float64) string {
-	combo := "Classic (RSI + MACD + Bollinger Bands + EMA)"
-	if useAdvanced {
-		combo = "Advanced (Hull MA + MFI + Keltner Channels + WaveTrend)"
+
+// ResolveIndicators resolves which indicators to use from various input methods
+func ResolveIndicators(flags *DCAFlags) ([]string, error) {
+	var indicators []string
+	
+	// Priority 1: Individual indicator flags
+	if *flags.UseRSI {
+		indicators = append(indicators, "rsi")
+	}
+	if *flags.UseMACD {
+		indicators = append(indicators, "macd")
+	}
+	if *flags.UseBB {
+		indicators = append(indicators, "bb")
+	}
+	if *flags.UseEMA {
+		indicators = append(indicators, "ema")
+	}
+	if *flags.UseHullMA {
+		indicators = append(indicators, "hullma")
+	}
+	if *flags.UseSuperTrend {
+		indicators = append(indicators, "supertrend")
+	}
+	if *flags.UseMFI {
+		indicators = append(indicators, "mfi")
+	}
+	if *flags.UseKeltner {
+		indicators = append(indicators, "keltner")
+	}
+	if *flags.UseWaveTrend {
+		indicators = append(indicators, "wavetrend")
 	}
 	
-	return fmt.Sprintf(`
-DCA Strategy Configuration:
-• Base Amount: $%.2f per entry
-• Max Multiplier: %.2fx (maximum position size)
-• Price Threshold: %.2f%% (minimum drop for next entry)
-• Indicator Combo: %s
-• Take Profit: 5-level system (automatically optimized)
-• Cycle Mode: Enabled (reinvest profits)
-`, baseAmount, maxMultiplier, priceThreshold*100, combo)
+	// Priority 2: Indicators list flag
+	if *flags.Indicators != "" {
+		if len(indicators) > 0 {
+			return nil, fmt.Errorf("cannot use both individual indicator flags and -indicators list")
+		}
+		
+		listIndicators := strings.Split(*flags.Indicators, ",")
+		for _, ind := range listIndicators {
+			ind = strings.ToLower(strings.TrimSpace(ind))
+			if ind == "" {
+				continue
+			}
+			
+			// Validate indicator name
+			if !isValidIndicator(ind) {
+				return nil, fmt.Errorf("invalid indicator: %s", ind)
+			}
+			
+			indicators = append(indicators, ind)
+			
+			// No longer need to track combo type
+		}
+	}
+	
+	// No preset combos - indicators must be explicitly specified
+	
+	if len(indicators) == 0 {
+		return nil, fmt.Errorf("no indicators specified")
+	}
+	
+	return indicators, nil
+}
+
+// isValidIndicator checks if an indicator name is valid
+func isValidIndicator(indicator string) bool {
+	validIndicators := []string{
+		"rsi", "macd", "bb", "bollinger", "ema", "sma",
+		"hullma", "hull_ma", "supertrend", "st", "mfi", "keltner", "kc", "wavetrend", "wt",
+	}
+	
+	for _, valid := range validIndicators {
+		if indicator == valid {
+			return true
+		}
+	}
+	return false
+}
+
+
+// GetIndicatorDescription returns a human-readable description of the indicator selection
+func GetIndicatorDescription(indicators []string) string {
+	if len(indicators) == 0 {
+		return "No indicators"
+	}
+	
+	// Format indicators with proper names
+	upperIndicators := make([]string, len(indicators))
+	for i, ind := range indicators {
+		switch strings.ToLower(ind) {
+		case "rsi":
+			upperIndicators[i] = "RSI"
+		case "macd":
+			upperIndicators[i] = "MACD"
+		case "bb", "bollinger":
+			upperIndicators[i] = "BB"
+		case "ema":
+			upperIndicators[i] = "EMA"
+		case "sma":
+			upperIndicators[i] = "SMA"
+		case "hullma", "hull_ma":
+			upperIndicators[i] = "Hull MA"
+		case "supertrend", "st":
+			upperIndicators[i] = "SuperTrend"
+		case "mfi":
+			upperIndicators[i] = "MFI"
+		case "keltner", "kc":
+			upperIndicators[i] = "Keltner"
+		case "wavetrend", "wt":
+			upperIndicators[i] = "WaveTrend"
+		default:
+			upperIndicators[i] = strings.ToUpper(ind)
+		}
+	}
+	
+	return "(" + strings.Join(upperIndicators, " + ") + ")"
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if strings.ToLower(s) == strings.ToLower(item) {
+			return true
+		}
+	}
+	return false
 }

@@ -281,6 +281,12 @@ func (bot *LiveBot) initializeStrategy() error {
 				wavetrend.SetOverbought(bot.config.Strategy.WaveTrend.Overbought)
 				wavetrend.SetOversold(bot.config.Strategy.WaveTrend.Oversold)
 				bot.strategy.AddIndicator(wavetrend)
+			case "supertrend", "st":
+				supertrend := indicators.NewSuperTrendWithParams(
+					bot.config.Strategy.SuperTrend.Period,
+					bot.config.Strategy.SuperTrend.Multiplier,
+				)
+				bot.strategy.AddIndicator(supertrend)
 			default:
 			}
 		} else {
@@ -310,6 +316,12 @@ func (bot *LiveBot) initializeStrategy() error {
 			case "sma":
 				sma := indicators.NewSMA(bot.config.Strategy.EMA.Period)
 				bot.strategy.AddIndicator(sma)
+			case "supertrend", "st":
+				supertrend := indicators.NewSuperTrendWithParams(
+					bot.config.Strategy.SuperTrend.Period,
+					bot.config.Strategy.SuperTrend.Multiplier,
+				)
+				bot.strategy.AddIndicator(supertrend)
 			default:
 				bot.logger.Info("❌ Unknown classic indicator: '%s'", indName)
 			}

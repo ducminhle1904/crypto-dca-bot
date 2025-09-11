@@ -35,58 +35,17 @@ const (
 )
 
 func main() {
-	// Command line flags
-	var (
-		configFile       = flag.String("config", "", "Path to DCA configuration file")
-		dataFile         = flag.String("data", "", "Path to historical data file")
-		symbol           = flag.String("symbol", "BTCUSDT", "Trading symbol")
-		interval         = flag.String("interval", "1h", "Data interval (5m, 15m, 1h, 4h, 1d)")
-		exchange         = flag.String("exchange", DefaultExchange, "Exchange (bybit, binance)")
-		
-		// Account settings
-		initialBalance   = flag.Float64("balance", DefaultInitialBalance, "Initial balance")
-		commission       = flag.Float64("commission", DefaultCommission, "Trading commission (0.0005 = 0.05%)")
-		
-		// DCA strategy parameters
-		baseAmount       = flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount")
-		maxMultiplier    = flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier")
-		priceThreshold   = flag.Float64("price-threshold", DefaultPriceThreshold, "Price drop % for next DCA (0.02 = 2%)")
-		priceThresholdMultiplier = flag.Float64("price-threshold-multiplier", DefaultPriceThresholdMultiplier, "Progressive multiplier for DCA spacing (1.1 = 10% increase per level)")
-		useAdvancedCombo = flag.Bool("advanced-combo", false, "Use advanced indicators (Hull MA, MFI, Keltner, WaveTrend)")
-		
-		// Analysis options
-		optimize         = flag.Bool("optimize", false, "Run genetic algorithm optimization")
-		allIntervals     = flag.Bool("all-intervals", false, "Test all available intervals")
-		period           = flag.String("period", "", "Limit data to period (7d, 30d, 180d, 365d)")
-		
-		// Walk-forward validation
-		wfEnable         = flag.Bool("wf-enable", false, "Enable walk-forward validation")
-		wfSplitRatio     = flag.Float64("wf-split-ratio", 0.7, "Train/test split (0.7 = 70% train)")
-		wfRolling        = flag.Bool("wf-rolling", false, "Use rolling walk-forward")
-		wfTrainDays      = flag.Int("wf-train-days", 180, "Training window (days)")
-		wfTestDays       = flag.Int("wf-test-days", 60, "Test window (days)")
-		wfRollDays       = flag.Int("wf-roll-days", 30, "Roll step (days)")
-		
-		// Output options
-		dataRoot         = flag.String("data-root", DefaultDataRoot, "Data root directory")
-		consoleOnly      = flag.Bool("console-only", false, "Console output only (no files)")
-		windowSize       = flag.Int("window", DefaultWindowSize, "Analysis window size")
-		envFile          = flag.String("env", ".env", "Environment file path")
-		
-		// Help
-		showVersion      = flag.Bool("version", false, "Show version information")
-		showHelp         = flag.Bool("help", false, "Show detailed help")
-	)
-	
+	// Create and parse command line flags
+	flags := NewDCAFlags()
 	flag.Parse()
 	
 	// Version and help
-	if *showVersion {
+	if *flags.ShowVersion {
 		fmt.Printf("%s v%s\n", AppName, AppVersion)
 		return
 	}
 	
-	if *showHelp {
+	if *flags.ShowHelp {
 		printUsageHelp()
 		return
 	}
@@ -95,23 +54,23 @@ func main() {
 	printHeader()
 	
 	// Load environment
-	loadEnvironment(*envFile)
+	loadEnvironment(*flags.EnvFile)
 	
-	// Load configuration
-	cfg, err := loadDCAConfiguration(*configFile, *dataFile, *symbol, *interval, 
-		*initialBalance, *commission, *windowSize, *baseAmount, *maxMultiplier, 
-		*priceThreshold, *priceThresholdMultiplier, *useAdvancedCombo)
+	// Load configuration first to see if it has indicators
+	cfg, err := loadDCAConfiguration(*flags.ConfigFile, *flags.DataFile, *flags.Symbol, *flags.Interval, 
+		*flags.InitialBalance, *flags.Commission, *flags.WindowSize, *flags.BaseAmount, *flags.MaxMultiplier, 
+		*flags.PriceThreshold, *flags.PriceThresholdMultiplier, flags)
 	if err != nil {
 		log.Fatalf("❌ Configuration error: %v", err)
 	}
 	
 	// Parse period filter
 	var selectedPeriod time.Duration
-	if *period != "" {
-		if d, ok := datamanager.ParseTrailingPeriod(*period); ok {
+	if *flags.Period != "" {
+		if d, ok := datamanager.ParseTrailingPeriod(*flags.Period); ok {
 			selectedPeriod = d
 		} else {
-			log.Fatalf("❌ Invalid period format: %s (use 7d, 30d, 180d, 365d)", *period)
+			log.Fatalf("❌ Invalid period format: %s (use 7d, 30d, 180d, 365d)", *flags.Period)
 		}
 	}
 	
@@ -119,14 +78,14 @@ func main() {
 	orch := orchestrator.NewOrchestrator()
 	
 	// Execute based on options
-	if *allIntervals {
-		runMultiIntervalAnalysis(orch, cfg, *dataRoot, *exchange, *optimize, selectedPeriod, 
-			*wfEnable, *wfSplitRatio, *wfRolling, *wfTrainDays, *wfTestDays, *wfRollDays, *consoleOnly)
-	} else if *optimize {
-		runOptimization(orch, cfg, selectedPeriod, *wfEnable, *wfSplitRatio, *wfRolling, 
-			*wfTrainDays, *wfTestDays, *wfRollDays, *consoleOnly)
+	if *flags.AllIntervals {
+		runMultiIntervalAnalysis(orch, cfg, *flags.DataRoot, *flags.Exchange, *flags.Optimize, selectedPeriod, 
+			*flags.WFEnable, *flags.WFSplitRatio, *flags.WFRolling, *flags.WFTrainDays, *flags.WFTestDays, *flags.WFRollDays, *flags.ConsoleOnly)
+	} else if *flags.Optimize {
+		runOptimization(orch, cfg, selectedPeriod, *flags.WFEnable, *flags.WFSplitRatio, *flags.WFRolling, 
+			*flags.WFTrainDays, *flags.WFTestDays, *flags.WFRollDays, *flags.ConsoleOnly)
 	} else {
-		runSingleBacktest(orch, cfg, selectedPeriod, *consoleOnly)
+		runSingleBacktest(orch, cfg, selectedPeriod, *flags.ConsoleOnly)
 	}
 }
 
@@ -157,11 +116,15 @@ EXAMPLES:
   # Walk-forward validation
   dca-backtest -symbol BTCUSDT -optimize -wf-enable
   
-  # Advanced combo with custom parameters
-  dca-backtest -symbol BTCUSDT -advanced-combo -base-amount 50 -max-multiplier 2.5
+  # Custom indicators with parameters  
+  dca-backtest -symbol BTCUSDT -rsi -supertrend -mfi -base-amount 50 -max-multiplier 2.5
   
   # Progressive DCA spacing (1%->1.1%->1.21%->1.33%...)
   dca-backtest -symbol BTCUSDT -price-threshold 0.01 -price-threshold-multiplier 1.1
+  
+  # Custom indicator combinations
+  dca-backtest -symbol BTCUSDT -supertrend -mfi
+  dca-backtest -symbol BTCUSDT -indicators "rsi,supertrend,ema"
 
 CONFIGURATION:
   -config FILE          Load configuration from JSON file
@@ -178,7 +141,20 @@ DCA STRATEGY:
   -max-multiplier MULT          Maximum position multiplier (default: 3.0)
   -price-threshold PCT          Price drop %% for next DCA (default: 0.02)
   -price-threshold-multiplier X Progressive multiplier for DCA spacing (default: 1.0)
-  -advanced-combo               Use advanced indicators instead of classic
+
+INDICATOR SELECTION (flexible):
+  -indicators LIST              Comma-separated indicators (e.g., rsi,macd,supertrend)
+  
+INDIVIDUAL INDICATORS:
+  -rsi                          Include RSI indicator
+  -macd                         Include MACD indicator  
+  -bb                           Include Bollinger Bands indicator
+  -ema                          Include EMA indicator
+  -hullma                       Include Hull MA indicator
+  -supertrend                   Include SuperTrend indicator
+  -mfi                          Include MFI indicator
+  -keltner                      Include Keltner Channels indicator
+  -wavetrend                    Include WaveTrend indicator
 
 ANALYSIS:
   -optimize             Run genetic algorithm optimization
@@ -215,7 +191,7 @@ func loadEnvironment(envFile string) {
 
 func loadDCAConfiguration(configFile, dataFile, symbol, interval string, 
 	initialBalance, commission float64, windowSize int, baseAmount, maxMultiplier, 
-	priceThreshold, priceThresholdMultiplier float64, useAdvancedCombo bool) (*config.DCAConfig, error) {
+	priceThreshold, priceThresholdMultiplier float64, flags *DCAFlags) (*config.DCAConfig, error) {
 	
 	// Resolve config file path
 	if configFile != "" && !strings.ContainsAny(configFile, "/\\") {
@@ -229,7 +205,6 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		"max_multiplier":              maxMultiplier,
 		"price_threshold":             priceThreshold,
 		"price_threshold_multiplier":  priceThresholdMultiplier,
-		"use_advanced_combo":          useAdvancedCombo,
 	}
 	
 	cfgInterface, err := configManager.LoadConfig(configFile, dataFile, symbol, 
@@ -249,27 +224,40 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		cfg.TPPercent = DefaultTPPercent
 	}
 	
-	// Set default indicators based on combo selection
-	if len(cfg.Indicators) == 0 {
-		if cfg.UseAdvancedCombo {
-			cfg.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
+	// Priority: Config file indicators > Command line indicators > ERROR (no defaults)
+	if configFile != "" && len(cfg.Indicators) > 0 {
+		// Config file has indicators - use them (highest priority)
+		log.Printf("📋 Using indicators from config file: %s", strings.Join(cfg.Indicators, ", "))
+	} else {
+		// No config file indicators - check command line
+		indicators, err := ResolveIndicators(flags)
+		if err != nil {
+			return nil, fmt.Errorf("indicator configuration error: %w", err)
+		}
+		
+		if len(indicators) > 0 {
+			// Use command line specified indicators
+			cfg.Indicators = indicators
+			log.Printf("📋 Using indicators from command line: %s", strings.Join(indicators, ", "))
 		} else {
-			cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
+			// No indicators specified - require explicit specification
+			return nil, fmt.Errorf("no indicators specified. Please use one of:\n" +
+				"  • Individual flags: -rsi -macd -bb -ema\n" +
+				"  • Indicator list: -indicators \"rsi,macd,bb,ema\"\n" +
+				"  • Config file with indicators specified\n" +
+				"\nAvailable indicators: rsi, macd, bb, ema, hullma, supertrend, mfi, keltner, wavetrend")
 		}
 	}
 	
 	// Preserve interval from config file, or use command line value if no config file
 	effectiveInterval := interval
-	intervalSource := "command line"
 	if cfg.Interval != "" {
 		effectiveInterval = cfg.Interval
-		intervalSource = "config file"
 	} else {
 		cfg.Interval = interval
 	}
 	
 	// Resolve data file if not set and not scanning all intervals
-	dataFileAutoDetected := false
 	if strings.TrimSpace(cfg.DataFile) == "" {
 		dataFile := datamanager.FindDataFile("data", "bybit", strings.ToUpper(cfg.Symbol), effectiveInterval)
 		if dataFile == "" {
@@ -280,28 +268,18 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 				cfg.Symbol, effectiveInterval, strings.ToUpper(cfg.Symbol), effectiveInterval)
 		}
 		cfg.DataFile = dataFile
-		dataFileAutoDetected = true
-		log.Printf("📁 Auto-detected data file: %s", filepath.Base(dataFile))
 	}
 	
 	// Log configuration summary with sources
-	printConfigSummary(cfg, intervalSource, dataFileAutoDetected)
+	printConfigSummary(cfg)
 	
 	return cfg, nil
 }
 
-func printConfigSummary(cfg *config.DCAConfig, intervalSource string, dataFileAutoDetected bool) {
+func printConfigSummary(cfg *config.DCAConfig) {
 	fmt.Printf("📊 DCA Strategy Configuration\n")
 	fmt.Printf("   Symbol: %s\n", cfg.Symbol)
-	fmt.Printf("   Interval: %s (from %s)\n", cfg.Interval, intervalSource)
-	
-	// Data source info
-	if dataFileAutoDetected {
-		fmt.Printf("   Data: %s (auto-detected)\n", filepath.Base(cfg.DataFile))
-	} else {
-		fmt.Printf("   Data: %s\n", filepath.Base(cfg.DataFile))
-	}
-	
+	fmt.Printf("   Interval: %s\n", cfg.Interval)
 	fmt.Printf("   Balance: $%.2f\n", cfg.InitialBalance)
 	fmt.Printf("   Base Amount: $%.2f\n", cfg.BaseAmount)
 	fmt.Printf("   Max Multiplier: %.2fx\n", cfg.MaxMultiplier)
@@ -323,12 +301,46 @@ func printConfigSummary(cfg *config.DCAConfig, intervalSource string, dataFileAu
 	
 	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", cfg.TPPercent*100)
 	
-	comboName := "Classic (RSI, MACD, BB, EMA)"
-	if cfg.UseAdvancedCombo {
-		comboName = "Advanced (Hull MA, MFI, Keltner, WaveTrend)"
-	}
-	fmt.Printf("   Indicators: %s\n", comboName)
+	indicatorDescription := GetIndicatorDescription(cfg.Indicators)
+	fmt.Printf("   Indicators: %s\n", indicatorDescription)
+	
+	// Print detailed indicator settings
+	printIndicatorSettings(cfg)
 	fmt.Printf("\n")
+}
+
+func printIndicatorSettings(cfg *config.DCAConfig) {
+	fmt.Printf("   📈 Indicator Settings:\n")
+	
+	for _, indicator := range cfg.Indicators {
+		switch strings.ToLower(indicator) {
+		case "rsi":
+			fmt.Printf("      • RSI: period=%d, oversold=%.0f, overbought=%.0f\n", 
+				cfg.RSIPeriod, cfg.RSIOversold, cfg.RSIOverbought)
+		case "macd":
+			fmt.Printf("      • MACD: fast=%d, slow=%d, signal=%d\n", 
+				cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		case "bb", "bollinger":
+			fmt.Printf("      • Bollinger Bands: period=%d, stddev=%.1f\n", 
+				cfg.BBPeriod, cfg.BBStdDev)
+		case "ema":
+			fmt.Printf("      • EMA: period=%d\n", cfg.EMAPeriod)
+		case "hullma", "hull_ma":
+			fmt.Printf("      • Hull MA: period=%d\n", cfg.HullMAPeriod)
+		case "supertrend", "st":
+			fmt.Printf("      • SuperTrend: period=%d, multiplier=%.1f\n", 
+				cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		case "mfi":
+			fmt.Printf("      • MFI: period=%d, oversold=%.0f, overbought=%.0f\n", 
+				cfg.MFIPeriod, cfg.MFIOversold, cfg.MFIOverbought)
+		case "keltner", "kc":
+			fmt.Printf("      • Keltner: period=%d, multiplier=%.1f\n", 
+				cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		case "wavetrend", "wt":
+			fmt.Printf("      • WaveTrend: n1=%d, n2=%d, overbought=%.0f, oversold=%.0f\n", 
+				cfg.WaveTrendN1, cfg.WaveTrendN2, cfg.WaveTrendOverbought, cfg.WaveTrendOversold)
+		}
+	}
 }
 
 func runSingleBacktest(orch orchestrator.Orchestrator, cfg *config.DCAConfig, 
@@ -418,7 +430,7 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 	fmt.Printf("\n📈 INTERVAL COMPARISON - %s\n", results.Symbol)
 	fmt.Printf("%s\n", strings.Repeat("=", 90))
 	fmt.Printf("%-8s | %7s | %6s | %5s | %7s | %5s | %8s | %6s | %s\n",
-		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Mult", "Combo")
+		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Mult", "Indicators")
 	fmt.Printf("%s\n", strings.Repeat("-", 90))
 	
 	for _, r := range results.Results {
@@ -428,10 +440,7 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 		}
 		
 		c := r.OptimizedCfg
-		comboInfo := "Classic"
-		if c.UseAdvancedCombo {
-			comboInfo = "Advanced"
-		}
+		comboInfo := GetIndicatorDescription(c.Indicators)
 		
 		// Format multiplier display
 		multDisplay := "1.00x"
@@ -475,7 +484,7 @@ func printOptimizationResults(bestConfig *config.DCAConfig, bestResults *backtes
 	fmt.Printf("\n🎯 OPTIMIZATION RESULTS\n")
 	fmt.Printf("%s\n", strings.Repeat("=", 50))
 	fmt.Printf("Best Return: %.2f%%\n", bestResults.TotalReturn*100)
-	fmt.Printf("Combo: %s\n", getComboName(bestConfig.UseAdvancedCombo))
+	fmt.Printf("Indicators: %s\n", GetIndicatorDescription(bestConfig.Indicators))
 	fmt.Printf("Base Amount: $%.2f\n", bestConfig.BaseAmount)
 	fmt.Printf("Max Multiplier: %.2fx\n", bestConfig.MaxMultiplier)
 	fmt.Printf("Price Threshold: %.2f%%", bestConfig.PriceThreshold*100)
@@ -537,7 +546,6 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		MaxMultiplier:       cfg.MaxMultiplier,
 		PriceThreshold:      cfg.PriceThreshold,
 		PriceThresholdMultiplier: cfg.PriceThresholdMultiplier,
-		UseAdvancedCombo:    cfg.UseAdvancedCombo,
 		RSIPeriod:           cfg.RSIPeriod,
 		RSIOversold:         cfg.RSIOversold,
 		RSIOverbought:       cfg.RSIOverbought,
@@ -547,7 +555,8 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		BBPeriod:            cfg.BBPeriod,
 		BBStdDev:            cfg.BBStdDev,
 		EMAPeriod:           cfg.EMAPeriod,
-		HullMAPeriod:        cfg.HullMAPeriod,
+		SuperTrendPeriod:     cfg.SuperTrendPeriod,
+		SuperTrendMultiplier: cfg.SuperTrendMultiplier,
 		MFIPeriod:           cfg.MFIPeriod,
 		MFIOversold:         cfg.MFIOversold,
 		MFIOverbought:       cfg.MFIOverbought,

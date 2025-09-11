@@ -67,6 +67,9 @@ type StrategyConfig struct {
 	MFI         IndicatorMFIConfig         `json:"mfi"`
 	Keltner     IndicatorKeltnerConfig     `json:"keltner_channels"`
 	WaveTrend   IndicatorWaveTrendConfig   `json:"wavetrend"`
+	
+	// Additional trend indicators
+	SuperTrend  IndicatorSuperTrendConfig  `json:"supertrend"`
 }
 
 
@@ -119,6 +122,12 @@ type IndicatorWaveTrendConfig struct {
 	N2         int     `json:"n2"`          // Second EMA length for average calculation
 	Oversold   float64 `json:"oversold"`    // Oversold threshold
 	Overbought float64 `json:"overbought"`  // Overbought threshold
+}
+
+// IndicatorSuperTrendConfig holds SuperTrend configuration
+type IndicatorSuperTrendConfig struct {
+	Period     int     `json:"period"`     // ATR period for SuperTrend calculation
+	Multiplier float64 `json:"multiplier"` // ATR multiplier for band calculation
 }
 
 // RiskConfig holds risk management configuration
@@ -274,6 +283,14 @@ func (c *LiveBotConfig) setDefaults() error {
 	}
 	if c.Strategy.WaveTrend.Overbought == 0 {
 		c.Strategy.WaveTrend.Overbought = 60
+	}
+
+	// SuperTrend defaults
+	if c.Strategy.SuperTrend.Period == 0 {
+		c.Strategy.SuperTrend.Period = 14
+	}
+	if c.Strategy.SuperTrend.Multiplier == 0 {
+		c.Strategy.SuperTrend.Multiplier = 2.5
 	}
 
 	// Risk defaults

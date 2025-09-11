@@ -26,7 +26,9 @@ const (
 	DefaultEMAPeriod      = 50
 	
 	// Advanced combo indicator parameters
-	DefaultHullMAPeriod   = 20
+	DefaultHullMAPeriod         = 20
+	DefaultSuperTrendPeriod     = 14
+	DefaultSuperTrendMultiplier = 2.5
 	DefaultMFIPeriod      = 14
 	DefaultMFIOversold    = 20
 	DefaultMFIOverbought  = 80
@@ -46,6 +48,7 @@ const (
 	
 	// Advanced combo validation constants
 	MinHullMAPeriod        = 2     // Minimum Hull MA period
+	MinSuperTrendPeriod    = 2     // Minimum SuperTrend period
 	MinMFIPeriod           = 2     // Minimum MFI period
 	MinKeltnerPeriod       = 2     // Minimum Keltner period
 	MinWaveTrendPeriod     = 2     // Minimum WaveTrend period
@@ -66,8 +69,7 @@ type DCAConfig struct {
 	PriceThreshold float64 `json:"price_threshold"`
 	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
 	
-	// Combo selection  
-	UseAdvancedCombo bool  `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
+	// No longer used - indicators are specified explicitly via Indicators field
 	
 	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
@@ -84,7 +86,9 @@ type DCAConfig struct {
 	EMAPeriod      int     `json:"ema_period"`
 	
 	// Advanced combo indicator parameters
-	HullMAPeriod   int     `json:"hull_ma_period"`
+	HullMAPeriod         int     `json:"hull_ma_period"`
+	SuperTrendPeriod     int     `json:"supertrend_period"`
+	SuperTrendMultiplier float64 `json:"supertrend_multiplier"`
 	MFIPeriod      int     `json:"mfi_period"`
 	MFIOversold    float64 `json:"mfi_oversold"`
 	MFIOverbought  float64 `json:"mfi_overbought"`
@@ -157,9 +161,6 @@ func (c *DCAConfig) GetTPPercent() float64 {
 	return c.TPPercent
 }
 
-func (c *DCAConfig) GetUseAdvancedCombo() bool {
-	return c.UseAdvancedCombo
-}
 
 // Mutation methods for optimization
 func (c *DCAConfig) SetMaxMultiplier(val float64) {
@@ -180,6 +181,14 @@ func (c *DCAConfig) SetPriceThresholdMultiplier(val float64) {
 
 func (c *DCAConfig) SetHullMAPeriod(val int) {
 	c.HullMAPeriod = val
+}
+
+func (c *DCAConfig) SetSuperTrendPeriod(val int) {
+	c.SuperTrendPeriod = val
+}
+
+func (c *DCAConfig) SetSuperTrendMultiplier(val float64) {
+	c.SuperTrendMultiplier = val
 }
 
 func (c *DCAConfig) SetMFIPeriod(val int) {
@@ -260,7 +269,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		MaxMultiplier:  DefaultMaxMultiplier,
 		PriceThreshold: DefaultPriceThreshold,
 		PriceThresholdMultiplier: DefaultPriceThresholdMultiplier,
-		UseAdvancedCombo: false,
 		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
@@ -272,7 +280,9 @@ func NewDefaultDCAConfig() *DCAConfig {
 		BBStdDev:       DefaultBBStdDev,
 		EMAPeriod:      DefaultEMAPeriod,
 		// Advanced combo defaults
-		HullMAPeriod:   DefaultHullMAPeriod,
+		HullMAPeriod:         DefaultHullMAPeriod,
+		SuperTrendPeriod:     DefaultSuperTrendPeriod,
+		SuperTrendMultiplier: DefaultSuperTrendMultiplier,
 		MFIPeriod:      DefaultMFIPeriod,
 		MFIOversold:    DefaultMFIOversold,
 		MFIOverbought:  DefaultMFIOverbought,

@@ -107,11 +107,3 @@ func containsIndicator(indicators []string, name string) bool {
 	}
 	return false
 }
-
-// getComboTypeName returns a human-readable name for the combo type
-func getComboTypeName(useAdvancedCombo bool) string {
-	if useAdvancedCombo {
-		return "ADVANCED COMBO: Hull MA + MFI + Keltner + WaveTrend"
-	}
-	return "CLASSIC COMBO: RSI + MACD + Bollinger Bands + EMA"
-}

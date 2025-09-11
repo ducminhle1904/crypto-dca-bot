@@ -14,7 +14,6 @@
     "cancel_orphaned_orders": false,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
-    "use_advanced_combo": true,
     "hull_ma": {
       "period": 15
     },
