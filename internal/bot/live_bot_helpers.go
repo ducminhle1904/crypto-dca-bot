@@ -18,25 +18,19 @@ import (
 
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
-	log.Printf("🔒 [SYNC] Acquiring position mutex...")
 	bot.positionMutex.Lock()
 	defer bot.positionMutex.Unlock()
 	
-	log.Printf("📡 [SYNC] Fetching positions from exchange...")
 	ctx := context.Background()
 	
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
 	if err != nil {
-		log.Printf("❌ [SYNC] Failed to get positions: %v", err)
 		return fmt.Errorf("failed to get current positions: %w", err)
 	}
-	log.Printf("✅ [SYNC] Received %d positions from exchange", len(positions))
 	
 	// Look for our symbol position
-	log.Printf("🔍 [SYNC] Searching for %s Buy position...", bot.symbol)
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			log.Printf("📊 [SYNC] Found %s position - parsing data...", bot.symbol)
 			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
@@ -47,7 +41,7 @@ func (bot *LiveBot) syncPositionData() error {
 				log.Printf("⚠️ Failed to parse average price '%s': %v", pos.AvgPrice, err)
 				continue
 			}
-			positionSize, err := strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
+			_, err = strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
 			if err != nil {
 				log.Printf("⚠️ Failed to parse position size '%s': %v", pos.Size, err)
 				continue
@@ -65,23 +59,19 @@ func (bot *LiveBot) syncPositionData() error {
 				bot.averagePrice = avgPrice
 				bot.totalInvested = positionValue
 				
-				// Only estimate DCA level if we don't have it tracked properly
-				// This should ONLY happen during bot startup recovery, not during active trading
+				// Only estimate DCA level during bot startup when dcaLevel is 0
+				// NEVER override DCA level during active trading to maintain proper progression
 				if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
 					// Add zero-value check to prevent division by zero
 					estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
 					bot.dcaLevel = estimatedLevel
-					log.Printf("🔄 Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
+					log.Printf("🔄 Startup: Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
 						bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
 				}
+				// During active trading, preserve the tracked DCA level progression
 				
-				log.Printf("📊 Position synced - Size: %.6f, Value: $%.2f, Entry: $%.2f, PnL: %s", 
-					positionSize, positionValue, avgPrice, pos.UnrealisedPnl)
-				
-				// Note: TP order updates are now handled exclusively in syncAfterTrade to avoid conflicts
-				// Price change already logged above if it occurred
-				
-				return nil
+		// Position synced successfully
+		return nil
 			}
 		}
 	}
@@ -100,24 +90,18 @@ func (bot *LiveBot) syncPositionData() error {
 	
 	// Release mutex before calling syncStrategyState to avoid deadlock
 	if needsStrategySync {
-		log.Printf("🔄 [SYNC] Position reset detected - syncing strategy state...")
 		// Note: We're about to return, so defer unlock will happen first
 		// Need to manually unlock and then sync
 		bot.positionMutex.Unlock()
 		bot.syncStrategyState()
 		// Re-acquire lock for the defer statement (will be unlocked again immediately)
 		bot.positionMutex.Lock()
-		log.Printf("✅ [SYNC] Strategy state sync completed")
 	}
-	
-	log.Printf("✅ [SYNC] Position sync completed successfully")
 	return nil
 }
 
 // closeOpenPositions closes all open positions using real position data
 func (bot *LiveBot) closeOpenPositions() error {
-	bot.logger.Info("🔍 Checking for open positions to close...")
-	
 	ctx := context.Background()
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
 	if err != nil {

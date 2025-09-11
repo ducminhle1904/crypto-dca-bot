@@ -67,30 +67,40 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	}
 
 	// Efficiently count signals using batch results
-	buySignals, sellSignals, buyStrength, _ := s.indicatorManager.CountActiveSignals(results)
+	buySignals, sellSignals, _, _ := s.indicatorManager.CountActiveSignals(results)
 	
 	// Track failed indicators for debugging
 	failedCount := 0
-	for _, result := range results {
+	workingCount := 0
+	failedIndicators := []string{}
+	workingIndicators := []string{}
+	
+	for name, result := range results {
 		if result.Error != nil {
 			failedCount++
+			failedIndicators = append(failedIndicators, fmt.Sprintf("%s: %v", name, result.Error))
+		} else {
+			workingCount++
+			workingIndicators = append(workingIndicators, name)
 		}
 	}
+
 	
-	// Calculate active signals (exclude failed indicators)
-	totalIndicators := len(results) - failedCount
+	// Get total configured indicators (always base calculations on this)
+	totalConfiguredIndicators := s.GetIndicatorCount()
+	workingIndicatorsCount := len(results) - failedCount
 	activeSignals := buySignals + sellSignals
 	
-	// If no indicators are giving active signals, hold
-	if activeSignals == 0 || totalIndicators == 0 {
+	// If no indicators are working, hold
+	if workingIndicatorsCount == 0 || totalConfiguredIndicators == 0 {
 		return &TradeDecision{
 			Action: ActionHold, 
-			Reason: fmt.Sprintf("No active signals from %d indicators", totalIndicators),
+			Reason: fmt.Sprintf("No working indicators (%d failed out of %d total)", failedCount, totalConfiguredIndicators),
 		}, nil
 	}
 	
-	// Calculate confidence based on active signals only
-	confidence := float64(buySignals) / float64(activeSignals)
+	// Calculate confidence based on ALL configured indicators (not just active signals)
+	confidence := float64(buySignals) / float64(totalConfiguredIndicators)
 
 	if confidence >= s.minConfidence {
 		// Apply price threshold check for DCA entries
@@ -107,11 +117,8 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			}
 		}
 
-		// Calculate net strength for buy decision
-		netStrength := 0.0
-		if buySignals > 0 {
-			netStrength = buyStrength / float64(buySignals)
-		}
+		// Calculate net strength based on buy signals across ALL indicators  
+		netStrength := float64(buySignals) / float64(totalConfiguredIndicators)
 		
 		amount := s.calculatePositionSize(netStrength, confidence)
 		
@@ -125,14 +132,13 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			Amount:     amount,
 			Confidence: confidence,
 			Strength:   netStrength,
-			Reason:     fmt.Sprintf("Buy consensus: %d/%d signals (%.1f%% confidence)", 
-						buySignals, activeSignals, confidence*100),
+			Reason:     fmt.Sprintf("Buy consensus: %d/%d active", buySignals, activeSignals),
 		}, nil
 	}
 
 	return &TradeDecision{
 		Action: ActionHold,
-		Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d signals (%.1f%% < %.1f%%)", 
+		Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d active (%.1f%% < %.1f%%)", 
 				buySignals, activeSignals, confidence*100, s.minConfidence*100),
 	}, nil
 }

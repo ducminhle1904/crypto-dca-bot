@@ -74,31 +74,24 @@ func (wt *WaveTrend) initialCalculation(data []types.OHLCV) (float64, error) {
 		hlc3 := (candle.High + candle.Low + candle.Close) / 3.0
 		
 		// Update ESA (Exponential Simple Average of Typical Price)
-		esaData := []types.OHLCV{{Close: hlc3}}
-		esa, err := wt.esaEMA.Calculate(esaData)
-		if err != nil {
-			continue // Skip if not enough data yet
-		}
+		esa := wt.esaEMA.UpdateSingle(hlc3)
 		
 		// Calculate absolute difference and update D
 		absDiff := math.Abs(hlc3 - esa)
-		dData := []types.OHLCV{{Close: absDiff}}
-		d, err := wt.dEMA.Calculate(dData)
-		if err != nil {
-			continue // Skip if not enough data yet
-		}
+		d := wt.dEMA.UpdateSingle(absDiff)
 		
-		// Calculate CI (Channel Index)
+		// Calculate CI (Channel Index)  
 		var ci float64
 		if d != 0 {
 			ci = (hlc3 - esa) / (0.015 * d)
 		}
 		
 		// Update WT1 (WaveTrend = EMA of CI)
-		wt1Data := []types.OHLCV{{Close: ci}}
-		wt1, err := wt.wt1EMA.Calculate(wt1Data)
-		if err != nil {
-			continue // Skip if not enough data yet
+		wt1 := wt.wt1EMA.UpdateSingle(ci)
+		
+		// Only use results after enough data points for proper EMA calculation
+		if i < wt.n1 {
+			continue // Skip early values where EMAs aren't stable yet
 		}
 		
 		// WT1 = EMA(CI, n2)
@@ -138,19 +131,11 @@ func (wt *WaveTrend) incrementalCalculation(data []types.OHLCV) (float64, error)
 	hlc3 := (latest.High + latest.Low + latest.Close) / 3.0
 
 	// Update ESA (Exponential Simple Average of Typical Price)
-	esaData := []types.OHLCV{{Close: hlc3}}
-	esa, err := wt.esaEMA.Calculate(esaData)
-	if err != nil {
-		return wt.lastWT1, err
-	}
+	esa := wt.esaEMA.UpdateSingle(hlc3)
 
 	// Calculate absolute difference and update D
 	absDiff := math.Abs(hlc3 - esa)
-	dData := []types.OHLCV{{Close: absDiff}}
-	d, err := wt.dEMA.Calculate(dData)
-	if err != nil {
-		return wt.lastWT1, err
-	}
+	d := wt.dEMA.UpdateSingle(absDiff)
 
 	// Calculate CI (Channel Index)
 	var ci float64
@@ -159,11 +144,7 @@ func (wt *WaveTrend) incrementalCalculation(data []types.OHLCV) (float64, error)
 	}
 
 	// Update WT1 (WaveTrend = EMA of CI)
-	wt1Data := []types.OHLCV{{Close: ci}}
-	wt1, err := wt.wt1EMA.Calculate(wt1Data)
-	if err != nil {
-		return wt.lastWT1, err
-	}
+	wt1 := wt.wt1EMA.UpdateSingle(ci)
 
 	// WT1 = EMA(CI, n2)
 	wt.lastWT1 = wt1

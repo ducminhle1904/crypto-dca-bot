@@ -69,6 +69,25 @@ func (e *EMA) incrementalCalculation(data []types.OHLCV) (float64, error) {
 	return e.lastValue, nil
 }
 
+// UpdateSingle updates the EMA with a single data point (for incremental indicators)
+func (e *EMA) UpdateSingle(value float64) float64 {
+	if !e.initialized {
+		// Initialize with first value as starting point
+		e.lastValue = value
+		e.initialized = true
+	} else {
+		// Apply EMA formula: EMA = (Value * Alpha) + (Previous EMA * (1 - Alpha))
+		e.lastValue = (value * e.alpha) + (e.lastValue * (1 - e.alpha))
+	}
+	
+	return e.lastValue
+}
+
+// IsInitialized returns whether the EMA has been initialized
+func (e *EMA) IsInitialized() bool {
+	return e.initialized
+}
+
 // ShouldBuy determines if we should buy based on EMA
 func (e *EMA) ShouldBuy(current float64, data []types.OHLCV) (bool, error) {
 	ema, err := e.Calculate(data)

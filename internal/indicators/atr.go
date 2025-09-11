@@ -56,12 +56,7 @@ func (a *ATR) initialCalculation(data []types.OHLCV) (float64, error) {
 		}
 		
 		// Update EMA with true range
-		trData := []types.OHLCV{{Close: trueRange}}
-		_, err := a.ema.Calculate(trData)
-		if err != nil {
-			a.lastClose = candle.Close
-			continue // Skip if not enough data yet
-		}
+		a.ema.UpdateSingle(trueRange)
 		
 		a.lastClose = candle.Close
 	}
@@ -83,11 +78,7 @@ func (a *ATR) incrementalCalculation(data []types.OHLCV) (float64, error) {
 	trueRange := a.calculateTrueRange(latest, a.lastClose)
 	
 	// Update EMA with true range
-	trData := []types.OHLCV{{Close: trueRange}}
-	atrValue, err := a.ema.Calculate(trData)
-	if err != nil {
-		return a.ema.GetLastValue(), err
-	}
+	atrValue := a.ema.UpdateSingle(trueRange)
 
 	a.lastClose = latest.Close
 	return atrValue, nil
