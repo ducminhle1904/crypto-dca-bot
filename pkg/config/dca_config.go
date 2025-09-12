@@ -25,8 +25,9 @@ const (
 	DefaultBBStdDev       = 2.0
 	DefaultEMAPeriod      = 50
 	
-	// Advanced combo indicator parameters
-	DefaultHullMAPeriod   = 20
+	DefaultHullMAPeriod         = 20
+	DefaultSuperTrendPeriod     = 14
+	DefaultSuperTrendMultiplier = 2.5
 	DefaultMFIPeriod      = 14
 	DefaultMFIOversold    = 20
 	DefaultMFIOverbought  = 80
@@ -46,6 +47,7 @@ const (
 	
 	// Advanced combo validation constants
 	MinHullMAPeriod        = 2     // Minimum Hull MA period
+	MinSuperTrendPeriod    = 2     // Minimum SuperTrend period
 	MinMFIPeriod           = 2     // Minimum MFI period
 	MinKeltnerPeriod       = 2     // Minimum Keltner period
 	MinWaveTrendPeriod     = 2     // Minimum WaveTrend period
@@ -55,7 +57,7 @@ const (
 type DCAConfig struct {
 	DataFile       string  `json:"data_file"`
 	Symbol         string  `json:"symbol"`
-	Interval       string  `json:"interval"`        // Trading interval (5m, 1h, etc.)
+	Interval       string  `json:"interval"`
 	InitialBalance float64 `json:"initial_balance"`
 	Commission     float64 `json:"commission"`
 	WindowSize     int     `json:"window_size"`
@@ -64,12 +66,8 @@ type DCAConfig struct {
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
-	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"`
 	
-	// Combo selection  
-	UseAdvancedCombo bool  `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
-	
-	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
 	RSIOverbought  float64 `json:"rsi_overbought"`
@@ -83,8 +81,9 @@ type DCAConfig struct {
 	
 	EMAPeriod      int     `json:"ema_period"`
 	
-	// Advanced combo indicator parameters
-	HullMAPeriod   int     `json:"hull_ma_period"`
+	HullMAPeriod         int     `json:"hull_ma_period"`
+	SuperTrendPeriod     int     `json:"supertrend_period"`
+	SuperTrendMultiplier float64 `json:"supertrend_multiplier"`
 	MFIPeriod      int     `json:"mfi_period"`
 	MFIOversold    float64 `json:"mfi_oversold"`
 	MFIOverbought  float64 `json:"mfi_overbought"`
@@ -103,7 +102,7 @@ type DCAConfig struct {
 	UseTPLevels    bool    `json:"use_tp_levels"`   // Enable 5-level TP mode
 	Cycle          bool    `json:"cycle"`
 	
-	// Minimum lot size for realistic simulation (e.g., 0.01 for BTCUSDT)
+	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
 
@@ -157,9 +156,6 @@ func (c *DCAConfig) GetTPPercent() float64 {
 	return c.TPPercent
 }
 
-func (c *DCAConfig) GetUseAdvancedCombo() bool {
-	return c.UseAdvancedCombo
-}
 
 // Mutation methods for optimization
 func (c *DCAConfig) SetMaxMultiplier(val float64) {
@@ -180,6 +176,14 @@ func (c *DCAConfig) SetPriceThresholdMultiplier(val float64) {
 
 func (c *DCAConfig) SetHullMAPeriod(val int) {
 	c.HullMAPeriod = val
+}
+
+func (c *DCAConfig) SetSuperTrendPeriod(val int) {
+	c.SuperTrendPeriod = val
+}
+
+func (c *DCAConfig) SetSuperTrendMultiplier(val float64) {
+	c.SuperTrendMultiplier = val
 }
 
 func (c *DCAConfig) SetMFIPeriod(val int) {
@@ -260,8 +264,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		MaxMultiplier:  DefaultMaxMultiplier,
 		PriceThreshold: DefaultPriceThreshold,
 		PriceThresholdMultiplier: DefaultPriceThresholdMultiplier,
-		UseAdvancedCombo: false,
-		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
 		RSIOverbought:  DefaultRSIOverbought,
@@ -271,8 +273,9 @@ func NewDefaultDCAConfig() *DCAConfig {
 		BBPeriod:       DefaultBBPeriod,
 		BBStdDev:       DefaultBBStdDev,
 		EMAPeriod:      DefaultEMAPeriod,
-		// Advanced combo defaults
-		HullMAPeriod:   DefaultHullMAPeriod,
+		HullMAPeriod:         DefaultHullMAPeriod,
+		SuperTrendPeriod:     DefaultSuperTrendPeriod,
+		SuperTrendMultiplier: DefaultSuperTrendMultiplier,
 		MFIPeriod:      DefaultMFIPeriod,
 		MFIOversold:    DefaultMFIOversold,
 		MFIOverbought:  DefaultMFIOverbought,

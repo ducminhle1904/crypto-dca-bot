@@ -504,7 +504,7 @@ func main() {
 	// Set default indicators based on combo selection
 	if len(cfg.Indicators) == 0 {
 		if cfg.UseAdvancedCombo {
-			cfg.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
+			cfg.Indicators = []string{"supertrend", "mfi", "keltner", "wavetrend"}
 		} else {
 			cfg.Indicators = []string{"rsi", "macd", "bb", "ema"}
 		}

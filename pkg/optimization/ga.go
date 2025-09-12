@@ -275,34 +275,58 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	dcaConfig.PriceThresholdMultiplier = RandomChoice(ranges.PriceThresholdMultipliers, rng)
 	dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
 	
-	// Set indicators based on combo type
-	if dcaConfig.UseAdvancedCombo {
-		dcaConfig.Indicators = []string{"hull_ma", "mfi", "keltner", "wavetrend"}
-		
-		// Randomize advanced combo parameters using predefined ranges
-		dcaConfig.HullMAPeriod = RandomChoice(ranges.HullMAPeriods, rng)
+	// Default to classic indicators for genetic algorithm optimization if none specified
+	if len(dcaConfig.Indicators) == 0 {
+		dcaConfig.Indicators = []string{"rsi", "macd", "bb", "ema"}
+	}
+	
+	// Randomize parameters for each indicator that's present
+	indicatorSet := make(map[string]bool)
+	for _, ind := range dcaConfig.Indicators {
+		indicatorSet[strings.ToLower(ind)] = true
+	}
+	
+	// Randomize classic indicator parameters if present
+	if indicatorSet["rsi"] {
+		dcaConfig.RSIPeriod = RandomChoice(ranges.RSIPeriods, rng)
+		dcaConfig.RSIOversold = RandomChoice(ranges.RSIOversold, rng)
+		dcaConfig.RSIOverbought = 100.0 - RandomChoice(ranges.RSIOversold, rng)
+	}
+	if indicatorSet["macd"] {
+		dcaConfig.MACDFast = RandomChoice(ranges.MACDFast, rng)
+		dcaConfig.MACDSlow = RandomChoice(ranges.MACDSlow, rng)
+		dcaConfig.MACDSignal = RandomChoice(ranges.MACDSignal, rng)
+	}
+	if indicatorSet["bb"] || indicatorSet["bollinger"] {
+		dcaConfig.BBPeriod = RandomChoice(ranges.BBPeriods, rng)
+		dcaConfig.BBStdDev = RandomChoice(ranges.BBStdDev, rng)
+	}
+	if indicatorSet["ema"] {
+		dcaConfig.EMAPeriod = RandomChoice(ranges.EMAPeriods, rng)
+	}
+	
+	// Randomize advanced indicator parameters if present
+	if indicatorSet["hullma"] || indicatorSet["hull_ma"] {
+		dcaConfig.HullMAPeriod = RandomChoice(ranges.SuperTrendPeriods, rng)
+	}
+	if indicatorSet["supertrend"] || indicatorSet["st"] {
+		dcaConfig.SuperTrendPeriod = RandomChoice(ranges.SuperTrendPeriods, rng)
+		dcaConfig.SuperTrendMultiplier = RandomChoice(ranges.SuperTrendMultipliers, rng)
+	}
+	if indicatorSet["mfi"] {
 		dcaConfig.MFIPeriod = RandomChoice(ranges.MFIPeriods, rng)
 		dcaConfig.MFIOversold = RandomChoice(ranges.MFIOversold, rng)
 		dcaConfig.MFIOverbought = RandomChoice(ranges.MFIOverbought, rng)
+	}
+	if indicatorSet["keltner"] || indicatorSet["kc"] {
 		dcaConfig.KeltnerPeriod = RandomChoice(ranges.KeltnerPeriods, rng)
 		dcaConfig.KeltnerMultiplier = RandomChoice(ranges.KeltnerMultipliers, rng)
+	}
+	if indicatorSet["wavetrend"] || indicatorSet["wt"] {
 		dcaConfig.WaveTrendN1 = RandomChoice(ranges.WaveTrendN1, rng)
 		dcaConfig.WaveTrendN2 = RandomChoice(ranges.WaveTrendN2, rng)
 		dcaConfig.WaveTrendOverbought = RandomChoice(ranges.WaveTrendOverbought, rng)
 		dcaConfig.WaveTrendOversold = RandomChoice(ranges.WaveTrendOversold, rng)
-	} else {
-		dcaConfig.Indicators = []string{"rsi", "macd", "bb", "ema"}
-		
-		// Randomize classic combo parameters using predefined ranges
-		dcaConfig.RSIPeriod = RandomChoice(ranges.RSIPeriods, rng)
-		dcaConfig.RSIOversold = RandomChoice(ranges.RSIOversold, rng)
-		dcaConfig.RSIOverbought = 100.0 - RandomChoice(ranges.RSIOversold, rng)  // Complement for overbought
-		dcaConfig.MACDFast = RandomChoice(ranges.MACDFast, rng)
-		dcaConfig.MACDSlow = RandomChoice(ranges.MACDSlow, rng)
-		dcaConfig.MACDSignal = RandomChoice(ranges.MACDSignal, rng)
-		dcaConfig.BBPeriod = RandomChoice(ranges.BBPeriods, rng)
-		dcaConfig.BBStdDev = RandomChoice(ranges.BBStdDev, rng)
-		dcaConfig.EMAPeriod = RandomChoice(ranges.EMAPeriods, rng)
 	}
 }
 
@@ -339,29 +363,53 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 		childConfig.TPPercent = parent2Config.TPPercent
 	}
 	
-	if childConfig.UseAdvancedCombo {
-		// Crossover advanced parameters from parent2
+	// Crossover parameters for each indicator that's present
+	indicatorSet := make(map[string]bool)
+	for _, ind := range childConfig.Indicators {
+		indicatorSet[strings.ToLower(ind)] = true
+	}
+	
+	// Crossover classic indicator parameters if present
+	if indicatorSet["rsi"] {
+		if rng.Float64() < 0.5 { childConfig.RSIPeriod = parent2Config.RSIPeriod }
+		if rng.Float64() < 0.5 { childConfig.RSIOversold = parent2Config.RSIOversold }
+		if rng.Float64() < 0.5 { childConfig.RSIOverbought = parent2Config.RSIOverbought }
+	}
+	if indicatorSet["macd"] {
+		if rng.Float64() < 0.5 { childConfig.MACDFast = parent2Config.MACDFast }
+		if rng.Float64() < 0.5 { childConfig.MACDSlow = parent2Config.MACDSlow }
+		if rng.Float64() < 0.5 { childConfig.MACDSignal = parent2Config.MACDSignal }
+	}
+	if indicatorSet["bb"] || indicatorSet["bollinger"] {
+		if rng.Float64() < 0.5 { childConfig.BBPeriod = parent2Config.BBPeriod }
+		if rng.Float64() < 0.5 { childConfig.BBStdDev = parent2Config.BBStdDev }
+	}
+	if indicatorSet["ema"] {
+		if rng.Float64() < 0.5 { childConfig.EMAPeriod = parent2Config.EMAPeriod }
+	}
+	
+	// Crossover advanced indicator parameters if present
+	if indicatorSet["hullma"] || indicatorSet["hull_ma"] {
 		if rng.Float64() < 0.5 { childConfig.HullMAPeriod = parent2Config.HullMAPeriod }
+	}
+	if indicatorSet["supertrend"] || indicatorSet["st"] {
+		if rng.Float64() < 0.5 { childConfig.SuperTrendPeriod = parent2Config.SuperTrendPeriod }
+		if rng.Float64() < 0.5 { childConfig.SuperTrendMultiplier = parent2Config.SuperTrendMultiplier }
+	}
+	if indicatorSet["mfi"] {
 		if rng.Float64() < 0.5 { childConfig.MFIPeriod = parent2Config.MFIPeriod }
 		if rng.Float64() < 0.5 { childConfig.MFIOversold = parent2Config.MFIOversold }
 		if rng.Float64() < 0.5 { childConfig.MFIOverbought = parent2Config.MFIOverbought }
+	}
+	if indicatorSet["keltner"] || indicatorSet["kc"] {
 		if rng.Float64() < 0.5 { childConfig.KeltnerPeriod = parent2Config.KeltnerPeriod }
 		if rng.Float64() < 0.5 { childConfig.KeltnerMultiplier = parent2Config.KeltnerMultiplier }
+	}
+	if indicatorSet["wavetrend"] || indicatorSet["wt"] {
 		if rng.Float64() < 0.5 { childConfig.WaveTrendN1 = parent2Config.WaveTrendN1 }
 		if rng.Float64() < 0.5 { childConfig.WaveTrendN2 = parent2Config.WaveTrendN2 }
 		if rng.Float64() < 0.5 { childConfig.WaveTrendOverbought = parent2Config.WaveTrendOverbought }
 		if rng.Float64() < 0.5 { childConfig.WaveTrendOversold = parent2Config.WaveTrendOversold }
-	} else {
-		// Crossover classic parameters from parent2
-		if rng.Float64() < 0.5 { childConfig.RSIPeriod = parent2Config.RSIPeriod }
-		if rng.Float64() < 0.5 { childConfig.RSIOversold = parent2Config.RSIOversold }
-		if rng.Float64() < 0.5 { childConfig.RSIOverbought = parent2Config.RSIOverbought }
-		if rng.Float64() < 0.5 { childConfig.MACDFast = parent2Config.MACDFast }
-		if rng.Float64() < 0.5 { childConfig.MACDSlow = parent2Config.MACDSlow }
-		if rng.Float64() < 0.5 { childConfig.MACDSignal = parent2Config.MACDSignal }
-		if rng.Float64() < 0.5 { childConfig.BBPeriod = parent2Config.BBPeriod }
-		if rng.Float64() < 0.5 { childConfig.BBStdDev = parent2Config.BBStdDev }
-		if rng.Float64() < 0.5 { childConfig.EMAPeriod = parent2Config.EMAPeriod }
 	}
 }
 
@@ -389,28 +437,53 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 		dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
 	}
 	
-	// Mutate indicator parameters based on current combo type using predefined ranges
-	if dcaConfig.UseAdvancedCombo {
-		if rng.Float64() < 0.1 { dcaConfig.HullMAPeriod = RandomChoice(ranges.HullMAPeriods, rng) }
+	// Mutate indicator parameters based on what indicators are present using predefined ranges
+	indicatorSet := make(map[string]bool)
+	for _, ind := range dcaConfig.Indicators {
+		indicatorSet[strings.ToLower(ind)] = true
+	}
+	
+	// Mutate classic indicator parameters if present
+	if indicatorSet["rsi"] {
+		if rng.Float64() < 0.1 { dcaConfig.RSIPeriod = RandomChoice(ranges.RSIPeriods, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.RSIOversold = RandomChoice(ranges.RSIOversold, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.RSIOverbought = 100.0 - RandomChoice(ranges.RSIOversold, rng) }
+	}
+	if indicatorSet["macd"] {
+		if rng.Float64() < 0.1 { dcaConfig.MACDFast = RandomChoice(ranges.MACDFast, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.MACDSlow = RandomChoice(ranges.MACDSlow, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.MACDSignal = RandomChoice(ranges.MACDSignal, rng) }
+	}
+	if indicatorSet["bb"] || indicatorSet["bollinger"] {
+		if rng.Float64() < 0.1 { dcaConfig.BBPeriod = RandomChoice(ranges.BBPeriods, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.BBStdDev = RandomChoice(ranges.BBStdDev, rng) }
+	}
+	if indicatorSet["ema"] {
+		if rng.Float64() < 0.1 { dcaConfig.EMAPeriod = RandomChoice(ranges.EMAPeriods, rng) }
+	}
+	
+	// Mutate advanced indicator parameters if present
+	if indicatorSet["hullma"] || indicatorSet["hull_ma"] {
+		if rng.Float64() < 0.1 { dcaConfig.HullMAPeriod = RandomChoice(ranges.SuperTrendPeriods, rng) }
+	}
+	if indicatorSet["supertrend"] || indicatorSet["st"] {
+		if rng.Float64() < 0.1 { dcaConfig.SuperTrendPeriod = RandomChoice(ranges.SuperTrendPeriods, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.SuperTrendMultiplier = RandomChoice(ranges.SuperTrendMultipliers, rng) }
+	}
+	if indicatorSet["mfi"] {
 		if rng.Float64() < 0.1 { dcaConfig.MFIPeriod = RandomChoice(ranges.MFIPeriods, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.MFIOversold = RandomChoice(ranges.MFIOversold, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.MFIOverbought = RandomChoice(ranges.MFIOverbought, rng) }
+	}
+	if indicatorSet["keltner"] || indicatorSet["kc"] {
 		if rng.Float64() < 0.1 { dcaConfig.KeltnerPeriod = RandomChoice(ranges.KeltnerPeriods, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.KeltnerMultiplier = RandomChoice(ranges.KeltnerMultipliers, rng) }
+	}
+	if indicatorSet["wavetrend"] || indicatorSet["wt"] {
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendN1 = RandomChoice(ranges.WaveTrendN1, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendN2 = RandomChoice(ranges.WaveTrendN2, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendOverbought = RandomChoice(ranges.WaveTrendOverbought, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendOversold = RandomChoice(ranges.WaveTrendOversold, rng) }
-	} else {
-		if rng.Float64() < 0.1 { dcaConfig.RSIPeriod = RandomChoice(ranges.RSIPeriods, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.RSIOversold = RandomChoice(ranges.RSIOversold, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.RSIOverbought = 100.0 - RandomChoice(ranges.RSIOversold, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.MACDFast = RandomChoice(ranges.MACDFast, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.MACDSlow = RandomChoice(ranges.MACDSlow, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.MACDSignal = RandomChoice(ranges.MACDSignal, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.BBPeriod = RandomChoice(ranges.BBPeriods, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.BBStdDev = RandomChoice(ranges.BBStdDev, rng) }
-		if rng.Float64() < 0.1 { dcaConfig.EMAPeriod = RandomChoice(ranges.EMAPeriods, rng) }
 	}
 }
 
@@ -471,49 +544,56 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 		include[strings.ToLower(name)] = true
 	}
 	
-	if cfg.UseAdvancedCombo {
-		// Advanced combo indicators
-		if include["hull_ma"] {
-			hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
-			dca.AddIndicator(hullMA)
-		}
-		if include["mfi"] {
-			mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
-			mfi.SetOversold(cfg.MFIOversold)
-			mfi.SetOverbought(cfg.MFIOverbought)
-			dca.AddIndicator(mfi)
-		}
-		if include["keltner"] {
-			keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
-			dca.AddIndicator(keltner)
-		}
-		if include["wavetrend"] {
-			wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
-			wavetrend.SetOverbought(cfg.WaveTrendOverbought)
-			wavetrend.SetOversold(cfg.WaveTrendOversold)
-			dca.AddIndicator(wavetrend)
-		}
-	} else {
-		// Classic combo indicators (with optimizations)
-		if include["rsi"] {
-			rsi := indicators.NewRSI(cfg.RSIPeriod)
-			rsi.SetOversold(cfg.RSIOversold)
-			rsi.SetOverbought(cfg.RSIOverbought)
-			dca.AddIndicator(rsi)
-		}
-		if include["macd"] {
-			macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
-			dca.AddIndicator(macd)
-		}
-		if include["bb"] {
-			// Use optimized Bollinger Bands for better performance in GA
-			bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
-			dca.AddIndicator(bb)
-		}
-		if include["ema"] {
-			ema := indicators.NewEMA(cfg.EMAPeriod)
-			dca.AddIndicator(ema)
-		}
+	// Create strategy based on which indicators are present in config
+	indicatorSet := make(map[string]bool)
+	for _, ind := range cfg.Indicators {
+		indicatorSet[strings.ToLower(ind)] = true
+	}
+	
+	// Add indicators based on what's present in the config
+	if include["supertrend"] || include["st"] {
+		supertrend := indicators.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		dca.AddIndicator(supertrend)
+	}
+	if include["mfi"] {
+		mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
+		mfi.SetOversold(cfg.MFIOversold)
+		mfi.SetOverbought(cfg.MFIOverbought)
+		dca.AddIndicator(mfi)
+	}
+	if include["keltner"] || include["kc"] {
+		keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		dca.AddIndicator(keltner)
+	}
+	if include["wavetrend"] || include["wt"] {
+		wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
+		wavetrend.SetOverbought(cfg.WaveTrendOverbought)
+		wavetrend.SetOversold(cfg.WaveTrendOversold)
+		dca.AddIndicator(wavetrend)
+	}
+	
+	if include["rsi"] {
+		rsi := indicators.NewRSI(cfg.RSIPeriod)
+		rsi.SetOversold(cfg.RSIOversold)
+		rsi.SetOverbought(cfg.RSIOverbought)
+		dca.AddIndicator(rsi)
+	}
+	if include["macd"] {
+		macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		dca.AddIndicator(macd)
+	}
+	if include["bb"] || include["bollinger"] {
+		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+		dca.AddIndicator(bb)
+	}
+	if include["ema"] {
+		ema := indicators.NewEMA(cfg.EMAPeriod)
+		dca.AddIndicator(ema)
+	}
+	
+	if include["hullma"] || include["hull_ma"] {
+		hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
+		dca.AddIndicator(hullMA)
 	}
 	
 	return dca

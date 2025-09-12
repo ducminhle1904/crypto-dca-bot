@@ -53,9 +53,6 @@ func (m *DCAConfigManager) LoadConfig(configFile, dataFile, symbol string, balan
 	if priceThresholdMultiplier, ok := params["price_threshold_multiplier"].(float64); ok {
 		cfg.PriceThresholdMultiplier = priceThresholdMultiplier
 	}
-	if useAdvancedCombo, ok := params["use_advanced_combo"].(bool); ok {
-		cfg.UseAdvancedCombo = useAdvancedCombo
-	}
 	
 	// Load from config file if provided
 	if configFile != "" {
@@ -111,13 +108,24 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	cfg.UseTPLevels = strategy.UseTPLevels
 	cfg.Cycle = strategy.Cycle
 	cfg.Indicators = strategy.Indicators
-	cfg.UseAdvancedCombo = strategy.UseAdvancedCombo
-
 	// Map indicator-specific configurations
-	if strategy.UseAdvancedCombo {
+	// Check if advanced indicators are present and configure them
+	hasAdvancedIndicators := false
+	for _, ind := range strategy.Indicators {
+		switch strings.ToLower(ind) {
+		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
+			hasAdvancedIndicators = true
+			break
+		}
+	}
+	if hasAdvancedIndicators {
 		// Advanced combo parameters
 		if strategy.HullMA != nil {
 			cfg.HullMAPeriod = strategy.HullMA.Period
+		}
+		if strategy.SuperTrend != nil {
+			cfg.SuperTrendPeriod = strategy.SuperTrend.Period
+			cfg.SuperTrendMultiplier = strategy.SuperTrend.Multiplier
 		}
 		if strategy.MFI != nil {
 			cfg.MFIPeriod = strategy.MFI.Period
@@ -201,14 +209,26 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		UseTPLevels:    true, // Always use multi-level TP
 		Cycle:          dcaCfg.Cycle,
 		Indicators:     dcaCfg.Indicators,
-		UseAdvancedCombo:    dcaCfg.UseAdvancedCombo,
 	}
 	
-	// Add combo-specific configurations based on what was used
-	if dcaCfg.UseAdvancedCombo {
+	// Add configurations for all advanced indicators if present in config
+	// Note: UseAdvancedCombo is deprecated - using heuristic based on indicators present
+	hasAdvancedIndicators := false
+	for _, ind := range dcaCfg.Indicators {
+		switch strings.ToLower(ind) {
+		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
+			hasAdvancedIndicators = true
+			break
+		}
+	}
+	if hasAdvancedIndicators {
 		// Only include advanced combo parameters
 		strategyConfig.HullMA = &HullMAConfig{
 			Period: dcaCfg.HullMAPeriod,
+		}
+		strategyConfig.SuperTrend = &SuperTrendConfig{
+			Period:     dcaCfg.SuperTrendPeriod,
+			Multiplier: dcaCfg.SuperTrendMultiplier,
 		}
 		strategyConfig.MFI = &MFIConfig{
 			Period:     dcaCfg.MFIPeriod,

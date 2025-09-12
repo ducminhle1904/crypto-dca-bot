@@ -71,7 +71,8 @@ type OptimizationRanges struct {
 	BBPeriods          []int
 	BBStdDev           []float64
 	EMAPeriods         []int
-	HullMAPeriods      []int
+	SuperTrendPeriods     []int
+	SuperTrendMultipliers []float64
 	MFIPeriods         []int
 	MFIOversold        []float64
 	MFIOverbought      []float64
