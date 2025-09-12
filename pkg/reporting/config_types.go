@@ -22,7 +22,6 @@ type StrategyConfig struct {
 	UseTPLevels      bool                       `json:"use_tp_levels"`
 	Cycle            bool                       `json:"cycle"`
 	Indicators       []string                   `json:"indicators"`
-	UseAdvancedCombo bool                       `json:"use_advanced_combo"`
 	RSI            *RSIConfig                 `json:"rsi,omitempty"`
 	MACD           *MACDConfig                `json:"macd,omitempty"`
 	BollingerBands *BollingerBandsConfig      `json:"bollinger_bands,omitempty"`

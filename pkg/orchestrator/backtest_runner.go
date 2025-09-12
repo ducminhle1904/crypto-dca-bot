@@ -212,20 +212,20 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 
 // logBacktestConfig logs the backtest configuration
 func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []types.OHLCV) {
-	// Combo information - use actual indicators
-	comboType := r.getActualComboDescription(cfg.Indicators)
-	log.Printf("🎯 COMBO: %s", comboType)
+	// Indicator information - use actual indicators
+	indicatorDescription := r.getIndicatorDescription(cfg.Indicators)
+	log.Printf("🎯 INDICATORS: %s", indicatorDescription)
 	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f, TP=%.2f%%, PriceThreshold=%.2f%%",
 		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty, cfg.TPPercent*100, cfg.PriceThreshold*100)
 }
 
-// getActualComboDescription returns a description based on the actual indicators used
-func (r *DefaultBacktestRunner) getActualComboDescription(indicators []string) string {
+// getIndicatorDescription returns a description based on the actual indicators used
+func (r *DefaultBacktestRunner) getIndicatorDescription(indicators []string) string {
 	if len(indicators) == 0 {
 		return "No indicators"
 	}
 	
-	// Custom combination - format the indicators nicely
+	// Format the indicators nicely
 	var formattedIndicators []string
 	for _, ind := range indicators {
 		switch strings.ToLower(ind) {
@@ -252,7 +252,7 @@ func (r *DefaultBacktestRunner) getActualComboDescription(indicators []string) s
 		}
 	}
 	
-	return "CUSTOM COMBO: " + strings.Join(formattedIndicators, " + ")
+	return strings.Join(formattedIndicators, " + ")
 }
 
 // validateDataFile validates that the data file exists and is accessible

@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"reflect"
+	"strings"
 )
 
 // Configuration conversion functions for JSON output
@@ -23,8 +24,6 @@ type MainBacktestConfig struct {
 	PriceThreshold float64 `json:"price_threshold"`
 	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Progressive DCA spacing multiplier
 	
-	// Combo selection  
-	UseAdvancedCombo bool `json:"use_advanced_combo"`
 	
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
@@ -73,7 +72,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		interval = "5m" // Default fallback
 	}
 	
-	// Only include the combo that was actually used
+	// Create strategy config with indicators
 	strategyConfig := StrategyConfig{
 		Symbol:         cfg.Symbol,
 		DataFile:       cfg.DataFile,
@@ -87,49 +86,59 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		UseTPLevels:    true,
 		Cycle:          cfg.Cycle,
 		Indicators:     cfg.Indicators,
-		UseAdvancedCombo:    cfg.UseAdvancedCombo,
 	}
 	
-	if cfg.UseAdvancedCombo {
-		strategyConfig.HullMA = &HullMAConfig{
-			Period: cfg.HullMAPeriod,
-		}
-		strategyConfig.SuperTrend = &SuperTrendConfig{
-			Period:     cfg.SuperTrendPeriod,
-			Multiplier: cfg.SuperTrendMultiplier,
-		}
-		strategyConfig.MFI = &MFIConfig{
-			Period:     cfg.MFIPeriod,
-			Oversold:   cfg.MFIOversold,
-			Overbought: cfg.MFIOverbought,
-		}
-		strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
-			Period:     cfg.KeltnerPeriod,
-			Multiplier: cfg.KeltnerMultiplier,
-		}
-		strategyConfig.WaveTrend = &WaveTrendConfig{
-			N1:          cfg.WaveTrendN1,
-			N2:          cfg.WaveTrendN2,
-			Overbought:  cfg.WaveTrendOverbought,
-			Oversold:    cfg.WaveTrendOversold,
-		}
-	} else {
-		strategyConfig.RSI = &RSIConfig{
-			Period:     cfg.RSIPeriod,
-			Oversold:   cfg.RSIOversold,
-			Overbought: cfg.RSIOverbought,
-		}
-		strategyConfig.MACD = &MACDConfig{
-			FastPeriod:   cfg.MACDFast,
-			SlowPeriod:   cfg.MACDSlow,
-			SignalPeriod: cfg.MACDSignal,
-		}
-		strategyConfig.BollingerBands = &BollingerBandsConfig{
-			Period: cfg.BBPeriod,
-			StdDev: cfg.BBStdDev,
-		}
-		strategyConfig.EMA = &EMAConfig{
-			Period: cfg.EMAPeriod,
+	// Add indicator configs based on which indicators are actually used
+	for _, indicator := range cfg.Indicators {
+		switch strings.ToLower(indicator) {
+		case "rsi":
+			strategyConfig.RSI = &RSIConfig{
+				Period:     cfg.RSIPeriod,
+				Oversold:   cfg.RSIOversold,
+				Overbought: cfg.RSIOverbought,
+			}
+		case "macd":
+			strategyConfig.MACD = &MACDConfig{
+				FastPeriod:   cfg.MACDFast,
+				SlowPeriod:   cfg.MACDSlow,
+				SignalPeriod: cfg.MACDSignal,
+			}
+		case "bb", "bollinger":
+			strategyConfig.BollingerBands = &BollingerBandsConfig{
+				Period: cfg.BBPeriod,
+				StdDev: cfg.BBStdDev,
+			}
+		case "ema":
+			strategyConfig.EMA = &EMAConfig{
+				Period: cfg.EMAPeriod,
+			}
+		case "hullma", "hull_ma":
+			strategyConfig.HullMA = &HullMAConfig{
+				Period: cfg.HullMAPeriod,
+			}
+		case "supertrend", "st":
+			strategyConfig.SuperTrend = &SuperTrendConfig{
+				Period:     cfg.SuperTrendPeriod,
+				Multiplier: cfg.SuperTrendMultiplier,
+			}
+		case "mfi":
+			strategyConfig.MFI = &MFIConfig{
+				Period:     cfg.MFIPeriod,
+				Oversold:   cfg.MFIOversold,
+				Overbought: cfg.MFIOverbought,
+			}
+		case "keltner", "kc":
+			strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
+				Period:     cfg.KeltnerPeriod,
+				Multiplier: cfg.KeltnerMultiplier,
+			}
+		case "wavetrend", "wt":
+			strategyConfig.WaveTrend = &WaveTrendConfig{
+				N1:          cfg.WaveTrendN1,
+				N2:          cfg.WaveTrendN2,
+				Overbought:  cfg.WaveTrendOverbought,
+				Oversold:    cfg.WaveTrendOversold,
+			}
 		}
 	}
 	

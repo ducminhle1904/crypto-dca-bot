@@ -58,24 +58,9 @@ func (v *DCAValidator) validateDCAConfig(cfg *DCAConfig) error {
 		return err
 	}
 	
-	// Validate technical indicator parameters
-	if err := v.validateClassicIndicators(cfg); err != nil {
+	// Validate technical indicator parameters based on configured indicators
+	if err := v.validateIndicators(cfg); err != nil {
 		return err
-	}
-	
-	// Validate advanced indicators if they are present in indicators list
-	hasAdvancedIndicators := false
-	for _, ind := range cfg.Indicators {
-		switch strings.ToLower(ind) {
-		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
-			hasAdvancedIndicators = true
-			break
-		}
-	}
-	if hasAdvancedIndicators {
-		if err := v.validateAdvancedIndicators(cfg); err != nil {
-			return err
-		}
 	}
 	
 	if cfg.MinOrderQty < 0 {
@@ -93,8 +78,54 @@ func (v *DCAValidator) validateTPConfig(cfg *DCAConfig) error {
     return nil
 }
 
-// validateClassicIndicators validates classic combo technical indicator parameters
-func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
+// validateIndicators validates technical indicator parameters based on configured indicators
+func (v *DCAValidator) validateIndicators(cfg *DCAConfig) error {
+	// Validate indicators based on what's actually configured
+	for _, indicator := range cfg.Indicators {
+		switch strings.ToLower(indicator) {
+		case "rsi":
+			if err := v.validateRSI(cfg); err != nil {
+				return err
+			}
+		case "macd":
+			if err := v.validateMACD(cfg); err != nil {
+				return err
+			}
+		case "bb", "bollinger":
+			if err := v.validateBB(cfg); err != nil {
+				return err
+			}
+		case "ema":
+			if err := v.validateEMA(cfg); err != nil {
+				return err
+			}
+		case "hullma", "hull_ma":
+			if err := v.validateHullMA(cfg); err != nil {
+				return err
+			}
+		case "supertrend", "st":
+			if err := v.validateSuperTrend(cfg); err != nil {
+				return err
+			}
+		case "mfi":
+			if err := v.validateMFI(cfg); err != nil {
+				return err
+			}
+		case "keltner", "kc":
+			if err := v.validateKeltner(cfg); err != nil {
+				return err
+			}
+		case "wavetrend", "wt":
+			if err := v.validateWaveTrend(cfg); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateRSI validates RSI indicator parameters
+func (v *DCAValidator) validateRSI(cfg *DCAConfig) error {
 	if cfg.RSIPeriod < MinRSIPeriod {
 		return fmt.Errorf("RSI period must be at least %d, got: %d", MinRSIPeriod, cfg.RSIPeriod)
 	}
@@ -111,6 +142,11 @@ func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
 		return fmt.Errorf("RSI oversold (%.1f) must be less than overbought (%.1f)", cfg.RSIOversold, cfg.RSIOverbought)
 	}
 	
+	return nil
+}
+
+// validateMACD validates MACD indicator parameters
+func (v *DCAValidator) validateMACD(cfg *DCAConfig) error {
 	if cfg.MACDFast < MinMACDPeriod || cfg.MACDSlow < MinMACDPeriod || cfg.MACDSignal < MinMACDPeriod {
 		return fmt.Errorf("MACD periods must be at least %d, got: fast=%d, slow=%d, signal=%d", MinMACDPeriod, cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
 	}
@@ -119,6 +155,11 @@ func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
 		return fmt.Errorf("MACD fast period (%d) must be less than slow period (%d)", cfg.MACDFast, cfg.MACDSlow)
 	}
 	
+	return nil
+}
+
+// validateBB validates Bollinger Bands indicator parameters
+func (v *DCAValidator) validateBB(cfg *DCAConfig) error {
 	if cfg.BBPeriod < MinBBPeriod {
 		return fmt.Errorf("bollinger Bands period must be at least %d, got: %d", MinBBPeriod, cfg.BBPeriod)
 	}
@@ -127,6 +168,11 @@ func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
 		return fmt.Errorf("bollinger Bands standard deviation must be positive, got: %.2f", cfg.BBStdDev)
 	}
 	
+	return nil
+}
+
+// validateEMA validates EMA indicator parameters
+func (v *DCAValidator) validateEMA(cfg *DCAConfig) error {
 	if cfg.EMAPeriod < MinEMAPeriod {
 		return fmt.Errorf("EMA period must be at least %d, got: %d", MinEMAPeriod, cfg.EMAPeriod)
 	}
@@ -134,16 +180,24 @@ func (v *DCAValidator) validateClassicIndicators(cfg *DCAConfig) error {
 	return nil
 }
 
-// validateAdvancedIndicators validates advanced combo indicator parameters
-func (v *DCAValidator) validateAdvancedIndicators(cfg *DCAConfig) error {
+// validateHullMA validates Hull MA indicator parameters
+func (v *DCAValidator) validateHullMA(cfg *DCAConfig) error {
 	if cfg.HullMAPeriod < MinHullMAPeriod {
 		return fmt.Errorf("Hull MA period must be at least %d, got: %d", MinHullMAPeriod, cfg.HullMAPeriod)
 	}
-	
+	return nil
+}
+
+// validateSuperTrend validates SuperTrend indicator parameters
+func (v *DCAValidator) validateSuperTrend(cfg *DCAConfig) error {
 	if cfg.SuperTrendPeriod < MinSuperTrendPeriod {
 		return fmt.Errorf("SuperTrend period must be at least %d, got: %d", MinSuperTrendPeriod, cfg.SuperTrendPeriod)
 	}
-	
+	return nil
+}
+
+// validateMFI validates MFI indicator parameters
+func (v *DCAValidator) validateMFI(cfg *DCAConfig) error {
 	if cfg.MFIPeriod < MinMFIPeriod {
 		return fmt.Errorf("MFI period must be at least %d, got: %d", MinMFIPeriod, cfg.MFIPeriod)
 	}
@@ -160,6 +214,11 @@ func (v *DCAValidator) validateAdvancedIndicators(cfg *DCAConfig) error {
 		return fmt.Errorf("MFI oversold (%.1f) must be less than overbought (%.1f)", cfg.MFIOversold, cfg.MFIOverbought)
 	}
 	
+	return nil
+}
+
+// validateKeltner validates Keltner Channels indicator parameters
+func (v *DCAValidator) validateKeltner(cfg *DCAConfig) error {
 	if cfg.KeltnerPeriod < MinKeltnerPeriod {
 		return fmt.Errorf("Keltner period must be at least %d, got: %d", MinKeltnerPeriod, cfg.KeltnerPeriod)
 	}
@@ -168,6 +227,11 @@ func (v *DCAValidator) validateAdvancedIndicators(cfg *DCAConfig) error {
 		return fmt.Errorf("Keltner multiplier must be positive, got: %.2f", cfg.KeltnerMultiplier)
 	}
 	
+	return nil
+}
+
+// validateWaveTrend validates WaveTrend indicator parameters
+func (v *DCAValidator) validateWaveTrend(cfg *DCAConfig) error {
 	if cfg.WaveTrendN1 < MinWaveTrendPeriod {
 		return fmt.Errorf("WaveTrend N1 must be at least %d, got: %d", MinWaveTrendPeriod, cfg.WaveTrendN1)
 	}

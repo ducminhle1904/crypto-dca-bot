@@ -255,78 +255,80 @@ func (bot *LiveBot) initializeStrategy() error {
 	bot.strategy.SetPriceThresholdMultiplier(bot.config.Strategy.PriceThresholdMultiplier)
 
 	// Add indicators based on configuration
+	bot.logger.Info("🔧 Initializing %d indicators: %v", len(bot.config.Strategy.Indicators), bot.config.Strategy.Indicators)
 	for _, indName := range bot.config.Strategy.Indicators {
-		if bot.config.Strategy.UseAdvancedCombo {
-			// Advanced combo indicators
-			switch strings.ToLower(indName) {
-			case "hull_ma", "hullma":
-				hullMA := indicators.NewHullMA(bot.config.Strategy.HullMA.Period)
-				bot.strategy.AddIndicator(hullMA)
-			case "mfi":
-				mfi := indicators.NewMFIWithPeriod(bot.config.Strategy.MFI.Period)
-				mfi.SetOversold(bot.config.Strategy.MFI.Oversold)
-				mfi.SetOverbought(bot.config.Strategy.MFI.Overbought)
-				bot.strategy.AddIndicator(mfi)
-			case "keltner_channels", "keltner", "kc":
-				keltner := indicators.NewKeltnerChannelsCustom(
-					bot.config.Strategy.Keltner.Period,
-					bot.config.Strategy.Keltner.Multiplier,
-				)
-				bot.strategy.AddIndicator(keltner)
-			case "wavetrend", "wt":
-				wavetrend := indicators.NewWaveTrendCustom(
-					bot.config.Strategy.WaveTrend.N1,
-					bot.config.Strategy.WaveTrend.N2,
-				)
-				wavetrend.SetOverbought(bot.config.Strategy.WaveTrend.Overbought)
-				wavetrend.SetOversold(bot.config.Strategy.WaveTrend.Oversold)
-				bot.strategy.AddIndicator(wavetrend)
-			case "supertrend", "st":
-				supertrend := indicators.NewSuperTrendWithParams(
-					bot.config.Strategy.SuperTrend.Period,
-					bot.config.Strategy.SuperTrend.Multiplier,
-				)
-				bot.strategy.AddIndicator(supertrend)
-			default:
-			}
-		} else {
-			// Classic combo indicators
-			switch strings.ToLower(indName) {
-			case "rsi":
-				rsi := indicators.NewRSI(bot.config.Strategy.RSI.Period)
-				rsi.SetOversold(bot.config.Strategy.RSI.Oversold)
-				rsi.SetOverbought(bot.config.Strategy.RSI.Overbought)
-				bot.strategy.AddIndicator(rsi)
-			case "macd":
-				macd := indicators.NewMACD(
-					bot.config.Strategy.MACD.FastPeriod,
-					bot.config.Strategy.MACD.SlowPeriod,
-					bot.config.Strategy.MACD.SignalPeriod,
-				)
-				bot.strategy.AddIndicator(macd)
-			case "bb", "bollinger":
-				bb := indicators.NewBollingerBands(
-					bot.config.Strategy.BollingerBands.Period,
-					bot.config.Strategy.BollingerBands.StdDev,
-				)
-				bot.strategy.AddIndicator(bb)
-			case "ema":
-				ema := indicators.NewEMA(bot.config.Strategy.EMA.Period)
-				bot.strategy.AddIndicator(ema)
-			case "sma":
-				sma := indicators.NewSMA(bot.config.Strategy.EMA.Period)
-				bot.strategy.AddIndicator(sma)
-			case "supertrend", "st":
-				supertrend := indicators.NewSuperTrendWithParams(
-					bot.config.Strategy.SuperTrend.Period,
-					bot.config.Strategy.SuperTrend.Multiplier,
-				)
-				bot.strategy.AddIndicator(supertrend)
-			default:
-				bot.logger.Info("❌ Unknown classic indicator: '%s'", indName)
-			}
+		bot.logger.Info("🔧 Processing indicator: '%s'", indName)
+		switch strings.ToLower(indName) {
+		case "rsi":
+			rsi := indicators.NewRSI(bot.config.Strategy.RSI.Period)
+			rsi.SetOversold(bot.config.Strategy.RSI.Oversold)
+			rsi.SetOverbought(bot.config.Strategy.RSI.Overbought)
+			bot.strategy.AddIndicator(rsi)
+			bot.logger.Info("✅ RSI indicator added successfully")
+		case "macd":
+			macd := indicators.NewMACD(
+				bot.config.Strategy.MACD.FastPeriod,
+				bot.config.Strategy.MACD.SlowPeriod,
+				bot.config.Strategy.MACD.SignalPeriod,
+			)
+			bot.strategy.AddIndicator(macd)
+			bot.logger.Info("✅ MACD indicator added successfully")
+		case "bb", "bollinger":
+			bb := indicators.NewBollingerBands(
+				bot.config.Strategy.BollingerBands.Period,
+				bot.config.Strategy.BollingerBands.StdDev,
+			)
+			bot.strategy.AddIndicator(bb)
+			bot.logger.Info("✅ Bollinger Bands indicator added successfully")
+		case "ema":
+			ema := indicators.NewEMA(bot.config.Strategy.EMA.Period)
+			bot.strategy.AddIndicator(ema)
+			bot.logger.Info("✅ EMA indicator added successfully")
+		case "sma":
+			sma := indicators.NewSMA(bot.config.Strategy.EMA.Period)
+			bot.strategy.AddIndicator(sma)
+			bot.logger.Info("✅ SMA indicator added successfully")
+		case "hull_ma", "hullma":
+			hullMA := indicators.NewHullMA(bot.config.Strategy.HullMA.Period)
+			bot.strategy.AddIndicator(hullMA)
+			bot.logger.Info("✅ Hull MA indicator added successfully")
+		case "mfi":
+			mfi := indicators.NewMFIWithPeriod(bot.config.Strategy.MFI.Period)
+			mfi.SetOversold(bot.config.Strategy.MFI.Oversold)
+			mfi.SetOverbought(bot.config.Strategy.MFI.Overbought)
+			bot.strategy.AddIndicator(mfi)
+			bot.logger.Info("✅ MFI indicator added successfully")
+		case "keltner_channels", "keltner", "kc":
+			keltner := indicators.NewKeltnerChannelsCustom(
+				bot.config.Strategy.Keltner.Period,
+				bot.config.Strategy.Keltner.Multiplier,
+			)
+			bot.strategy.AddIndicator(keltner)
+			bot.logger.Info("✅ Keltner Channels indicator added successfully")
+		case "wavetrend", "wt":
+			wavetrend := indicators.NewWaveTrendCustom(
+				bot.config.Strategy.WaveTrend.N1,
+				bot.config.Strategy.WaveTrend.N2,
+			)
+			wavetrend.SetOverbought(bot.config.Strategy.WaveTrend.Overbought)
+			wavetrend.SetOversold(bot.config.Strategy.WaveTrend.Oversold)
+			bot.strategy.AddIndicator(wavetrend)
+			bot.logger.Info("✅ WaveTrend indicator added successfully")
+		case "supertrend", "st":
+			supertrend := indicators.NewSuperTrendWithParams(
+				bot.config.Strategy.SuperTrend.Period,
+				bot.config.Strategy.SuperTrend.Multiplier,
+			)
+			bot.strategy.AddIndicator(supertrend)
+			bot.logger.Info("✅ SuperTrend indicator added successfully")
+		default:
+			bot.logger.Info("❌ Unknown indicator: '%s'", indName)
 		}
 	}
+	
+	// Log final indicator count
+	indicatorCount := bot.strategy.GetIndicatorCount()
+	bot.logger.Info("🎯 Strategy initialization complete: %d indicators active", indicatorCount)
 	
 	return nil
 }

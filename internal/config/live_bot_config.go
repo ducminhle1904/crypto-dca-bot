@@ -50,19 +50,16 @@ type StrategyConfig struct {
 	// Order management settings
 	CancelOrphanedOrders bool `json:"cancel_orphaned_orders"` // Cancel existing orders on startup (default false)
 	
-	// Combo selection
-	UseAdvancedCombo bool `json:"use_advanced_combo"` // true = advanced combo (Hull MA, MFI, Keltner, WaveTrend), false = classic combo (RSI, MACD, BB, EMA)
-	
 	// Technical indicators
 	Indicators []string `json:"indicators"` // List of indicators to use
 	
-	// Classic combo indicator parameters
+	// Technical indicator parameters
 	RSI IndicatorRSIConfig `json:"rsi"`
 	MACD IndicatorMACDConfig `json:"macd"`  
 	BollingerBands IndicatorBBConfig `json:"bollinger_bands"`
 	EMA IndicatorEMAConfig `json:"ema"`
 	
-	// Advanced combo indicator parameters
+	// Additional technical indicators
 	HullMA      IndicatorHullMAConfig      `json:"hull_ma"`
 	MFI         IndicatorMFIConfig         `json:"mfi"`
 	Keltner     IndicatorKeltnerConfig     `json:"keltner_channels"`
@@ -246,7 +243,7 @@ func (c *LiveBotConfig) setDefaults() error {
 		c.Strategy.EMA.Period = 21
 	}
 
-	// Advanced combo indicator defaults
+	// Additional indicator defaults
 	// Hull MA defaults
 	if c.Strategy.HullMA.Period == 0 {
 		c.Strategy.HullMA.Period = 20
