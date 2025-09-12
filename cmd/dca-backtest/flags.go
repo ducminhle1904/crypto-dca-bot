@@ -40,6 +40,7 @@ type DCAFlags struct {
 	UseKeltner       *bool
 	UseWaveTrend     *bool
 	UseOBV           *bool
+	UseStochasticRSI *bool
 	
 	// Analysis options
 	Optimize         *bool
@@ -99,6 +100,7 @@ func NewDCAFlags() *DCAFlags {
 		UseKeltner:       flag.Bool("keltner", false, "Include Keltner Channels indicator"),
 		UseWaveTrend:     flag.Bool("wavetrend", false, "Include WaveTrend indicator"),
 		UseOBV:           flag.Bool("obv", false, "Include OBV (On-Balance Volume) indicator"),
+		UseStochasticRSI: flag.Bool("stochrsi", false, "Include Stochastic RSI indicator"),
 		
 		// Analysis options
 		Optimize:         flag.Bool("optimize", false, "Run genetic algorithm optimization"),
@@ -331,6 +333,9 @@ func ResolveIndicators(flags *DCAFlags) ([]string, error) {
 	if *flags.UseOBV {
 		indicators = append(indicators, "obv")
 	}
+	if *flags.UseStochasticRSI {
+		indicators = append(indicators, "stochrsi")
+	}
 	
 	// Priority 2: Indicators list flag
 	if *flags.Indicators != "" {
@@ -369,7 +374,7 @@ func ResolveIndicators(flags *DCAFlags) ([]string, error) {
 func isValidIndicator(indicator string) bool {
 	validIndicators := []string{
 		"rsi", "macd", "bb", "bollinger", "ema", "sma",
-		"hullma", "hull_ma", "supertrend", "st", "mfi", "keltner", "kc", "wavetrend", "wt", "obv",
+		"hullma", "hull_ma", "supertrend", "st", "mfi", "keltner", "kc", "wavetrend", "wt", "obv", "stochrsi", "stochastic_rsi", "stoch_rsi",
 	}
 	
 	for _, valid := range validIndicators {
@@ -413,6 +418,8 @@ func GetIndicatorDescription(indicators []string) string {
 			upperIndicators[i] = "WaveTrend"
 		case "obv":
 			upperIndicators[i] = "OBV"
+		case "stochrsi", "stochastic_rsi", "stoch_rsi":
+			upperIndicators[i] = "Stochastic RSI"
 		default:
 			upperIndicators[i] = strings.ToUpper(ind)
 		}

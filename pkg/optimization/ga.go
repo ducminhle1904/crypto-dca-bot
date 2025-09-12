@@ -331,6 +331,11 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	if indicatorSet["obv"] {
 		dcaConfig.OBVTrendThreshold = RandomChoice(ranges.OBVTrendThresholds, rng)
 	}
+	if indicatorSet["stochrsi"] || indicatorSet["stochastic_rsi"] || indicatorSet["stoch_rsi"] {
+		dcaConfig.StochasticRSIPeriod = RandomChoice(ranges.StochasticRSIPeriods, rng)
+		dcaConfig.StochasticRSIOverbought = RandomChoice(ranges.StochasticRSIOverboughts, rng)
+		dcaConfig.StochasticRSIOversold = RandomChoice(ranges.StochasticRSIOversolds, rng)
+	}
 }
 
 func RunBacktestWithData(config interface{}, data []types.OHLCV) *backtest.BacktestResults {
@@ -417,6 +422,11 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 	if indicatorSet["obv"] {
 		if rng.Float64() < 0.5 { childConfig.OBVTrendThreshold = parent2Config.OBVTrendThreshold }
 	}
+	if indicatorSet["stochrsi"] || indicatorSet["stochastic_rsi"] || indicatorSet["stoch_rsi"] {
+		if rng.Float64() < 0.5 { childConfig.StochasticRSIPeriod = parent2Config.StochasticRSIPeriod }
+		if rng.Float64() < 0.5 { childConfig.StochasticRSIOverbought = parent2Config.StochasticRSIOverbought }
+		if rng.Float64() < 0.5 { childConfig.StochasticRSIOversold = parent2Config.StochasticRSIOversold }
+	}
 }
 
 func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
@@ -493,6 +503,11 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 	}
 	if indicatorSet["obv"] {
 		if rng.Float64() < 0.1 { dcaConfig.OBVTrendThreshold = RandomChoice(ranges.OBVTrendThresholds, rng) }
+	}
+	if indicatorSet["stochrsi"] || indicatorSet["stochastic_rsi"] || indicatorSet["stoch_rsi"] {
+		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIPeriod = RandomChoice(ranges.StochasticRSIPeriods, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIOverbought = RandomChoice(ranges.StochasticRSIOverboughts, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIOversold = RandomChoice(ranges.StochasticRSIOversolds, rng) }
 	}
 }
 

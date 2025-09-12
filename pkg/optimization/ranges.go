@@ -27,6 +27,9 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	WaveTrendOverbought: []float64{50, 60, 70, 80},
 	WaveTrendOversold:   []float64{-80, -70, -60, -50},
 	OBVTrendThresholds: []float64{0.005, 0.008, 0.01, 0.012, 0.015, 0.018, 0.02, 0.025, 0.03},
+	StochasticRSIPeriods: []int{10, 12, 14, 16, 18, 20, 22},
+	StochasticRSIOverboughts: []float64{75.0, 80.0, 85.0, 90.0},
+	StochasticRSIOversolds: []float64{10.0, 15.0, 20.0, 25.0},
 }
 
 // GetDefaultOptimizationRanges returns the default optimization ranges

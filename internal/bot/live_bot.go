@@ -388,6 +388,14 @@ func (bot *LiveBot) initializeStrategy() error {
 			obv := indicators.NewOBVWithThreshold(bot.config.Strategy.OBV.TrendThreshold)
 			bot.strategy.AddIndicator(obv)
 			bot.logger.Info("✅ OBV indicator added successfully")
+		case "stochrsi", "stochastic_rsi", "stoch_rsi":
+			stochRSI := indicators.NewStochasticRSIWithThresholds(
+				bot.config.Strategy.StochasticRSI.Period,
+				bot.config.Strategy.StochasticRSI.Overbought,
+				bot.config.Strategy.StochasticRSI.Oversold,
+			)
+			bot.strategy.AddIndicator(stochRSI)
+			bot.logger.Info("✅ Stochastic RSI indicator added successfully")
 		default:
 			bot.logger.Info("❌ Unknown indicator: '%s'", indName)
 		}

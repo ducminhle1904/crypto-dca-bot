@@ -26,6 +26,7 @@ const (
 	IndicatorTypeKeltnerChannels  IndicatorType = "KELTNER_CHANNELS"
 	IndicatorTypeHullMA           IndicatorType = "HULL_MA"
 	IndicatorTypeOBV              IndicatorType = "OBV"
+	IndicatorTypeStochasticRSI    IndicatorType = "STOCHASTIC_RSI"
 )
 
 // IndicatorFactory creates technical indicators based on type and parameters
@@ -137,6 +138,23 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 		}
 		return NewOBVWithThreshold(threshold), nil
 		
+	case IndicatorTypeStochasticRSI:
+		period := 14
+		overbought := 80.0
+		oversold := 20.0
+		
+		if p, ok := params["period"].(int); ok {
+			period = p
+		}
+		if ob, ok := params["overbought"].(float64); ok {
+			overbought = ob
+		}
+		if os, ok := params["oversold"].(float64); ok {
+			oversold = os
+		}
+		
+		return NewStochasticRSIWithThresholds(period, overbought, oversold), nil
+		
 	default:
 		return nil, fmt.Errorf("unknown indicator type: %s", indicatorType)
 	}
@@ -155,6 +173,7 @@ func (f *IndicatorFactory) GetAvailableIndicators() []IndicatorType {
 		IndicatorTypeKeltnerChannels,
 		IndicatorTypeHullMA,
 		IndicatorTypeOBV,
+		IndicatorTypeStochasticRSI,
 	}
 }
 
@@ -181,6 +200,8 @@ func ParseIndicatorType(s string) (IndicatorType, error) {
 		return IndicatorTypeHullMA, nil
 	case "OBV":
 		return IndicatorTypeOBV, nil
+	case "STOCHASTIC_RSI", "STOCH_RSI", "STOCHRSI":
+		return IndicatorTypeStochasticRSI, nil
 	default:
 		return "", fmt.Errorf("unknown indicator type: %s", s)
 	}

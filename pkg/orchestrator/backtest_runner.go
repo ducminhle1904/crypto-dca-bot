@@ -210,6 +210,10 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		obv := indicators.NewOBV()
 		dca.AddIndicator(obv)
 	}
+	if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
+		stochRSI := indicators.NewStochasticRSI()
+		dca.AddIndicator(stochRSI)
+	}
 
 	return dca, nil
 }

@@ -83,4 +83,7 @@ type OptimizationRanges struct {
 	WaveTrendOverbought []float64
 	WaveTrendOversold   []float64
 	OBVTrendThresholds []float64
+	StochasticRSIPeriods []int
+	StochasticRSIOverboughts []float64
+	StochasticRSIOversolds []float64
 }

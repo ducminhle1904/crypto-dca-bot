@@ -1436,6 +1436,10 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 			obv := indicators.NewOBV()
 			dca.AddIndicator(obv)
 		}
+		if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
+			stochRSI := indicators.NewStochasticRSI()
+			dca.AddIndicator(stochRSI)
+		}
 	} else {
 		// Classic combo indicators
 		if include["rsi"] {
@@ -1459,6 +1463,10 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		if include["obv"] {
 			obv := indicators.NewOBV()
 			dca.AddIndicator(obv)
+		}
+		if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
+			stochRSI := indicators.NewStochasticRSI()
+			dca.AddIndicator(stochRSI)
 		}
 	}
 

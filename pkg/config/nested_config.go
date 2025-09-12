@@ -31,6 +31,7 @@ type StrategyConfig struct {
 	KeltnerChannels *KeltnerChannelsConfig `json:"keltner_channels,omitempty"`
 	WaveTrend      *WaveTrendConfig   `json:"wavetrend,omitempty"`
 	OBV            *OBVConfig         `json:"obv,omitempty"`
+	StochasticRSI  *StochasticRSIConfig `json:"stochastic_rsi,omitempty"`
 }
 
 type RSIConfig struct {
@@ -107,4 +108,10 @@ type WaveTrendConfig struct {
 
 type OBVConfig struct {
 	TrendThreshold float64 `json:"trend_threshold"`
+}
+
+type StochasticRSIConfig struct {
+	Period     int     `json:"period"`
+	Overbought float64 `json:"overbought"`
+	Oversold   float64 `json:"oversold"`
 }

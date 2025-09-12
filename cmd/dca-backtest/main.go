@@ -246,7 +246,7 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 				"  • Individual flags: -rsi -macd -bb -ema\n" +
 				"  • Indicator list: -indicators \"rsi,macd,bb,ema\"\n" +
 				"  • Config file with indicators specified\n" +
-				"\nAvailable indicators: rsi, macd, bb, ema, hullma, supertrend, mfi, keltner, wavetrend, obv")
+				"\nAvailable indicators: rsi, macd, bb, ema, hullma, supertrend, mfi, keltner, wavetrend, obv, stochrsi")
 		}
 	}
 	
@@ -342,6 +342,9 @@ func printIndicatorSettings(cfg *config.DCAConfig) {
 				cfg.WaveTrendN1, cfg.WaveTrendN2, cfg.WaveTrendOverbought, cfg.WaveTrendOversold)
 		case "obv":
 			fmt.Printf("      • OBV: trend_threshold=%.3f\n", cfg.OBVTrendThreshold)
+		case "stochrsi", "stochastic_rsi", "stoch_rsi":
+			fmt.Printf("      • Stochastic RSI: period=%d, overbought=%.1f, oversold=%.1f\n", 
+				cfg.StochasticRSIPeriod, cfg.StochasticRSIOverbought, cfg.StochasticRSIOversold)
 		}
 	}
 }

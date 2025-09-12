@@ -38,6 +38,9 @@ const (
 	DefaultWaveTrendOverbought = 60
 	DefaultWaveTrendOversold = -60
 	DefaultOBVTrendThreshold = 0.01
+	DefaultStochasticRSIPeriod = 14
+	DefaultStochasticRSIOverbought = 80.0
+	DefaultStochasticRSIOversold = 20.0
 	
 	// Technical indicator validation constants
 	MinRSIPeriod           = 2     // Minimum RSI period
@@ -95,6 +98,9 @@ type DCAConfig struct {
 	WaveTrendOverbought float64 `json:"wavetrend_overbought"`
 	WaveTrendOversold   float64 `json:"wavetrend_oversold"`
 	OBVTrendThreshold float64 `json:"obv_trend_threshold"`
+	StochasticRSIPeriod int `json:"stochastic_rsi_period"`
+	StochasticRSIOverbought float64 `json:"stochastic_rsi_overbought"`
+	StochasticRSIOversold float64 `json:"stochastic_rsi_oversold"`
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
 
@@ -259,6 +265,18 @@ func (c *DCAConfig) SetOBVTrendThreshold(val float64) {
 	c.OBVTrendThreshold = val
 }
 
+func (c *DCAConfig) SetStochasticRSIPeriod(val int) {
+	c.StochasticRSIPeriod = val
+}
+
+func (c *DCAConfig) SetStochasticRSIOverbought(val float64) {
+	c.StochasticRSIOverbought = val
+}
+
+func (c *DCAConfig) SetStochasticRSIOversold(val float64) {
+	c.StochasticRSIOversold = val
+}
+
 // NewDefaultDCAConfig creates a new DCA configuration with default values
 func NewDefaultDCAConfig() *DCAConfig {
 	return &DCAConfig{
@@ -294,5 +312,8 @@ func NewDefaultDCAConfig() *DCAConfig {
 		UseTPLevels:    DefaultUseTPLevels,
 		MinOrderQty:    DefaultMinOrderQty,
 		OBVTrendThreshold: DefaultOBVTrendThreshold,
+		StochasticRSIPeriod: DefaultStochasticRSIPeriod,
+		StochasticRSIOverbought: DefaultStochasticRSIOverbought,
+		StochasticRSIOversold: DefaultStochasticRSIOversold,
 	}
 }

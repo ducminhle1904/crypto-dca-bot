@@ -153,6 +153,11 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	if strategy.OBV != nil {
 		cfg.OBVTrendThreshold = strategy.OBV.TrendThreshold
 	}
+	if strategy.StochasticRSI != nil {
+		cfg.StochasticRSIPeriod = strategy.StochasticRSI.Period
+		cfg.StochasticRSIOverbought = strategy.StochasticRSI.Overbought
+		cfg.StochasticRSIOversold = strategy.StochasticRSI.Oversold
+	}
 
 	// Map risk parameters
 	if nestedCfg.Risk.InitialBalance > 0 {
@@ -257,6 +262,12 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		case "obv":
 			strategyConfig.OBV = &OBVConfig{
 				TrendThreshold: dcaCfg.OBVTrendThreshold,
+			}
+		case "stochrsi", "stochastic_rsi", "stoch_rsi":
+			strategyConfig.StochasticRSI = &StochasticRSIConfig{
+				Period:     dcaCfg.StochasticRSIPeriod,
+				Overbought: dcaCfg.StochasticRSIOverbought,
+				Oversold:   dcaCfg.StochasticRSIOversold,
 			}
 		}
 	}

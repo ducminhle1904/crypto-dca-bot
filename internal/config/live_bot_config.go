@@ -70,6 +70,9 @@ type StrategyConfig struct {
 	
 	// Volume indicators
 	OBV         IndicatorOBVConfig         `json:"obv"`
+	
+	// Momentum indicators
+	StochasticRSI IndicatorStochasticRSIConfig `json:"stochastic_rsi"`
 }
 
 
@@ -133,6 +136,13 @@ type IndicatorSuperTrendConfig struct {
 // IndicatorOBVConfig holds OBV (On-Balance Volume) configuration
 type IndicatorOBVConfig struct {
 	TrendThreshold float64 `json:"trend_threshold"` // Threshold for trend change detection (default 0.01 = 1%)
+}
+
+// IndicatorStochasticRSIConfig holds Stochastic RSI indicator configuration
+type IndicatorStochasticRSIConfig struct {
+	Period     int     `json:"period"`      // Period for RSI and Stochastic calculation (default 14)
+	Overbought float64 `json:"overbought"`  // Overbought threshold (default 80.0)
+	Oversold   float64 `json:"oversold"`    // Oversold threshold (default 20.0)
 }
 
 // RiskConfig holds risk management configuration
@@ -302,6 +312,17 @@ func (c *LiveBotConfig) setDefaults() error {
 	// OBV defaults
 	if c.Strategy.OBV.TrendThreshold == 0 {
 		c.Strategy.OBV.TrendThreshold = 0.01 // 1% threshold
+	}
+
+	// Stochastic RSI defaults
+	if c.Strategy.StochasticRSI.Period == 0 {
+		c.Strategy.StochasticRSI.Period = 14 // 14 period
+	}
+	if c.Strategy.StochasticRSI.Overbought == 0 {
+		c.Strategy.StochasticRSI.Overbought = 80.0 // 80% overbought
+	}
+	if c.Strategy.StochasticRSI.Oversold == 0 {
+		c.Strategy.StochasticRSI.Oversold = 20.0 // 20% oversold
 	}
 
 	// Risk defaults
