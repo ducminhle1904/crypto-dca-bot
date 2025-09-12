@@ -115,6 +115,69 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 	return bot, nil
 }
 
+// calculateRequiredThreshold calculates the price drop threshold required for the current DCA level
+func (bot *LiveBot) calculateRequiredThreshold() float64 {
+	baseThreshold := bot.config.Strategy.PriceThreshold
+	multiplier := bot.config.Strategy.PriceThresholdMultiplier
+	
+	if multiplier <= 1.0 {
+		return baseThreshold
+	}
+	
+	// Get DCA level safely with mutex protection
+	bot.positionMutex.RLock()
+	currentDCALevel := bot.dcaLevel
+	bot.positionMutex.RUnlock()
+	
+	// Calculate progressive threshold: base * (multiplier ^ dcaLevel)
+	threshold := baseThreshold
+	for i := 1; i < currentDCALevel; i++ {
+		threshold *= multiplier
+	}
+	
+	return threshold
+}
+
+// getCurrentTPOrderCount gets the current number of active TP orders from the exchange
+func (bot *LiveBot) getCurrentTPOrderCount() int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	orders, err := bot.exchange.GetOpenOrders(ctx, bot.category, bot.symbol)
+	if err != nil {
+		bot.logger.LogWarning("TP Count", "Failed to get current orders: %v", err)
+		// Fallback to memory tracking
+		bot.tpOrderMutex.RLock()
+		count := len(bot.activeTPOrders)
+		bot.tpOrderMutex.RUnlock()
+		return count
+	}
+	
+	// Get current average price for TP validation
+	positions, posErr := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	var currentAvgPrice float64 = 0
+	if posErr == nil {
+		for _, pos := range positions {
+			if pos.Symbol == bot.symbol && pos.Side == "Buy" {
+				if avgPrice, err := parseFloat(pos.AvgPrice); err == nil {
+					currentAvgPrice = avgPrice
+				}
+				break
+			}
+		}
+	}
+	
+	// Count TP orders on exchange
+	tpCount := 0
+	for _, order := range orders {
+		if bot.isTPOrder(order, currentAvgPrice) {
+			tpCount++
+		}
+	}
+	
+	return tpCount
+}
+
 // syncStrategyState synchronizes the strategy's internal state with the bot's current state
 func (bot *LiveBot) syncStrategyState() {
 	bot.positionMutex.RLock()
@@ -496,6 +559,10 @@ func (bot *LiveBot) checkAndTrade() {
 		// Continue despite position sync failure
 	}
 
+	// CRITICAL: Sync strategy state BEFORE making trade decisions
+	// This ensures the strategy has current DCA level and last entry price
+	bot.syncStrategyState()
+
 	// Check for stop signal after position sync
 	if bot.shouldStop() {
 		return
@@ -539,10 +606,8 @@ func (bot *LiveBot) checkAndTrade() {
 	filledOrders := bot.detectFilledTPOrders()
 	filledTPSummary := bot.getFilledTPSummary()
 	
-	// Count active TP orders
-	bot.tpOrderMutex.RLock()
-	activeTPCount := len(bot.activeTPOrders)
-	bot.tpOrderMutex.RUnlock()
+	// Get accurate active TP count from exchange (more reliable than memory tracking)
+	activeTPCount := bot.getCurrentTPOrderCount()
 	
 	// Notify about newly filled orders
 	if len(filledOrders) > 0 {
@@ -550,9 +615,16 @@ func (bot *LiveBot) checkAndTrade() {
 		fmt.Printf("🎯 TP Orders Filled: %s\n", strings.Join(filledOrders, ", "))
 	}
 	
-	// Log market status to file with TP information
+	// Log market status to file with TP information (get state safely with mutex protection)
+	bot.positionMutex.RLock()
+	safeBalance := bot.balance
+	safePosition := bot.currentPosition
+	safeAvgPrice := bot.averagePrice
+	safeDCALevel := bot.dcaLevel
+	bot.positionMutex.RUnlock()
+	
 	exchangePnL := bot.getExchangePnL()
-	bot.logger.LogMarketStatus(currentPrice, action, bot.balance, bot.currentPosition, bot.averagePrice, bot.dcaLevel, exchangePnL, filledTPSummary, activeTPCount)
+	bot.logger.LogMarketStatus(currentPrice, action, safeBalance, safePosition, safeAvgPrice, safeDCALevel, exchangePnL, filledTPSummary, activeTPCount)
 
 	// Execute trading action
 	if action != "HOLD" {
@@ -605,7 +677,12 @@ func (bot *LiveBot) getRecentKlines() ([]types.OHLCV, error) {
 
 // getExchangePnL retrieves unrealized PnL from exchange
 func (bot *LiveBot) getExchangePnL() string {
-	if bot.currentPosition <= 0 {
+	// Get current position safely
+	bot.positionMutex.RLock()
+	currentPos := bot.currentPosition
+	bot.positionMutex.RUnlock()
+	
+	if currentPos <= 0 {
 		return ""
 	}
 	
@@ -643,7 +720,12 @@ func (bot *LiveBot) analyzeMarket(klines []types.OHLCV, currentPrice float64) (*
 		return decision, "BUY"
 	} else {
 		// Log HOLD reasoning every 10th check to avoid spam, but always log immediately after cycle completion
-		if bot.dcaLevel == 0 || bot.holdLogCounter%10 == 0 {
+		// Get DCA level safely for logging decision
+		bot.positionMutex.RLock()
+		currentDCALevel := bot.dcaLevel
+		bot.positionMutex.RUnlock()
+		
+		if currentDCALevel == 0 || bot.holdLogCounter%10 == 0 {
 			bot.logger.Info("⏸️ HOLD Decision: %s", decision.Reason)
 		}
 		bot.holdLogCounter++
@@ -669,12 +751,35 @@ func (bot *LiveBot) executeTrade(decision *strategy.TradeDecision, action string
 func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) {
 	ctx := context.Background()
 
+	// Additional safety check: Validate price threshold for DCA trades at bot level
+	// Get current state safely with mutex protection
+	bot.positionMutex.RLock()
+	currentDCALevel := bot.dcaLevel
+	currentAvgPrice := bot.averagePrice
+	bot.positionMutex.RUnlock()
+	
+	if currentDCALevel > 0 && currentAvgPrice > 0 && bot.config.Strategy.PriceThreshold > 0 {
+		priceDrop := (currentAvgPrice - price) / currentAvgPrice
+		requiredThreshold := bot.calculateRequiredThreshold()
+		
+		if priceDrop < requiredThreshold {
+			bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price drop %.2f%% < required %.2f%% (DCA Level %d)", 
+				priceDrop*100, requiredThreshold*100, currentDCALevel)
+			return
+		}
+	}
+
 	// Use strategy's calculated amount (confidence-based)
 	amount := decision.Amount
 	
+	// Get current DCA level safely for multiplier calculation
+	bot.positionMutex.RLock()
+	currentDCALevelForSizing := bot.dcaLevel
+	bot.positionMutex.RUnlock()
+	
 	// Apply DCA level multiplier on top of strategy's calculation
-	if bot.dcaLevel > 0 {
-		multiplier := 1.0 + float64(bot.dcaLevel)*0.5 // Increase by 50% each level
+	if currentDCALevelForSizing > 0 {
+		multiplier := 1.0 + float64(currentDCALevelForSizing)*0.5 // Increase by 50% each level
 		if multiplier > bot.config.Strategy.MaxMultiplier {
 			multiplier = bot.config.Strategy.MaxMultiplier
 		}
@@ -683,7 +788,7 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	
 	// Log advanced sizing info
 	bot.logger.Info("🧠 Advanced Position Sizing: Confidence: %.1f%%, Strength: %.1f%%, Strategy: $%.2f, DCA Level: %d, Final: $%.2f", 
-		decision.Confidence*100, decision.Strength*100, decision.Amount, bot.dcaLevel, amount)
+		decision.Confidence*100, decision.Strength*100, decision.Amount, currentDCALevelForSizing, amount)
 
 	// Get trading constraints
 	constraints, err := bot.exchange.GetTradingConstraints(ctx, bot.category, bot.symbol)
@@ -748,15 +853,28 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 
 	// Sync with exchange data first to get actual executed values
 	bot.syncAfterTrade(order, "BUY")
-	bot.logger.Info("✅ Sync complete - Position: %.6f, AvgPrice: %.4f", bot.currentPosition, bot.averagePrice)
+	
+	// Log sync completion with safely read values
+	bot.positionMutex.RLock()
+	logPosition := bot.currentPosition
+	logAvgPrice := bot.averagePrice
+	bot.positionMutex.RUnlock()
+	bot.logger.Info("✅ Sync complete - Position: %.6f, AvgPrice: %.4f", logPosition, logAvgPrice)
 
 	// Place multi-level take profit orders for FIRST trade only (DCA level 1)
 	// For DCA trades (level 2+), TP orders are updated by syncAfterTrade -> updateMultiLevelTPOrders
-	if bot.config.Strategy.AutoTPOrders && bot.dcaLevel <= 1 {
+	// Get current state safely for TP order decision
+	bot.positionMutex.RLock()
+	currentDCALevelForTP := bot.dcaLevel
+	currentAvgPriceForTP := bot.averagePrice
+	currentPositionForTP := bot.currentPosition
+	bot.positionMutex.RUnlock()
+	
+	if bot.config.Strategy.AutoTPOrders && currentDCALevelForTP <= 1 {
 		// Use position data from sync instead of order response (more reliable)
-		avgPrice := bot.averagePrice // Updated by syncAfterTrade
+		avgPrice := currentAvgPriceForTP // Updated by syncAfterTrade
 		
-		if bot.currentPosition > 0 && avgPrice > 0 {
+		if currentPositionForTP > 0 && avgPrice > 0 {
 			// Get current position size from exchange for accurate TP sizing
 			ctx := context.Background()
 			positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
@@ -777,9 +895,9 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 				}
 			}
 		} else {
-			bot.logger.LogWarning("Multi-Level TP Setup", "No position found after trade execution (position: %.6f, avgPrice: %.4f)", bot.currentPosition, avgPrice)
+			bot.logger.LogWarning("Multi-Level TP Setup", "No position found after trade execution (position: %.6f, avgPrice: %.4f)", currentPositionForTP, avgPrice)
 		}
-	} else if bot.config.Strategy.AutoTPOrders && bot.dcaLevel > 1 {
+	} else if bot.config.Strategy.AutoTPOrders && currentDCALevelForTP > 1 {
 		bot.logger.Info("🔄 DCA trade detected - TP orders will be updated by syncAfterTrade process")
 	}
 }
@@ -945,18 +1063,20 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 			continue
 		}
 		
-		// Track the TP order
-		bot.tpOrderMutex.Lock()
-		bot.activeTPOrders[tpOrder.OrderID] = &TPOrderInfo{
-			Level:     level,
-			Percent:   levelPercent,
-			Quantity:  formattedQty,
-			Price:     formattedPrice,
-			OrderID:   tpOrder.OrderID,
-			Filled:    false,
-			FilledQty: "0",
-		}
-		bot.tpOrderMutex.Unlock() // Unlock immediately, not with defer
+		// Track the TP order (using proper defer pattern for safety)
+		func() {
+			bot.tpOrderMutex.Lock()
+			defer bot.tpOrderMutex.Unlock()
+			bot.activeTPOrders[tpOrder.OrderID] = &TPOrderInfo{
+				Level:     level,
+				Percent:   levelPercent,
+				Quantity:  formattedQty,
+				Price:     formattedPrice,
+				OrderID:   tpOrder.OrderID,
+				Filled:    false,
+				FilledQty: "0",
+			}
+		}()
 		bot.logger.Info("✅ TP Level %d placed: %s %s at $%s (%.2f%%)", 
 			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100)
 		
@@ -1789,9 +1909,10 @@ func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bo
 
 // detectFilledTPOrders detects which TP orders have been filled since last check
 func (bot *LiveBot) detectFilledTPOrders() []string {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	
-	// Get current open orders
+	// Get current open orders with timeout
 	orders, err := bot.exchange.GetOpenOrders(ctx, bot.category, bot.symbol)
 	if err != nil {
 		bot.logger.LogWarning("TP Fill Detection", "Failed to get open orders: %v", err)
@@ -1826,19 +1947,26 @@ func (bot *LiveBot) detectFilledTPOrders() []string {
 	
 	for orderID, tpInfo := range bot.activeTPOrders {
 		if !activeOnExchange[orderID] {
-			// Order is no longer on exchange - likely filled
-			bot.logger.Info("🎯 TP Order FILLED: Level %d at $%s (%.2f%%) - OrderID: %s", 
-				tpInfo.Level, tpInfo.Price, tpInfo.Percent*100, orderID)
+			// Validate this is actually a TP order fill, not a system error
+			if tpInfo.Level > 0 && tpInfo.Percent > 0 {
+				// Order is no longer on exchange - likely filled
+				bot.logger.Info("🎯 TP Order FILLED: Level %d at $%s (%.2f%%) - OrderID: %s", 
+					tpInfo.Level, tpInfo.Price, tpInfo.Percent*100, orderID)
+				
+				// Move to filled orders tracking
+				tpInfo.Filled = true
+				bot.filledTPOrders[orderID] = tpInfo
+				
+				// Create detailed string for display
+				filledDetail := fmt.Sprintf("TP%d@$%s(%.1f%%)", tpInfo.Level, tpInfo.Price, tpInfo.Percent*100)
+				filledOrderDetails = append(filledOrderDetails, filledDetail)
+			} else {
+				// Invalid TP order data - log debug info
+				bot.logger.Info("🐛 DEBUG: Invalid TP order data detected - Level: %d, Percent: %.4f, OrderID: %s", 
+					tpInfo.Level, tpInfo.Percent, orderID)
+			}
 			
-			// Move to filled orders tracking
-			tpInfo.Filled = true
-			bot.filledTPOrders[orderID] = tpInfo
-			
-			// Create detailed string for display
-			filledDetail := fmt.Sprintf("TP%d@$%s(%.1f%%)", tpInfo.Level, tpInfo.Price, tpInfo.Percent*100)
-			filledOrderDetails = append(filledOrderDetails, filledDetail)
-			
-			// Remove from active orders
+			// Remove from active orders regardless
 			delete(bot.activeTPOrders, orderID)
 		}
 	}
