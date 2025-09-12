@@ -384,6 +384,10 @@ func (bot *LiveBot) initializeStrategy() error {
 			)
 			bot.strategy.AddIndicator(supertrend)
 			bot.logger.Info("✅ SuperTrend indicator added successfully")
+		case "obv":
+			obv := indicators.NewOBVWithThreshold(bot.config.Strategy.OBV.TrendThreshold)
+			bot.strategy.AddIndicator(obv)
+			bot.logger.Info("✅ OBV indicator added successfully")
 		default:
 			bot.logger.Info("❌ Unknown indicator: '%s'", indName)
 		}
@@ -883,7 +887,7 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	currentAvgPriceForTP := bot.averagePrice
 	currentPositionForTP := bot.currentPosition
 	bot.positionMutex.RUnlock()
-	
+
 	if bot.config.Strategy.AutoTPOrders && currentDCALevelForTP <= 1 {
 		// Use position data from sync instead of order response (more reliable)
 		avgPrice := currentAvgPriceForTP // Updated by syncAfterTrade

@@ -10,6 +10,7 @@
     "window_size": 100,
     "tp_percent": 0.05,
     "use_tp_levels": true,
+    "auto_tp_orders": true,
     "cycle": true,
     "indicators": ["supertrend", "mfi", "keltner", "wavetrend"],
     "supertrend": {

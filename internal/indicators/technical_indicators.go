@@ -25,6 +25,7 @@ const (
 	IndicatorTypeWaveTrend        IndicatorType = "WAVETREND"
 	IndicatorTypeKeltnerChannels  IndicatorType = "KELTNER_CHANNELS"
 	IndicatorTypeHullMA           IndicatorType = "HULL_MA"
+	IndicatorTypeOBV              IndicatorType = "OBV"
 )
 
 // IndicatorFactory creates technical indicators based on type and parameters
@@ -129,6 +130,13 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 		}
 		return NewHullMA(period), nil
 		
+	case IndicatorTypeOBV:
+		threshold := 0.01
+		if t, ok := params["trend_threshold"].(float64); ok {
+			threshold = t
+		}
+		return NewOBVWithThreshold(threshold), nil
+		
 	default:
 		return nil, fmt.Errorf("unknown indicator type: %s", indicatorType)
 	}
@@ -146,6 +154,7 @@ func (f *IndicatorFactory) GetAvailableIndicators() []IndicatorType {
 		IndicatorTypeWaveTrend,
 		IndicatorTypeKeltnerChannels,
 		IndicatorTypeHullMA,
+		IndicatorTypeOBV,
 	}
 }
 
@@ -170,6 +179,8 @@ func ParseIndicatorType(s string) (IndicatorType, error) {
 		return IndicatorTypeKeltnerChannels, nil
 	case "HULL_MA", "HMA":
 		return IndicatorTypeHullMA, nil
+	case "OBV":
+		return IndicatorTypeOBV, nil
 	default:
 		return "", fmt.Errorf("unknown indicator type: %s", s)
 	}

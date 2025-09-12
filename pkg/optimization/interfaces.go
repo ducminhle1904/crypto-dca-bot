@@ -82,4 +82,5 @@ type OptimizationRanges struct {
 	WaveTrendN2        []int
 	WaveTrendOverbought []float64
 	WaveTrendOversold   []float64
+	OBVTrendThresholds []float64
 }

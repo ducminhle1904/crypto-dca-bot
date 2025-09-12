@@ -328,6 +328,9 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 		dcaConfig.WaveTrendOverbought = RandomChoice(ranges.WaveTrendOverbought, rng)
 		dcaConfig.WaveTrendOversold = RandomChoice(ranges.WaveTrendOversold, rng)
 	}
+	if indicatorSet["obv"] {
+		dcaConfig.OBVTrendThreshold = RandomChoice(ranges.OBVTrendThresholds, rng)
+	}
 }
 
 func RunBacktestWithData(config interface{}, data []types.OHLCV) *backtest.BacktestResults {
@@ -411,6 +414,9 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 		if rng.Float64() < 0.5 { childConfig.WaveTrendOverbought = parent2Config.WaveTrendOverbought }
 		if rng.Float64() < 0.5 { childConfig.WaveTrendOversold = parent2Config.WaveTrendOversold }
 	}
+	if indicatorSet["obv"] {
+		if rng.Float64() < 0.5 { childConfig.OBVTrendThreshold = parent2Config.OBVTrendThreshold }
+	}
 }
 
 func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
@@ -484,6 +490,9 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendN2 = RandomChoice(ranges.WaveTrendN2, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendOverbought = RandomChoice(ranges.WaveTrendOverbought, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.WaveTrendOversold = RandomChoice(ranges.WaveTrendOversold, rng) }
+	}
+	if indicatorSet["obv"] {
+		if rng.Float64() < 0.1 { dcaConfig.OBVTrendThreshold = RandomChoice(ranges.OBVTrendThresholds, rng) }
 	}
 }
 

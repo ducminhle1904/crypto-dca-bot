@@ -39,6 +39,7 @@ type DCAFlags struct {
 	UseMFI           *bool
 	UseKeltner       *bool
 	UseWaveTrend     *bool
+	UseOBV           *bool
 	
 	// Analysis options
 	Optimize         *bool
@@ -97,6 +98,7 @@ func NewDCAFlags() *DCAFlags {
 		UseMFI:           flag.Bool("mfi", false, "Include MFI indicator"),
 		UseKeltner:       flag.Bool("keltner", false, "Include Keltner Channels indicator"),
 		UseWaveTrend:     flag.Bool("wavetrend", false, "Include WaveTrend indicator"),
+		UseOBV:           flag.Bool("obv", false, "Include OBV (On-Balance Volume) indicator"),
 		
 		// Analysis options
 		Optimize:         flag.Bool("optimize", false, "Run genetic algorithm optimization"),
@@ -326,6 +328,9 @@ func ResolveIndicators(flags *DCAFlags) ([]string, error) {
 	if *flags.UseWaveTrend {
 		indicators = append(indicators, "wavetrend")
 	}
+	if *flags.UseOBV {
+		indicators = append(indicators, "obv")
+	}
 	
 	// Priority 2: Indicators list flag
 	if *flags.Indicators != "" {
@@ -364,7 +369,7 @@ func ResolveIndicators(flags *DCAFlags) ([]string, error) {
 func isValidIndicator(indicator string) bool {
 	validIndicators := []string{
 		"rsi", "macd", "bb", "bollinger", "ema", "sma",
-		"hullma", "hull_ma", "supertrend", "st", "mfi", "keltner", "kc", "wavetrend", "wt",
+		"hullma", "hull_ma", "supertrend", "st", "mfi", "keltner", "kc", "wavetrend", "wt", "obv",
 	}
 	
 	for _, valid := range validIndicators {
@@ -406,6 +411,8 @@ func GetIndicatorDescription(indicators []string) string {
 			upperIndicators[i] = "Keltner"
 		case "wavetrend", "wt":
 			upperIndicators[i] = "WaveTrend"
+		case "obv":
+			upperIndicators[i] = "OBV"
 		default:
 			upperIndicators[i] = strings.ToUpper(ind)
 		}

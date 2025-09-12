@@ -1432,6 +1432,10 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 			wavetrend.SetOversold(cfg.WaveTrendOversold)
 			dca.AddIndicator(wavetrend)
 		}
+		if include["obv"] {
+			obv := indicators.NewOBV()
+			dca.AddIndicator(obv)
+		}
 	} else {
 		// Classic combo indicators
 		if include["rsi"] {
@@ -1451,6 +1455,10 @@ func createStrategy(cfg *BacktestConfig) strategy.Strategy {
 		if include["ema"] {
 			ema := indicators.NewEMA(cfg.EMAPeriod)
 			dca.AddIndicator(ema)
+		}
+		if include["obv"] {
+			obv := indicators.NewOBV()
+			dca.AddIndicator(obv)
 		}
 	}
 

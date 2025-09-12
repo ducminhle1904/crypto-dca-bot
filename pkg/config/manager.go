@@ -65,7 +65,7 @@ func (m *DCAConfigManager) LoadConfig(configFile, dataFile, symbol string, balan
 	if err := m.ValidateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
-	
+
 	return cfg, nil
 }
 
@@ -108,59 +108,50 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	cfg.UseTPLevels = strategy.UseTPLevels
 	cfg.Cycle = strategy.Cycle
 	cfg.Indicators = strategy.Indicators
-	// Map indicator-specific configurations
-	// Check if advanced indicators are present and configure them
-	hasAdvancedIndicators := false
-	for _, ind := range strategy.Indicators {
-		switch strings.ToLower(ind) {
-		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
-			hasAdvancedIndicators = true
-			break
-		}
+	
+	// Map indicator-specific configurations - no artificial separation needed
+	// Load config for any indicator that's present (allows flexible mixing)
+	if strategy.RSI != nil {
+		cfg.RSIPeriod = strategy.RSI.Period
+		cfg.RSIOversold = strategy.RSI.Oversold
+		cfg.RSIOverbought = strategy.RSI.Overbought
 	}
-	if hasAdvancedIndicators {
-		// Advanced combo parameters
-		if strategy.HullMA != nil {
-			cfg.HullMAPeriod = strategy.HullMA.Period
-		}
-		if strategy.SuperTrend != nil {
-			cfg.SuperTrendPeriod = strategy.SuperTrend.Period
-			cfg.SuperTrendMultiplier = strategy.SuperTrend.Multiplier
-		}
-		if strategy.MFI != nil {
-			cfg.MFIPeriod = strategy.MFI.Period
-			cfg.MFIOversold = strategy.MFI.Oversold
-			cfg.MFIOverbought = strategy.MFI.Overbought
-		}
-		if strategy.KeltnerChannels != nil {
-			cfg.KeltnerPeriod = strategy.KeltnerChannels.Period
-			cfg.KeltnerMultiplier = strategy.KeltnerChannels.Multiplier
-		}
-		if strategy.WaveTrend != nil {
-			cfg.WaveTrendN1 = strategy.WaveTrend.N1
-			cfg.WaveTrendN2 = strategy.WaveTrend.N2
-			cfg.WaveTrendOverbought = strategy.WaveTrend.Overbought
-			cfg.WaveTrendOversold = strategy.WaveTrend.Oversold
-		}
-	} else {
-		// Classic combo parameters
-		if strategy.RSI != nil {
-			cfg.RSIPeriod = strategy.RSI.Period
-			cfg.RSIOversold = strategy.RSI.Oversold
-			cfg.RSIOverbought = strategy.RSI.Overbought
-		}
-		if strategy.MACD != nil {
-			cfg.MACDFast = strategy.MACD.FastPeriod
-			cfg.MACDSlow = strategy.MACD.SlowPeriod
-			cfg.MACDSignal = strategy.MACD.SignalPeriod
-		}
-		if strategy.BollingerBands != nil {
-			cfg.BBPeriod = strategy.BollingerBands.Period
-			cfg.BBStdDev = strategy.BollingerBands.StdDev
-		}
-		if strategy.EMA != nil {
-			cfg.EMAPeriod = strategy.EMA.Period
-		}
+	if strategy.MACD != nil {
+		cfg.MACDFast = strategy.MACD.FastPeriod
+		cfg.MACDSlow = strategy.MACD.SlowPeriod
+		cfg.MACDSignal = strategy.MACD.SignalPeriod
+	}
+	if strategy.BollingerBands != nil {
+		cfg.BBPeriod = strategy.BollingerBands.Period
+		cfg.BBStdDev = strategy.BollingerBands.StdDev
+	}
+	if strategy.EMA != nil {
+		cfg.EMAPeriod = strategy.EMA.Period
+	}
+	if strategy.HullMA != nil {
+		cfg.HullMAPeriod = strategy.HullMA.Period
+	}
+	if strategy.SuperTrend != nil {
+		cfg.SuperTrendPeriod = strategy.SuperTrend.Period
+		cfg.SuperTrendMultiplier = strategy.SuperTrend.Multiplier
+	}
+	if strategy.MFI != nil {
+		cfg.MFIPeriod = strategy.MFI.Period
+		cfg.MFIOversold = strategy.MFI.Oversold
+		cfg.MFIOverbought = strategy.MFI.Overbought
+	}
+	if strategy.KeltnerChannels != nil {
+		cfg.KeltnerPeriod = strategy.KeltnerChannels.Period
+		cfg.KeltnerMultiplier = strategy.KeltnerChannels.Multiplier
+	}
+	if strategy.WaveTrend != nil {
+		cfg.WaveTrendN1 = strategy.WaveTrend.N1
+		cfg.WaveTrendN2 = strategy.WaveTrend.N2
+		cfg.WaveTrendOverbought = strategy.WaveTrend.Overbought
+		cfg.WaveTrendOversold = strategy.WaveTrend.Oversold
+	}
+	if strategy.OBV != nil {
+		cfg.OBVTrendThreshold = strategy.OBV.TrendThreshold
 	}
 
 	// Map risk parameters
@@ -211,58 +202,62 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		Indicators:     dcaCfg.Indicators,
 	}
 	
-	// Add configurations for all advanced indicators if present in config
-	// Note: UseAdvancedCombo is deprecated - using heuristic based on indicators present
-	hasAdvancedIndicators := false
-	for _, ind := range dcaCfg.Indicators {
-		switch strings.ToLower(ind) {
-		case "hullma", "hull_ma", "supertrend", "mfi", "keltner", "wavetrend":
-			hasAdvancedIndicators = true
-			break
-		}
-	}
-	if hasAdvancedIndicators {
-		// Only include advanced combo parameters
-		strategyConfig.HullMA = &HullMAConfig{
-			Period: dcaCfg.HullMAPeriod,
-		}
-		strategyConfig.SuperTrend = &SuperTrendConfig{
-			Period:     dcaCfg.SuperTrendPeriod,
-			Multiplier: dcaCfg.SuperTrendMultiplier,
-		}
-		strategyConfig.MFI = &MFIConfig{
-			Period:     dcaCfg.MFIPeriod,
-			Oversold:   dcaCfg.MFIOversold,
-			Overbought: dcaCfg.MFIOverbought,
-		}
-		strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
-			Period:     dcaCfg.KeltnerPeriod,
-			Multiplier: dcaCfg.KeltnerMultiplier,
-		}
-		strategyConfig.WaveTrend = &WaveTrendConfig{
-			N1:          dcaCfg.WaveTrendN1,
-			N2:          dcaCfg.WaveTrendN2,
-			Overbought:  dcaCfg.WaveTrendOverbought,
-			Oversold:    dcaCfg.WaveTrendOversold,
-		}
-	} else {
-		// Only include classic combo parameters
-		strategyConfig.RSI = &RSIConfig{
-			Period:     dcaCfg.RSIPeriod,
-			Oversold:   dcaCfg.RSIOversold,
-			Overbought: dcaCfg.RSIOverbought,
-		}
-		strategyConfig.MACD = &MACDConfig{
-			FastPeriod:   dcaCfg.MACDFast,
-			SlowPeriod:   dcaCfg.MACDSlow,
-			SignalPeriod: dcaCfg.MACDSignal,
-		}
-		strategyConfig.BollingerBands = &BollingerBandsConfig{
-			Period: dcaCfg.BBPeriod,
-			StdDev: dcaCfg.BBStdDev,
-		}
-		strategyConfig.EMA = &EMAConfig{
-			Period: dcaCfg.EMAPeriod,
+	// Add configurations for indicators that are actually present
+	// This allows flexible mixing of any indicators (RSI + SuperTrend, MACD + OBV, etc.)
+	for _, indicator := range dcaCfg.Indicators {
+		switch strings.ToLower(indicator) {
+		case "rsi":
+			strategyConfig.RSI = &RSIConfig{
+				Period:     dcaCfg.RSIPeriod,
+				Oversold:   dcaCfg.RSIOversold,
+				Overbought: dcaCfg.RSIOverbought,
+			}
+		case "macd":
+			strategyConfig.MACD = &MACDConfig{
+				FastPeriod:   dcaCfg.MACDFast,
+				SlowPeriod:   dcaCfg.MACDSlow,
+				SignalPeriod: dcaCfg.MACDSignal,
+			}
+		case "bb", "bollinger":
+			strategyConfig.BollingerBands = &BollingerBandsConfig{
+				Period: dcaCfg.BBPeriod,
+				StdDev: dcaCfg.BBStdDev,
+			}
+		case "ema":
+			strategyConfig.EMA = &EMAConfig{
+				Period: dcaCfg.EMAPeriod,
+			}
+		case "hullma", "hull_ma":
+			strategyConfig.HullMA = &HullMAConfig{
+				Period: dcaCfg.HullMAPeriod,
+			}
+		case "supertrend", "st":
+			strategyConfig.SuperTrend = &SuperTrendConfig{
+				Period:     dcaCfg.SuperTrendPeriod,
+				Multiplier: dcaCfg.SuperTrendMultiplier,
+			}
+		case "mfi":
+			strategyConfig.MFI = &MFIConfig{
+				Period:     dcaCfg.MFIPeriod,
+				Oversold:   dcaCfg.MFIOversold,
+				Overbought: dcaCfg.MFIOverbought,
+			}
+		case "keltner", "kc":
+			strategyConfig.KeltnerChannels = &KeltnerChannelsConfig{
+				Period:     dcaCfg.KeltnerPeriod,
+				Multiplier: dcaCfg.KeltnerMultiplier,
+			}
+		case "wavetrend", "wt":
+			strategyConfig.WaveTrend = &WaveTrendConfig{
+				N1:          dcaCfg.WaveTrendN1,
+				N2:          dcaCfg.WaveTrendN2,
+				Overbought:  dcaCfg.WaveTrendOverbought,
+				Oversold:    dcaCfg.WaveTrendOversold,
+			}
+		case "obv":
+			strategyConfig.OBV = &OBVConfig{
+				TrendThreshold: dcaCfg.OBVTrendThreshold,
+			}
 		}
 	}
 	

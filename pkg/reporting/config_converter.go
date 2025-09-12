@@ -50,6 +50,7 @@ type MainBacktestConfig struct {
 	WaveTrendN2    int     `json:"wavetrend_n2"`
 	WaveTrendOverbought float64 `json:"wavetrend_overbought"`
 	WaveTrendOversold   float64 `json:"wavetrend_oversold"`
+	OBVTrendThreshold   float64 `json:"obv_trend_threshold"`
 	
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
@@ -138,6 +139,10 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 				N2:          cfg.WaveTrendN2,
 				Overbought:  cfg.WaveTrendOverbought,
 				Oversold:    cfg.WaveTrendOversold,
+			}
+		case "obv":
+			strategyConfig.OBV = &OBVConfig{
+				TrendThreshold: cfg.OBVTrendThreshold,
 			}
 		}
 	}

@@ -206,6 +206,10 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		wavetrend.SetOversold(cfg.WaveTrendOversold)
 		dca.AddIndicator(wavetrend)
 	}
+	if include["obv"] {
+		obv := indicators.NewOBV()
+		dca.AddIndicator(obv)
+	}
 
 	return dca, nil
 }

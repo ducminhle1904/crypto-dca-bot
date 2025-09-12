@@ -67,6 +67,9 @@ type StrategyConfig struct {
 	
 	// Additional trend indicators
 	SuperTrend  IndicatorSuperTrendConfig  `json:"supertrend"`
+	
+	// Volume indicators
+	OBV         IndicatorOBVConfig         `json:"obv"`
 }
 
 
@@ -125,6 +128,11 @@ type IndicatorWaveTrendConfig struct {
 type IndicatorSuperTrendConfig struct {
 	Period     int     `json:"period"`     // ATR period for SuperTrend calculation
 	Multiplier float64 `json:"multiplier"` // ATR multiplier for band calculation
+}
+
+// IndicatorOBVConfig holds OBV (On-Balance Volume) configuration
+type IndicatorOBVConfig struct {
+	TrendThreshold float64 `json:"trend_threshold"` // Threshold for trend change detection (default 0.01 = 1%)
 }
 
 // RiskConfig holds risk management configuration
@@ -191,7 +199,8 @@ func (c *LiveBotConfig) setDefaults() error {
 	}
 	
 	// Multi-level TP defaults (always enabled)
-	c.Strategy.UseTPLevels = true // Always use multi-level TP
+	c.Strategy.UseTPLevels = true
+	c.Strategy.AutoTPOrders = true
 	if c.Strategy.TPLevels == 0 {
 		c.Strategy.TPLevels = 5 // 5 levels by default
 	}
@@ -288,6 +297,11 @@ func (c *LiveBotConfig) setDefaults() error {
 	}
 	if c.Strategy.SuperTrend.Multiplier == 0 {
 		c.Strategy.SuperTrend.Multiplier = 2.5
+	}
+
+	// OBV defaults
+	if c.Strategy.OBV.TrendThreshold == 0 {
+		c.Strategy.OBV.TrendThreshold = 0.01 // 1% threshold
 	}
 
 	// Risk defaults

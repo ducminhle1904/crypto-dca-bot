@@ -155,6 +155,7 @@ INDIVIDUAL INDICATORS:
   -mfi                          Include MFI indicator
   -keltner                      Include Keltner Channels indicator
   -wavetrend                    Include WaveTrend indicator
+  -obv                          Include OBV (On-Balance Volume) indicator
 
 ANALYSIS:
   -optimize             Run genetic algorithm optimization
@@ -245,7 +246,7 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 				"  • Individual flags: -rsi -macd -bb -ema\n" +
 				"  • Indicator list: -indicators \"rsi,macd,bb,ema\"\n" +
 				"  • Config file with indicators specified\n" +
-				"\nAvailable indicators: rsi, macd, bb, ema, hullma, supertrend, mfi, keltner, wavetrend")
+				"\nAvailable indicators: rsi, macd, bb, ema, hullma, supertrend, mfi, keltner, wavetrend, obv")
 		}
 	}
 	
@@ -339,6 +340,8 @@ func printIndicatorSettings(cfg *config.DCAConfig) {
 		case "wavetrend", "wt":
 			fmt.Printf("      • WaveTrend: n1=%d, n2=%d, overbought=%.0f, oversold=%.0f\n", 
 				cfg.WaveTrendN1, cfg.WaveTrendN2, cfg.WaveTrendOverbought, cfg.WaveTrendOversold)
+		case "obv":
+			fmt.Printf("      • OBV: trend_threshold=%.3f\n", cfg.OBVTrendThreshold)
 		}
 	}
 }
@@ -559,6 +562,7 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		WaveTrendN2:         cfg.WaveTrendN2,
 		WaveTrendOverbought: cfg.WaveTrendOverbought,
 		WaveTrendOversold:   cfg.WaveTrendOversold,
+		OBVTrendThreshold:   cfg.OBVTrendThreshold,
 		Indicators:          cfg.Indicators,
 		TPPercent:           cfg.TPPercent,
 		UseTPLevels:         cfg.UseTPLevels,

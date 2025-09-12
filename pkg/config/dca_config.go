@@ -37,6 +37,7 @@ const (
 	DefaultWaveTrendN2    = 21
 	DefaultWaveTrendOverbought = 60
 	DefaultWaveTrendOversold = -60
+	DefaultOBVTrendThreshold = 0.01
 	
 	// Technical indicator validation constants
 	MinRSIPeriod           = 2     // Minimum RSI period
@@ -93,7 +94,7 @@ type DCAConfig struct {
 	WaveTrendN2    int     `json:"wavetrend_n2"`
 	WaveTrendOverbought float64 `json:"wavetrend_overbought"`
 	WaveTrendOversold   float64 `json:"wavetrend_oversold"`
-	
+	OBVTrendThreshold float64 `json:"obv_trend_threshold"`
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
 
@@ -254,6 +255,10 @@ func (c *DCAConfig) SetEMAPeriod(val int) {
 	c.EMAPeriod = val
 }
 
+func (c *DCAConfig) SetOBVTrendThreshold(val float64) {
+	c.OBVTrendThreshold = val
+}
+
 // NewDefaultDCAConfig creates a new DCA configuration with default values
 func NewDefaultDCAConfig() *DCAConfig {
 	return &DCAConfig{
@@ -288,5 +293,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		TPPercent:      DefaultTPPercent,
 		UseTPLevels:    DefaultUseTPLevels,
 		MinOrderQty:    DefaultMinOrderQty,
+		OBVTrendThreshold: DefaultOBVTrendThreshold,
 	}
 }
