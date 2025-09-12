@@ -572,7 +572,6 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 		dca.AddIndicator(wavetrend)
 	}
 	
-	// Classic indicators
 	if include["rsi"] {
 		rsi := indicators.NewRSI(cfg.RSIPeriod)
 		rsi.SetOversold(cfg.RSIOversold)
@@ -584,7 +583,6 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 		dca.AddIndicator(macd)
 	}
 	if include["bb"] || include["bollinger"] {
-		// Use optimized Bollinger Bands for better performance in GA
 		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 		dca.AddIndicator(bb)
 	}
@@ -593,7 +591,6 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 		dca.AddIndicator(ema)
 	}
 	
-	// Advanced indicators
 	if include["hullma"] || include["hull_ma"] {
 		hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
 		dca.AddIndicator(hullMA)

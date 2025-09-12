@@ -1,8 +1,6 @@
 package reporting
 
 // Configuration types for JSON output formatting
-// Moved from cmd/backtest/main.go to clean up the main file
-
 // NestedConfig represents the new nested configuration format for output
 type NestedConfig struct {
 	Strategy      StrategyConfig      `json:"strategy"`
@@ -25,12 +23,10 @@ type StrategyConfig struct {
 	Cycle            bool                       `json:"cycle"`
 	Indicators       []string                   `json:"indicators"`
 	UseAdvancedCombo bool                       `json:"use_advanced_combo"`
-	// Classic combo - use pointers so they can be omitted when not used
 	RSI            *RSIConfig                 `json:"rsi,omitempty"`
 	MACD           *MACDConfig                `json:"macd,omitempty"`
 	BollingerBands *BollingerBandsConfig      `json:"bollinger_bands,omitempty"`
 	EMA            *EMAConfig                 `json:"ema,omitempty"`
-	// Advanced combo - use pointers so they can be omitted when not used
 	HullMA         *HullMAConfig              `json:"hull_ma,omitempty"`
 	SuperTrend     *SuperTrendConfig          `json:"supertrend,omitempty"`
 	MFI            *MFIConfig                 `json:"mfi,omitempty"`
@@ -83,7 +79,6 @@ type NotificationsConfig struct {
 	TelegramChat  string `json:"telegram_chat"`
 }
 
-// Advanced combo indicator configs
 type HullMAConfig struct {
 	Period int `json:"period"`
 }

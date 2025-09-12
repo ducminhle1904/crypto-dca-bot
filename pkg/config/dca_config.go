@@ -25,7 +25,6 @@ const (
 	DefaultBBStdDev       = 2.0
 	DefaultEMAPeriod      = 50
 	
-	// Advanced combo indicator parameters
 	DefaultHullMAPeriod         = 20
 	DefaultSuperTrendPeriod     = 14
 	DefaultSuperTrendMultiplier = 2.5
@@ -58,7 +57,7 @@ const (
 type DCAConfig struct {
 	DataFile       string  `json:"data_file"`
 	Symbol         string  `json:"symbol"`
-	Interval       string  `json:"interval"`        // Trading interval (5m, 1h, etc.)
+	Interval       string  `json:"interval"`
 	InitialBalance float64 `json:"initial_balance"`
 	Commission     float64 `json:"commission"`
 	WindowSize     int     `json:"window_size"`
@@ -67,11 +66,8 @@ type DCAConfig struct {
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
 	PriceThreshold float64 `json:"price_threshold"`
-	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"`
 	
-	// No longer used - indicators are specified explicitly via Indicators field
-	
-	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
 	RSIOverbought  float64 `json:"rsi_overbought"`
@@ -85,7 +81,6 @@ type DCAConfig struct {
 	
 	EMAPeriod      int     `json:"ema_period"`
 	
-	// Advanced combo indicator parameters
 	HullMAPeriod         int     `json:"hull_ma_period"`
 	SuperTrendPeriod     int     `json:"supertrend_period"`
 	SuperTrendMultiplier float64 `json:"supertrend_multiplier"`
@@ -107,7 +102,7 @@ type DCAConfig struct {
 	UseTPLevels    bool    `json:"use_tp_levels"`   // Enable 5-level TP mode
 	Cycle          bool    `json:"cycle"`
 	
-	// Minimum lot size for realistic simulation (e.g., 0.01 for BTCUSDT)
+	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
 
@@ -269,7 +264,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		MaxMultiplier:  DefaultMaxMultiplier,
 		PriceThreshold: DefaultPriceThreshold,
 		PriceThresholdMultiplier: DefaultPriceThresholdMultiplier,
-		// Classic combo defaults
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
 		RSIOverbought:  DefaultRSIOverbought,
@@ -279,7 +273,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		BBPeriod:       DefaultBBPeriod,
 		BBStdDev:       DefaultBBStdDev,
 		EMAPeriod:      DefaultEMAPeriod,
-		// Advanced combo defaults
 		HullMAPeriod:         DefaultHullMAPeriod,
 		SuperTrendPeriod:     DefaultSuperTrendPeriod,
 		SuperTrendMultiplier: DefaultSuperTrendMultiplier,

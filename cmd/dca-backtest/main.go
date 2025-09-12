@@ -497,13 +497,6 @@ func printOptimizationResults(bestConfig *config.DCAConfig, bestResults *backtes
 	fmt.Printf("Indicators: %s\n\n", strings.Join(bestConfig.Indicators, ", "))
 }
 
-func getComboName(useAdvanced bool) string {
-	if useAdvanced {
-		return "Advanced (Hull MA + MFI + Keltner + WaveTrend)"
-	}
-	return "Classic (RSI + MACD + BB + EMA)"
-}
-
 func guessIntervalFromPath(path string) string {
 	if path == "" {
 		return "unknown"
@@ -536,9 +529,9 @@ func saveOptimizedConfig(cfg *config.DCAConfig, symbol, interval string) {
 // Helper function to convert DCAConfig for JSON output
 func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 	return reporting.MainBacktestConfig{
-		DataFile:            cfg.DataFile,         // ✅ PRESERVE DATA FILE
+		DataFile:            cfg.DataFile,
 		Symbol:              cfg.Symbol,
-		Interval:            cfg.Interval,         // ✅ PRESERVE INTERVAL
+		Interval:            cfg.Interval,
 		InitialBalance:      cfg.InitialBalance,
 		Commission:          cfg.Commission,
 		WindowSize:          cfg.WindowSize,

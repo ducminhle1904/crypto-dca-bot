@@ -164,7 +164,6 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 	}
 
 	// Instantiate indicators based on what's actually in the indicators list
-	// Classic indicators
 	if include["rsi"] {
 		rsi := indicators.NewRSI(cfg.RSIPeriod)
 		rsi.SetOversold(cfg.RSIOversold)
@@ -176,7 +175,6 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		dca.AddIndicator(macd)
 	}
 	if include["bb"] || include["bollinger"] {
-		// Use optimized Bollinger Bands for better performance
 		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 		dca.AddIndicator(bb)
 	}
@@ -184,8 +182,6 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		ema := indicators.NewEMA(cfg.EMAPeriod)
 		dca.AddIndicator(ema)
 	}
-	
-	// Advanced indicators
 	if include["hullma"] || include["hull_ma"] {
 		hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
 		dca.AddIndicator(hullMA)
@@ -229,35 +225,6 @@ func (r *DefaultBacktestRunner) getActualComboDescription(indicators []string) s
 		return "No indicators"
 	}
 	
-	// Check if it matches known preset combos
-	if len(indicators) == 4 {
-		// Classic combo check
-		hasRSI := contains(indicators, "rsi")
-		hasMACD := contains(indicators, "macd") 
-		hasBB := contains(indicators, "bb")
-		hasEMA := contains(indicators, "ema")
-		
-		if hasRSI && hasMACD && hasBB && hasEMA {
-			return "RSI + MACD + Bollinger Bands + EMA"
-		}
-		
-		// Advanced combo check
-		hasSuperTrend := contains(indicators, "supertrend")
-		hasMFI := contains(indicators, "mfi")
-		hasKeltner := contains(indicators, "keltner")
-		hasWaveTrend := contains(indicators, "wavetrend")
-		
-		if hasSuperTrend && hasMFI && hasKeltner && hasWaveTrend {
-			return "SuperTrend + MFI + Keltner + WaveTrend"
-		}
-		
-		// Original advanced combo with Hull MA
-		hasHullMA := contains(indicators, "hullma") || contains(indicators, "hull_ma")
-		if hasHullMA && hasMFI && hasKeltner && hasWaveTrend {
-			return "Hull MA + MFI + Keltner + WaveTrend"
-		}
-	}
-	
 	// Custom combination - format the indicators nicely
 	var formattedIndicators []string
 	for _, ind := range indicators {
@@ -286,16 +253,6 @@ func (r *DefaultBacktestRunner) getActualComboDescription(indicators []string) s
 	}
 	
 	return "CUSTOM COMBO: " + strings.Join(formattedIndicators, " + ")
-}
-
-// contains checks if a slice contains a string (case-insensitive)
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if strings.ToLower(s) == strings.ToLower(item) {
-			return true
-		}
-	}
-	return false
 }
 
 // validateDataFile validates that the data file exists and is accessible

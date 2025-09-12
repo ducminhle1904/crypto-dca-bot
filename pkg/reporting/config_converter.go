@@ -26,7 +26,6 @@ type MainBacktestConfig struct {
 	// Combo selection  
 	UseAdvancedCombo bool `json:"use_advanced_combo"`
 	
-	// Classic combo indicator parameters
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
 	RSIOverbought  float64 `json:"rsi_overbought"`
@@ -40,7 +39,6 @@ type MainBacktestConfig struct {
 	
 	EMAPeriod      int     `json:"ema_period"`
 	
-	// Advanced combo indicator parameters
 	HullMAPeriod         int     `json:"hull_ma_period"`
 	SuperTrendPeriod     int     `json:"supertrend_period"`
 	SuperTrendMultiplier float64 `json:"supertrend_multiplier"`
@@ -78,7 +76,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 	// Only include the combo that was actually used
 	strategyConfig := StrategyConfig{
 		Symbol:         cfg.Symbol,
-		DataFile:       cfg.DataFile,         // ✅ PRESERVE DATA FILE
+		DataFile:       cfg.DataFile,
 		BaseAmount:     cfg.BaseAmount,
 		MaxMultiplier:  cfg.MaxMultiplier,
 		PriceThreshold: cfg.PriceThreshold,
@@ -86,15 +84,13 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		Interval:       interval,
 		WindowSize:     cfg.WindowSize,
 		TPPercent:      cfg.TPPercent,
-		UseTPLevels:    true, // Always use multi-level TP
+		UseTPLevels:    true,
 		Cycle:          cfg.Cycle,
 		Indicators:     cfg.Indicators,
 		UseAdvancedCombo:    cfg.UseAdvancedCombo,
 	}
 	
-	// Add combo-specific configurations based on what was used
 	if cfg.UseAdvancedCombo {
-		// Only include advanced combo parameters
 		strategyConfig.HullMA = &HullMAConfig{
 			Period: cfg.HullMAPeriod,
 		}
@@ -118,7 +114,6 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 			Oversold:    cfg.WaveTrendOversold,
 		}
 	} else {
-		// Only include classic combo parameters
 		strategyConfig.RSI = &RSIConfig{
 			Period:     cfg.RSIPeriod,
 			Oversold:   cfg.RSIOversold,
