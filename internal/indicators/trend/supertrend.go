@@ -1,9 +1,10 @@
-package indicators
+package trend
 
 import (
 	"errors"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/base"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -22,7 +23,7 @@ type SuperTrend struct {
 	multiplier float64 // Multiplier for ATR to create bands
 	
 	// Dependencies
-	atr *ATR // ATR indicator for volatility measurement
+	atr *base.ATR // ATR indicator for volatility measurement
 	
 	// State variables
 	initialized      bool
@@ -46,7 +47,7 @@ func NewSuperTrendWithParams(period int, multiplier float64) *SuperTrend {
 	return &SuperTrend{
 		period:     period,
 		multiplier: multiplier,
-		atr:        NewATR(period),
+		atr:        base.NewATR(period),
 		upTrend:    false, // Start assuming downtrend
 	}
 }

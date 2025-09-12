@@ -4,6 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/bands"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/oscillators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 )
 
 type PriceData struct {
@@ -45,21 +51,21 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 		if !ok {
 			return nil, fmt.Errorf("sma requires 'period' parameter")
 		}
-		return NewSMA(period), nil
+		return common.NewSMA(period), nil
 		
 	case IndicatorTypeEMA:
 		period, ok := params["period"].(int)
 		if !ok {
 			return nil, fmt.Errorf("ema requires 'period' parameter")
 		}
-		return NewEMA(period), nil
+		return common.NewEMA(period), nil
 		
 	case IndicatorTypeRSI:
 		period, ok := params["period"].(int)
 		if !ok {
 			return nil, fmt.Errorf("rsi requires 'period' parameter")
 		}
-		return NewRSI(period), nil
+		return oscillators.NewRSI(period), nil
 		
 	case IndicatorTypeMACD:
 		fastPeriod := 12
@@ -76,7 +82,7 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 			signalPeriod = sgp
 		}
 		
-		return NewMACD(fastPeriod, slowPeriod, signalPeriod), nil
+		return oscillators.NewMACD(fastPeriod, slowPeriod, signalPeriod), nil
 		
 	case IndicatorTypeBollingerBands:
 		period := 20
@@ -89,14 +95,14 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 			stdDev = sd
 		}
 		
-		return NewBollingerBands(period, stdDev), nil
+		return bands.NewBollingerBands(period, stdDev), nil
 		
 	case IndicatorTypeMFI:
-		period := DefaultMfiPeriod
+		period := oscillators.DefaultMfiPeriod
 		if p, ok := params["period"].(int); ok {
 			period = p
 		}
-		return NewMFIWithPeriod(period), nil
+		return oscillators.NewMFIWithPeriod(period), nil
 		
 	case IndicatorTypeWaveTrend:
 		channelLength := 10
@@ -109,10 +115,10 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 			averageLength = al
 		}
 		
-		return NewWaveTrendCustom(channelLength, averageLength), nil
+		return oscillators.NewWaveTrendCustom(channelLength, averageLength), nil
 		
 	case IndicatorTypeKeltnerChannels:
-		period := DefaultKeltnerChannelPeriod
+		period := bands.DefaultKeltnerChannelPeriod
 		multiplier := 2.0
 		
 		if p, ok := params["period"].(int); ok {
@@ -122,21 +128,21 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 			multiplier = m
 		}
 		
-		return NewKeltnerChannelsCustom(period, multiplier), nil
+		return bands.NewKeltnerChannelsCustom(period, multiplier), nil
 		
 	case IndicatorTypeHullMA:
 		period, ok := params["period"].(int)
 		if !ok {
 			return nil, fmt.Errorf("hull ma requires 'period' parameter")
 		}
-		return NewHullMA(period), nil
+		return trend.NewHullMA(period), nil
 		
 	case IndicatorTypeOBV:
 		threshold := 0.01
 		if t, ok := params["trend_threshold"].(float64); ok {
 			threshold = t
 		}
-		return NewOBVWithThreshold(threshold), nil
+		return volume.NewOBVWithThreshold(threshold), nil
 		
 	case IndicatorTypeStochasticRSI:
 		period := 14
@@ -153,7 +159,7 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 			oversold = os
 		}
 		
-		return NewStochasticRSIWithThresholds(period, overbought, oversold), nil
+		return oscillators.NewStochasticRSIWithThresholds(period, overbought, oversold), nil
 		
 	default:
 		return nil, fmt.Errorf("unknown indicator type: %s", indicatorType)

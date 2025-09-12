@@ -13,7 +13,11 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/config"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/adapters"
-	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/bands"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/oscillators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/logger"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
@@ -323,13 +327,13 @@ func (bot *LiveBot) initializeStrategy() error {
 		bot.logger.Info("🔧 Processing indicator: '%s'", indName)
 		switch strings.ToLower(indName) {
 		case "rsi":
-			rsi := indicators.NewRSI(bot.config.Strategy.RSI.Period)
+			rsi := oscillators.NewRSI(bot.config.Strategy.RSI.Period)
 			rsi.SetOversold(bot.config.Strategy.RSI.Oversold)
 			rsi.SetOverbought(bot.config.Strategy.RSI.Overbought)
 			bot.strategy.AddIndicator(rsi)
 			bot.logger.Info("✅ RSI indicator added successfully")
 		case "macd":
-			macd := indicators.NewMACD(
+			macd := oscillators.NewMACD(
 				bot.config.Strategy.MACD.FastPeriod,
 				bot.config.Strategy.MACD.SlowPeriod,
 				bot.config.Strategy.MACD.SignalPeriod,
@@ -337,39 +341,39 @@ func (bot *LiveBot) initializeStrategy() error {
 			bot.strategy.AddIndicator(macd)
 			bot.logger.Info("✅ MACD indicator added successfully")
 		case "bb", "bollinger":
-			bb := indicators.NewBollingerBands(
+			bb := bands.NewBollingerBands(
 				bot.config.Strategy.BollingerBands.Period,
 				bot.config.Strategy.BollingerBands.StdDev,
 			)
 			bot.strategy.AddIndicator(bb)
 			bot.logger.Info("✅ Bollinger Bands indicator added successfully")
 		case "ema":
-			ema := indicators.NewEMA(bot.config.Strategy.EMA.Period)
+			ema := common.NewEMA(bot.config.Strategy.EMA.Period)
 			bot.strategy.AddIndicator(ema)
 			bot.logger.Info("✅ EMA indicator added successfully")
 		case "sma":
-			sma := indicators.NewSMA(bot.config.Strategy.EMA.Period)
+			sma := common.NewSMA(bot.config.Strategy.EMA.Period)
 			bot.strategy.AddIndicator(sma)
 			bot.logger.Info("✅ SMA indicator added successfully")
 		case "hull_ma", "hullma":
-			hullMA := indicators.NewHullMA(bot.config.Strategy.HullMA.Period)
+			hullMA := trend.NewHullMA(bot.config.Strategy.HullMA.Period)
 			bot.strategy.AddIndicator(hullMA)
 			bot.logger.Info("✅ Hull MA indicator added successfully")
 		case "mfi":
-			mfi := indicators.NewMFIWithPeriod(bot.config.Strategy.MFI.Period)
+			mfi := oscillators.NewMFIWithPeriod(bot.config.Strategy.MFI.Period)
 			mfi.SetOversold(bot.config.Strategy.MFI.Oversold)
 			mfi.SetOverbought(bot.config.Strategy.MFI.Overbought)
 			bot.strategy.AddIndicator(mfi)
 			bot.logger.Info("✅ MFI indicator added successfully")
 		case "keltner_channels", "keltner", "kc":
-			keltner := indicators.NewKeltnerChannelsCustom(
+			keltner := bands.NewKeltnerChannelsCustom(
 				bot.config.Strategy.Keltner.Period,
 				bot.config.Strategy.Keltner.Multiplier,
 			)
 			bot.strategy.AddIndicator(keltner)
 			bot.logger.Info("✅ Keltner Channels indicator added successfully")
 		case "wavetrend", "wt":
-			wavetrend := indicators.NewWaveTrendCustom(
+			wavetrend := oscillators.NewWaveTrendCustom(
 				bot.config.Strategy.WaveTrend.N1,
 				bot.config.Strategy.WaveTrend.N2,
 			)
@@ -378,18 +382,18 @@ func (bot *LiveBot) initializeStrategy() error {
 			bot.strategy.AddIndicator(wavetrend)
 			bot.logger.Info("✅ WaveTrend indicator added successfully")
 		case "supertrend", "st":
-			supertrend := indicators.NewSuperTrendWithParams(
+			supertrend := trend.NewSuperTrendWithParams(
 				bot.config.Strategy.SuperTrend.Period,
 				bot.config.Strategy.SuperTrend.Multiplier,
 			)
 			bot.strategy.AddIndicator(supertrend)
 			bot.logger.Info("✅ SuperTrend indicator added successfully")
 		case "obv":
-			obv := indicators.NewOBVWithThreshold(bot.config.Strategy.OBV.TrendThreshold)
+			obv := volume.NewOBVWithThreshold(bot.config.Strategy.OBV.TrendThreshold)
 			bot.strategy.AddIndicator(obv)
 			bot.logger.Info("✅ OBV indicator added successfully")
 		case "stochrsi", "stochastic_rsi", "stoch_rsi":
-			stochRSI := indicators.NewStochasticRSIWithThresholds(
+			stochRSI := oscillators.NewStochasticRSIWithThresholds(
 				bot.config.Strategy.StochasticRSI.Period,
 				bot.config.Strategy.StochasticRSI.Overbought,
 				bot.config.Strategy.StochasticRSI.Oversold,

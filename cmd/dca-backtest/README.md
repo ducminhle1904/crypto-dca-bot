@@ -33,30 +33,36 @@ This command represents the completion of **Phase 5** of the backtest system ref
 ### Basic Usage
 
 ```bash
-# Simple backtest
-dca-backtest -symbol BTCUSDT -interval 1h
+# Simple backtest with enhanced Bollinger Bands
+dca-backtest -symbol BTCUSDT -interval 1h -indicators "bb"
+
+# Multi-indicator backtest
+dca-backtest -symbol ETHUSDT -indicators "rsi,macd,bb,stochrsi"
 
 # Load from configuration file
-dca-backtest -config configs/bybit/btc_1h.json
+dca-backtest -config configs/bybit/dca/hype_5m_bybit.json
 
-# Optimize parameters
-dca-backtest -symbol ETHUSDT -optimize
+# Optimize indicator parameters
+dca-backtest -symbol SUIUSDT -indicators "bb,stochrsi,obv" -optimize
 
 # Test all intervals
-dca-backtest -symbol BTCUSDT -all-intervals
+dca-backtest -symbol BTCUSDT -indicators "rsi,bb" -all-intervals
 ```
 
 ### Advanced Usage
 
 ```bash
 # Walk-forward validation with optimization
-dca-backtest -symbol BTCUSDT -optimize -wf-enable -wf-rolling
+dca-backtest -symbol BTCUSDT -indicators "supertrend,keltner,obv" -optimize -wf-enable -wf-rolling
 
-# Advanced indicators with custom parameters
-dca-backtest -symbol ADAUSDT -advanced-combo -base-amount 50 -max-multiplier 2.5
+# Advanced momentum indicators
+dca-backtest -symbol HYPEUSDT -stochrsi -supertrend -obv -base-amount 50 -max-multiplier 2.5
+
+# All indicators with optimization
+dca-backtest -symbol ETHUSDT -indicators "rsi,macd,bb,ema,hullma,supertrend,mfi,keltner,wavetrend,obv,stochrsi" -optimize
 
 # Limited time period analysis
-dca-backtest -symbol BTCUSDT -period 30d -optimize
+dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi" -period 30d -optimize
 ```
 
 ## Configuration
@@ -70,21 +76,54 @@ dca-backtest -symbol BTCUSDT -period 30d -optimize
 | `price-threshold` | 0.02    | Minimum price drop % for next DCA entry |
 | `advanced-combo`  | false   | Use advanced indicators vs classic      |
 
-### Indicator Combos
+### Available Indicators
 
 **Classic Combo (default)**:
 
-- RSI (Relative Strength Index)
-- MACD (Moving Average Convergence Divergence)
-- Bollinger Bands
-- EMA (Exponential Moving Average)
+- **RSI** (Relative Strength Index) - Overbought/oversold momentum
+- **MACD** (Moving Average Convergence Divergence) - Trend momentum
+- **Enhanced Bollinger Bands** - %B-based precision signals (90%/10% default)
+- **EMA** (Exponential Moving Average) - Trend direction
 
 **Advanced Combo**:
 
-- Hull Moving Average
-- Money Flow Index (MFI)
-- Keltner Channels
-- WaveTrend Oscillator
+- **Hull Moving Average** - Smooth, low-lag trend indicator
+- **Money Flow Index (MFI)** - Volume-weighted RSI
+- **Keltner Channels** - Volatility-based bands
+- **WaveTrend Oscillator** - Advanced momentum oscillator
+
+**Momentum Indicators**:
+
+- **Stochastic RSI** - Enhanced RSI oscillator (14 period, 80%/20% default)
+- **SuperTrend** - Trend-following indicator with ATR bands
+
+**Volume Indicators**:
+
+- **OBV** (On-Balance Volume) - Volume-price trend analysis (1% threshold)
+
+### Individual Indicator Flags
+
+All indicators can be used individually with dedicated flags:
+
+```bash
+# Individual indicator flags
+dca-backtest -symbol BTCUSDT -rsi -macd -bb -ema        # Classic combo
+dca-backtest -symbol ETHUSDT -hullma -mfi -keltner -wavetrend  # Advanced combo
+dca-backtest -symbol HYPEUSDT -stochrsi -supertrend -obv      # Momentum + Volume
+
+# Mix and match any indicators
+dca-backtest -symbol SUIUSDT -bb -stochrsi -obv -keltner
+```
+
+### Flexible Indicator Lists
+
+```bash
+# Comma-separated indicator list (preferred method)
+dca-backtest -symbol BTCUSDT -indicators "rsi,macd,bb,stochrsi,obv"
+
+# All available indicators
+dca-backtest -symbol ETHUSDT -indicators "rsi,macd,bb,ema,hullma,supertrend,mfi,keltner,wavetrend,obv,stochrsi"
+```
 
 ### Account Settings
 
@@ -95,13 +134,42 @@ dca-backtest -symbol BTCUSDT -period 30d -optimize
 
 ## Optimization
 
-The genetic algorithm optimization automatically finds the best parameters:
+The genetic algorithm optimization automatically finds the best parameters for **ALL indicators**:
+
+### Optimized Parameters
+
+- **RSI**: Period, overbought/oversold thresholds
+- **MACD**: Fast/slow/signal periods
+- **Bollinger Bands**: Period, standard deviation, %B overbought/oversold thresholds
+- **EMA**: Period
+- **Hull MA**: Period
+- **MFI**: Period, overbought/oversold thresholds
+- **Keltner Channels**: Period, multiplier
+- **WaveTrend**: N1/N2 periods, overbought/oversold levels
+- **Stochastic RSI**: Period, overbought/oversold thresholds
+- **SuperTrend**: ATR period, multiplier
+- **OBV**: Trend change threshold
+
+### Algorithm Configuration
 
 - **Population Size**: 60 individuals
 - **Generations**: 35 iterations
 - **Parallel Processing**: Up to 4 concurrent evaluations
 - **Elite Preservation**: Top 6 solutions carried forward
 - **Mutation Rate**: 10% for parameter exploration
+
+### Optimization Examples
+
+```bash
+# Optimize single indicator
+dca-backtest -symbol BTCUSDT -indicators "bb" -optimize
+
+# Optimize multiple indicators (finds best combination)
+dca-backtest -symbol ETHUSDT -indicators "rsi,bb,stochrsi,obv" -optimize
+
+# Optimize all available indicators
+dca-backtest -symbol HYPEUSDT -indicators "rsi,macd,bb,ema,hullma,supertrend,mfi,keltner,wavetrend,obv,stochrsi" -optimize
+```
 
 ### Walk-Forward Validation
 
@@ -145,8 +213,21 @@ Results are saved to `results/<SYMBOL>_<INTERVAL>/`:
     "price_threshold": 0.025,
     "price_threshold_multiplier": 1.15,
     "tp_percent": 0.02,
-    "use_advanced_combo": true,
-    "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"]
+    "indicators": ["bb", "stochrsi", "obv", "keltner", "wavetrend"],
+    "bollinger_bands": {
+      "period": 20,
+      "std_dev": 2.0,
+      "percent_b_overbought": 0.9,
+      "percent_b_oversold": 0.1
+    },
+    "stochastic_rsi": {
+      "period": 14,
+      "overbought": 80.0,
+      "oversold": 20.0
+    },
+    "obv": {
+      "trend_threshold": 0.01
+    }
   },
   "risk": {
     "initial_balance": 1000,

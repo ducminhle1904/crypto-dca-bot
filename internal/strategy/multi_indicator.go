@@ -5,6 +5,9 @@ import (
 	"math"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/bands"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/oscillators"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -36,7 +39,7 @@ func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 	return &MultiIndicatorStrategy{
 		indicators: []WeightedIndicator{
 			{
-				Indicator: indicators.NewRSI(14),
+				Indicator: oscillators.NewRSI(14),
 				Weight: map[MarketRegime]float64{
 					RegimeTrending: 0.2,
 					RegimeSideways: 0.4,
@@ -44,7 +47,7 @@ func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 				},
 			},
 			{
-				Indicator: indicators.NewSMA(50),
+				Indicator: common.NewSMA(50),
 				Weight: map[MarketRegime]float64{
 					RegimeTrending: 0.4,
 					RegimeSideways: 0.1,
@@ -52,7 +55,7 @@ func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 				},
 			},
 			{
-				Indicator: indicators.NewBollingerBands(20, 2.0),
+				Indicator: bands.NewBollingerBands(20, 2.0),
 				Weight: map[MarketRegime]float64{
 					RegimeTrending: 0.2,
 					RegimeSideways: 0.3,
@@ -60,7 +63,7 @@ func NewMultiIndicatorStrategy() *MultiIndicatorStrategy {
 				},
 			},
 			{
-				Indicator: indicators.NewMACD(12, 26, 9),
+				Indicator: oscillators.NewMACD(12, 26, 9),
 				Weight: map[MarketRegime]float64{
 					RegimeTrending: 0.2,
 					RegimeSideways: 0.2,

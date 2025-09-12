@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
-	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/bands"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/oscillators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	configpkg "github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
@@ -307,7 +310,7 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	
 	// Randomize advanced indicator parameters if present
 	if indicatorSet["hullma"] || indicatorSet["hull_ma"] {
-		dcaConfig.HullMAPeriod = RandomChoice(ranges.SuperTrendPeriods, rng)
+		dcaConfig.HullMAPeriod = RandomChoice(ranges.HullMAPeriods, rng)
 	}
 	if indicatorSet["supertrend"] || indicatorSet["st"] {
 		dcaConfig.SuperTrendPeriod = RandomChoice(ranges.SuperTrendPeriods, rng)
@@ -480,7 +483,7 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 	
 	// Mutate advanced indicator parameters if present
 	if indicatorSet["hullma"] || indicatorSet["hull_ma"] {
-		if rng.Float64() < 0.1 { dcaConfig.HullMAPeriod = RandomChoice(ranges.SuperTrendPeriods, rng) }
+		if rng.Float64() < 0.1 { dcaConfig.HullMAPeriod = RandomChoice(ranges.HullMAPeriods, rng) }
 	}
 	if indicatorSet["supertrend"] || indicatorSet["st"] {
 		if rng.Float64() < 0.1 { dcaConfig.SuperTrendPeriod = RandomChoice(ranges.SuperTrendPeriods, rng) }
@@ -576,47 +579,47 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	
 	// Add indicators based on what's present in the config
 	if include["supertrend"] || include["st"] {
-		supertrend := indicators.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		supertrend := trend.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
 		dca.AddIndicator(supertrend)
 	}
 	if include["mfi"] {
-		mfi := indicators.NewMFIWithPeriod(cfg.MFIPeriod)
+		mfi := oscillators.NewMFIWithPeriod(cfg.MFIPeriod)
 		mfi.SetOversold(cfg.MFIOversold)
 		mfi.SetOverbought(cfg.MFIOverbought)
 		dca.AddIndicator(mfi)
 	}
 	if include["keltner"] || include["kc"] {
-		keltner := indicators.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		keltner := bands.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
 		dca.AddIndicator(keltner)
 	}
 	if include["wavetrend"] || include["wt"] {
-		wavetrend := indicators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
+		wavetrend := oscillators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
 		wavetrend.SetOverbought(cfg.WaveTrendOverbought)
 		wavetrend.SetOversold(cfg.WaveTrendOversold)
 		dca.AddIndicator(wavetrend)
 	}
 	
 	if include["rsi"] {
-		rsi := indicators.NewRSI(cfg.RSIPeriod)
+		rsi := oscillators.NewRSI(cfg.RSIPeriod)
 		rsi.SetOversold(cfg.RSIOversold)
 		rsi.SetOverbought(cfg.RSIOverbought)
 		dca.AddIndicator(rsi)
 	}
 	if include["macd"] {
-		macd := indicators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		macd := oscillators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
 		dca.AddIndicator(macd)
 	}
 	if include["bb"] || include["bollinger"] {
-		bb := indicators.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+		bb := bands.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
 		dca.AddIndicator(bb)
 	}
 	if include["ema"] {
-		ema := indicators.NewEMA(cfg.EMAPeriod)
+		ema := common.NewEMA(cfg.EMAPeriod)
 		dca.AddIndicator(ema)
 	}
 	
 	if include["hullma"] || include["hull_ma"] {
-		hullMA := indicators.NewHullMA(cfg.HullMAPeriod)
+		hullMA := trend.NewHullMA(cfg.HullMAPeriod)
 		dca.AddIndicator(hullMA)
 	}
 	

@@ -62,7 +62,7 @@ type OptimizationRanges struct {
 	Multipliers        []float64
 	TPCandidates       []float64
 	PriceThresholds    []float64
-	PriceThresholdMultipliers []float64 // Progressive DCA spacing multipliers
+	PriceThresholdMultipliers []float64
 	RSIPeriods         []int
 	RSIOversold        []float64
 	MACDFast           []int
@@ -73,6 +73,7 @@ type OptimizationRanges struct {
 	EMAPeriods         []int
 	SuperTrendPeriods     []int
 	SuperTrendMultipliers []float64
+	HullMAPeriods         []int
 	MFIPeriods         []int
 	MFIOversold        []float64
 	MFIOverbought      []float64

@@ -14,9 +14,9 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	BBPeriods:       []int{10, 14, 16, 18, 20, 22, 25, 28, 30},
 	BBStdDev:        []float64{1.5, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0},
 	EMAPeriods:      []int{15, 20, 25, 30, 40, 50, 60, 75, 100, 120},
-	// Advanced combo ranges
 	SuperTrendPeriods:     []int{10, 12, 14, 16, 18, 20, 25},
 	SuperTrendMultipliers: []float64{1.5, 2.0, 2.5, 3.0, 3.5, 4.0},
+	HullMAPeriods:         []int{8, 10, 12, 14, 16, 18, 20, 22, 25, 30},
 	MFIPeriods:         []int{10, 12, 14, 16, 18, 20, 22},
 	MFIOversold:        []float64{15, 20, 25, 30},
 	MFIOverbought:      []float64{70, 75, 80, 85},

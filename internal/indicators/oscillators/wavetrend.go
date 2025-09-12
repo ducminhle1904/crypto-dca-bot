@@ -1,9 +1,10 @@
-package indicators
+package oscillators
 
 import (
 	"errors"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -16,9 +17,9 @@ type WaveTrend struct {
 	overSold     float64 // Oversold level (default: -60)
 	
 	// Internal components
-	esaEMA     *EMA     // ESA (Exponential Simple Average) calculator
-	dEMA       *EMA     // D (smoothed absolute difference) calculator
-	wt1EMA     *EMA     // WT1 (WaveTrend) calculator
+	esaEMA     *common.EMA     // ESA (Exponential Simple Average) calculator
+	dEMA       *common.EMA     // D (smoothed absolute difference) calculator
+	wt1EMA     *common.EMA     // WT1 (WaveTrend) calculator
 	wt2Values  []float64 // Rolling window for WT2 calculation (SMA of WT1, length 4)
 	
 	// State tracking
@@ -41,9 +42,9 @@ func NewWaveTrendCustom(n1, n2 int) *WaveTrend {
 		n2:           n2,
 		overBought:    60.0,
 		overSold:      -60.0,
-		esaEMA:        NewEMA(n1),
-		dEMA:          NewEMA(n1),
-		wt1EMA:        NewEMA(n2),
+		esaEMA:        common.NewEMA(n1),
+		dEMA:          common.NewEMA(n1),
+		wt1EMA:        common.NewEMA(n2),
 		wt2Values:     make([]float64, 0, 4), // WT2 is SMA(WT1, 4)
 	}
 }

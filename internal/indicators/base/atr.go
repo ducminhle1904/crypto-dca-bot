@@ -1,9 +1,10 @@
-package indicators
+package base
 
 import (
 	"errors"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -11,7 +12,7 @@ import (
 // ATR measures market volatility by decomposing the entire range of an asset price for that period
 type ATR struct {
 	period      int
-	ema         *EMA // Using EMA for ATR smoothing (Wilder's smoothing)
+	ema         *common.EMA // Using EMA for ATR smoothing (Wilder's smoothing)
 	lastClose   float64
 	initialized bool
 }
@@ -20,7 +21,7 @@ type ATR struct {
 func NewATR(period int) *ATR {
 	return &ATR{
 		period: period,
-		ema:    NewEMA(period),
+		ema:    common.NewEMA(period),
 	}
 }
 

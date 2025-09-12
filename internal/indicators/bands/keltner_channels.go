@@ -1,10 +1,12 @@
-package indicators
+package bands
 
 import (
 	"errors"
 	"fmt"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/base"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -24,8 +26,8 @@ type KeltnerChannels struct {
 	multiplier float64 // Multiplier for ATR to create the bands
 	
 	// Internal components
-	emaIndicator *EMA // EMA for middle line calculation (closing prices)
-	atrIndicator *ATR // ATR for volatility calculation
+	emaIndicator *common.EMA // EMA for middle line calculation (closing prices)
+	atrIndicator *base.ATR // ATR for volatility calculation
 	
 	// State tracking
 	lastUpper      float64
@@ -49,8 +51,8 @@ func NewKeltnerChannelsCustom(period int, multiplier float64) *KeltnerChannels {
 	return &KeltnerChannels{
 		period:       period,
 		multiplier:   multiplier,
-		emaIndicator: NewEMA(period),      // EMA for closing prices
-		atrIndicator: NewATR(period),      // ATR for volatility
+		emaIndicator: common.NewEMA(period),      // EMA for closing prices
+		atrIndicator: base.NewATR(period),      // ATR for volatility
 	}
 }
 

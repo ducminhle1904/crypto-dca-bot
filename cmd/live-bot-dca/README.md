@@ -55,6 +55,25 @@ To run in live mode with real funds, set the `-demo` flag to `false`:
 
 The V2 bot uses a nested configuration structure that separates the strategy, exchange, and risk parameters. You can find examples in the `configs/bybit/` and `configs/binance/` directories.
 
+### Supported Indicators
+
+The live bot supports all 11 technical indicators:
+
+- **Classic**: RSI, MACD, Enhanced Bollinger Bands with %B, EMA
+- **Advanced**: Hull MA, MFI, Keltner Channels, WaveTrend
+- **Momentum**: Stochastic RSI, SuperTrend
+- **Volume**: OBV (On-Balance Volume)
+
+Configure indicators in your JSON config file with custom thresholds and parameters. Use the DCA backtest tool first to find optimal settings:
+
+```bash
+# Find optimal parameters first
+dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi,obv" -optimize
+
+# Then use the optimized config in live trading
+./live-bot-v2 -config optimized_config.json -demo
+```
+
 ---
 
 **⚠️ Important**: Always test in demo mode before live trading!

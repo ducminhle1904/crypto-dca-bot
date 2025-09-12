@@ -1,9 +1,10 @@
-package indicators
+package bands
 
 import (
 	"errors"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -21,8 +22,12 @@ type BollingerBands struct {
 	stdDev     float64
 	maType     MovingAverageType
 	
+	// %B thresholds for enhanced signal logic
+	percentBOverbought float64  // %B overbought threshold (default 0.8)
+	percentBOversold   float64  // %B oversold threshold (default 0.2)
+	
 	// Stateful components for efficient calculation
-	ema        *EMA      // For EMA-based middle band
+	ema        *common.EMA      // For EMA-based middle band
 	values     []float64 // Circular buffer for price values
 	writeIndex int       // Current write position in circular buffer
 	
@@ -36,6 +41,7 @@ type BollingerBands struct {
 	lastUpper  float64
 	lastMiddle float64
 	lastLower  float64
+	lastPercentB float64 // Cached %B value
 }
 
 // NewBollingerBands creates a new Bollinger Bands indicator using SMA (traditional)
@@ -50,18 +56,25 @@ func NewBollingerBandsEMA(period int, stdDev float64) *BollingerBands {
 
 // NewBollingerBandsWithType creates a new Bollinger Bands indicator with specified MA type
 func NewBollingerBandsWithType(period int, stdDev float64, maType MovingAverageType) *BollingerBands {
+	return NewBollingerBandsWithThresholds(period, stdDev, maType, 0.9, 0.1)
+}
+
+// NewBollingerBandsWithThresholds creates a new Bollinger Bands indicator with custom %B thresholds
+func NewBollingerBandsWithThresholds(period int, stdDev float64, maType MovingAverageType, overbought, oversold float64) *BollingerBands {
 	bb := &BollingerBands{
-		period:     period,
-		stdDev:     stdDev,
-		maType:     maType,
-		values:     make([]float64, period), // Pre-allocated circular buffer
-		writeIndex: 0,
-		count:      0,
+		period:             period,
+		stdDev:             stdDev,
+		maType:             maType,
+		percentBOverbought: overbought,
+		percentBOversold:   oversold,
+		values:             make([]float64, period), // Pre-allocated circular buffer
+		writeIndex:         0,
+		count:              0,
 	}
 	
 	// Initialize EMA if using EMA mode
 	if maType == MA_EMA {
-		bb.ema = NewEMA(period)
+		bb.ema = common.NewEMA(period)
 	}
 	
 	return bb
@@ -119,11 +132,7 @@ func (bb *BollingerBands) initialCalculation(data []types.OHLCV) (float64, error
 func (bb *BollingerBands) incrementalCalculation(newPrice float64) (float64, error) {
 	// Update EMA if using EMA mode
 	if bb.maType == MA_EMA {
-		singlePoint := []types.OHLCV{{Close: newPrice}}
-		_, err := bb.ema.Calculate(singlePoint)
-		if err != nil {
-			return 0, err
-		}
+		bb.ema.UpdateSingle(newPrice)
 	}
 	
 	// Update rolling statistics using circular buffer
@@ -174,48 +183,96 @@ func (bb *BollingerBands) calculateBands() (float64, error) {
 	bb.lastUpper = middleBand + (bb.stdDev * standardDev)
 	bb.lastLower = middleBand - (bb.stdDev * standardDev)
 
+	// Calculate and cache %B value for the current middle band price
+	bb.calculatePercentB(middleBand)
+
 	return middleBand, nil
 }
 
-// ShouldBuy determines if we should buy based on Bollinger Bands
+// calculatePercentB calculates and caches the %B value for given price
+func (bb *BollingerBands) calculatePercentB(currentPrice float64) {
+	bandWidth := bb.lastUpper - bb.lastLower
+	if bandWidth == 0 {
+		bb.lastPercentB = 0.5 // Neutral when bands are collapsed
+		return
+	}
+	
+	bb.lastPercentB = (currentPrice - bb.lastLower) / bandWidth
+}
+
+// GetPercentB returns the %B value for a given price (or last calculated if no price given)
+func (bb *BollingerBands) GetPercentB(prices ...float64) float64 {
+	if len(prices) > 0 {
+		// Calculate %B for specific price
+		price := prices[0]
+		bandWidth := bb.lastUpper - bb.lastLower
+		if bandWidth == 0 {
+			return 0.5
+		}
+		return (price - bb.lastLower) / bandWidth
+	}
+	
+	// Return cached %B value
+	return bb.lastPercentB
+}
+
+// ShouldBuy determines if we should buy based on Bollinger Bands %B
 func (bb *BollingerBands) ShouldBuy(current float64, data []types.OHLCV) (bool, error) {
 	_, err := bb.Calculate(data)
 	if err != nil {
 		return false, err
 	}
 
-	// Buy when price is near or below the lower band (oversold condition)
-	// and price is starting to move up
-	lowerBandThreshold := bb.lastLower * 1.01 // 1% above lower band
-	return current <= lowerBandThreshold, nil
+	// Calculate %B for current price
+	currentPercentB := bb.GetPercentB(current)
+	
+	// Buy when %B is in oversold territory
+	// This indicates price is near or below lower band
+	return currentPercentB <= bb.percentBOversold, nil
 }
 
-// ShouldSell determines if we should sell based on Bollinger Bands
+// ShouldSell determines if we should sell based on Bollinger Bands %B
 func (bb *BollingerBands) ShouldSell(current float64, data []types.OHLCV) (bool, error) {
 	_, err := bb.Calculate(data)
 	if err != nil {
 		return false, err
 	}
 
-	// Sell when price is near or above the upper band (overbought condition)
-	// and price is starting to move down
-	upperBandThreshold := bb.lastUpper * 0.99 // 1% below upper band
-	return current >= upperBandThreshold, nil
+	// Calculate %B for current price  
+	currentPercentB := bb.GetPercentB(current)
+	
+	// Sell when %B is in overbought territory
+	// This indicates price is near or above upper band
+	return currentPercentB >= bb.percentBOverbought, nil
 }
 
-// GetSignalStrength returns the signal strength based on position within bands
+// GetSignalStrength returns the signal strength based on %B position
 func (bb *BollingerBands) GetSignalStrength() float64 {
-	// Calculate how far the current price is from the middle band
-	// Normalize to a 0-1 range
-	bandWidth := bb.lastUpper - bb.lastLower
-	if bandWidth == 0 {
-		return 0
+	percentB := bb.lastPercentB
+	
+	// Calculate signal strength based on %B position
+	if percentB <= bb.percentBOversold {
+		// Buy signal strength: stronger the further below oversold threshold
+		// Max strength when %B = 0 (at lower band), min strength at oversold threshold
+		if bb.percentBOversold == 0 {
+			return 1.0 // Avoid division by zero
+		}
+		strength := (bb.percentBOversold - percentB) / bb.percentBOversold
+		return math.Min(1.0, math.Max(0.0, strength))
+		
+	} else if percentB >= bb.percentBOverbought {
+		// Sell signal strength: stronger the further above overbought threshold  
+		// Max strength when %B = 1 (at upper band), min strength at overbought threshold
+		if bb.percentBOverbought >= 1.0 {
+			return 1.0 // Avoid division by zero
+		}
+		strength := (percentB - bb.percentBOverbought) / (1.0 - bb.percentBOverbought)
+		return math.Min(1.0, math.Max(0.0, strength))
+		
+	} else {
+		// No signal when %B is between thresholds
+		return 0.0
 	}
-
-	// For buy signals, strength increases as price approaches lower band
-	// For sell signals, strength increases as price approaches upper band
-	// This is a simplified calculation
-	return 0.5 // Default moderate strength
 }
 
 // GetName returns the indicator name
@@ -252,6 +309,7 @@ func (bb *BollingerBands) ResetState() {
 	bb.lastUpper = 0.0
 	bb.lastMiddle = 0.0
 	bb.lastLower = 0.0
+	bb.lastPercentB = 0.0
 }
 
 // GetBands returns the current band values
@@ -267,4 +325,52 @@ func (bb *BollingerBands) GetMovingAverageType() MovingAverageType {
 // IsEMABased returns true if using EMA for middle band
 func (bb *BollingerBands) IsEMABased() bool {
 	return bb.maType == MA_EMA
+}
+
+// SetPercentBOverbought sets the %B overbought threshold
+func (bb *BollingerBands) SetPercentBOverbought(threshold float64) {
+	bb.percentBOverbought = threshold
+}
+
+// SetPercentBOversold sets the %B oversold threshold  
+func (bb *BollingerBands) SetPercentBOversold(threshold float64) {
+	bb.percentBOversold = threshold
+}
+
+// GetPercentBThresholds returns the current %B thresholds
+func (bb *BollingerBands) GetPercentBThresholds() (overbought, oversold float64) {
+	return bb.percentBOverbought, bb.percentBOversold
+}
+
+// GetBandsWithPercentB returns all band values plus current %B
+func (bb *BollingerBands) GetBandsWithPercentB() (upper, middle, lower, percentB float64) {
+	return bb.lastUpper, bb.lastMiddle, bb.lastLower, bb.lastPercentB
+}
+
+// IsOverbought returns true if current %B indicates overbought condition
+func (bb *BollingerBands) IsOverbought() bool {
+	return bb.lastPercentB >= bb.percentBOverbought
+}
+
+// IsOversold returns true if current %B indicates oversold condition  
+func (bb *BollingerBands) IsOversold() bool {
+	return bb.lastPercentB <= bb.percentBOversold
+}
+
+// GetTrendStrength returns trend strength based on %B position
+// Values: Strong Downtrend (<0), Downtrend (0-0.2), Neutral (0.2-0.8), Uptrend (0.8-1), Strong Uptrend (>1)
+func (bb *BollingerBands) GetTrendStrength() string {
+	percentB := bb.lastPercentB
+	
+	if percentB > 1.0 {
+		return "Strong Uptrend"
+	} else if percentB >= bb.percentBOverbought {
+		return "Uptrend"
+	} else if percentB > bb.percentBOversold {
+		return "Neutral"
+	} else if percentB >= 0.0 {
+		return "Downtrend"
+	} else {
+		return "Strong Downtrend"
+	}
 }

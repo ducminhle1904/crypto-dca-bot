@@ -1,4 +1,4 @@
-package indicators
+package trend
 
 import (
 	"errors"
@@ -18,6 +18,11 @@ type WMA struct {
 
 // NewWMA creates a new Weighted Moving Average
 func NewWMA(period int) *WMA {
+	// Validate period
+	if period <= 0 {
+		period = 1 // Minimum valid period
+	}
+	
 	return &WMA{
 		period:    period,
 		values:    make([]float64, 0, period),
@@ -85,9 +90,22 @@ type HullMA struct {
 
 // NewHullMA creates a new Hull Moving Average indicator
 func NewHullMA(period int) *HullMA {
+	// Validate period
+	if period <= 0 {
+		// Use a sensible default if invalid period is provided
+		period = 14
+	}
+	
 	// Use proper rounding like the reference implementation
 	halfPeriod := int(math.Round(float64(period) / 2.0))
+	if halfPeriod <= 0 {
+		halfPeriod = 1
+	}
+	
 	sqrtPeriod := int(math.Round(math.Sqrt(float64(period))))
+	if sqrtPeriod <= 0 {
+		sqrtPeriod = 1
+	}
 	
 	return &HullMA{
 		period:       period,

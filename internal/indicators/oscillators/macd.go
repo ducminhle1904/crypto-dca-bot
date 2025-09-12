@@ -1,9 +1,10 @@
-package indicators
+package oscillators
 
 import (
 	"errors"
 	"math"
 
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -14,8 +15,8 @@ type MACD struct {
 	signalPeriod  int
 	
 	// Use stateful EMA instances for efficiency
-	fastEMA       *EMA
-	slowEMA       *EMA
+	fastEMA       *common.EMA
+	slowEMA       *common.EMA
 	
 	lastMACD      float64
 	lastSignal    float64
@@ -29,8 +30,8 @@ func NewMACD(fastPeriod, slowPeriod, signalPeriod int) *MACD {
 		fastPeriod:   fastPeriod,
 		slowPeriod:   slowPeriod,
 		signalPeriod: signalPeriod,
-		fastEMA:      NewEMA(fastPeriod),
-		slowEMA:      NewEMA(slowPeriod),
+		fastEMA:      common.NewEMA(fastPeriod),
+		slowEMA:      common.NewEMA(slowPeriod),
 	}
 }
 

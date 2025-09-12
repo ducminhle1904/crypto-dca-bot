@@ -6,9 +6,15 @@ A sophisticated cryptocurrency trading bot that implements an enhanced Dollar Co
 
 ### 🎯 **Enhanced DCA Strategy**
 
-- Multi-indicator approach combining RSI, MACD, Bollinger Bands, and EMA
-- Dynamic position sizing based on signal strength
-- Configurable base amounts, max multipliers, and price thresholds
+- **Multi-indicator approach** with 11 technical indicators:
+  - **Classic Combo**: RSI, MACD, Enhanced Bollinger Bands with %B, EMA
+  - **Advanced Combo**: Hull MA, MFI, Keltner Channels, WaveTrend
+  - **Momentum**: Stochastic RSI, SuperTrend
+  - **Volume**: OBV (On-Balance Volume)
+- **Dynamic position sizing** based on signal strength and confidence
+- **Precision %B signals** from enhanced Bollinger Bands
+- **Configurable thresholds** for all indicators with optimization support
+- **Genetic algorithm optimization** for all indicator parameters
 
 ### 📊 **Advanced Backtesting & Analytics**
 
@@ -143,23 +149,26 @@ go run cmd/live-bot-v2/main.go -config configs/bybit/btc_5m_bybit.json -demo
 go run cmd/live-bot-v2/main.go -config configs/binance/btc_5m_binance.json -demo=false
 ```
 
-### Running a Backtest
+### Running DCA Backtests
 
 ```bash
-# Basic backtest with default settings
-go run cmd/backtest/main.go -symbol SUIUSDT -interval 5m
+# Basic backtest with enhanced Bollinger Bands
+go run cmd/dca-backtest/main.go -symbol BTCUSDT -interval 5m -indicators "bb"
 
-# Backtest with custom parameters
-go run cmd/backtest/main.go -symbol BTCUSDT -interval 1h -balance 5000 -start "2024-01-01"
+# Advanced multi-indicator backtest
+go run cmd/dca-backtest/main.go -symbol ETHUSDT -interval 1h -indicators "rsi,macd,bb,stochrsi,obv"
 
-# Run with optimization
-go run cmd/backtest/main.go -symbol ETHUSDT -interval 15m -optimize
+# Individual indicator flags
+go run cmd/dca-backtest/main.go -symbol HYPEUSDT -rsi -bb -stochrsi -obv
 
-# Use a configuration file
-go run cmd/backtest/main.go -config configs/bybit/sui_5m_bybit.json
+# Run with optimization (finds best thresholds)
+go run cmd/dca-backtest/main.go -symbol SUIUSDT -indicators "bb,stochrsi" -optimize
 
-# Enable multi-level TP system
-go run cmd/backtest/main.go -symbol SUIUSDT -interval 5m -tp-levels
+# Use configuration file with custom indicator settings
+go run cmd/dca-backtest/main.go -config configs/bybit/dca/hype_5m_bybit.json
+
+# Advanced combo with all momentum indicators
+go run cmd/dca-backtest/main.go -symbol BTCUSDT -indicators "supertrend,stochrsi,obv,keltner,wavetrend"
 ```
 
 #### **Backtest Outputs**
@@ -172,7 +181,7 @@ go run cmd/backtest/main.go -symbol SUIUSDT -interval 5m -tp-levels
   - **Timeline**: Chronological trading activity view
 - **Configuration**: Optimized parameters (`best.json`)
 
-For detailed backtesting documentation, see [`cmd/backtest/README.md`](cmd/backtest/README.md).
+For detailed DCA backtesting documentation, see [`cmd/dca-backtest/README.md`](cmd/dca-backtest/README.md).
 
 ### Monitoring
 

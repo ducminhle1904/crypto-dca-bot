@@ -1,4 +1,4 @@
-package indicators
+package common
 
 import (
 	"errors"
