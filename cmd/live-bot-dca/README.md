@@ -1,4 +1,4 @@
-# Enhanced DCA Live Bot V2
+# Enhanced DCA Live Bot
 
 This is a modular, multi-exchange version of the Enhanced DCA Live Bot, featuring a completely redesigned architecture.
 
@@ -7,11 +7,11 @@ This is a modular, multi-exchange version of the Enhanced DCA Live Bot, featurin
 ### 1. Installation
 
 ```bash
-# Clone the repository and build the V2 bot
+# Clone the repository and build the live bot
 git clone https://github.com/ducminhle1904/crypto-dca-bot.git
 cd crypto-dca-bot
 go mod download
-go build -o live-bot-v2 ./cmd/live-bot-v2
+go build -o live-bot-dca ./cmd/live-bot-dca
 ```
 
 ### 2. Set Up API Credentials
@@ -25,21 +25,21 @@ cp .env.example .env
 
 ### 3. Run the Bot
 
-The V2 bot uses a new, modular configuration format. You can run it with a Bybit or Binance configuration in demo mode:
+The live bot uses a modular configuration format. You can run it with a Bybit or Binance configuration in demo mode:
 
 ```bash
 # Run with a Bybit configuration in demo mode
-./live-bot-v2 -config configs/bybit/btc_5m_bybit.json -demo
+./live-bot-dca -config configs/bybit/btc_5m_bybit.json -demo
 
 # Run with a Binance configuration in demo mode
-./live-bot-v2 -config configs/binance/btc_5m_binance.json -demo
+./live-bot-dca -config configs/binance/btc_5m_binance.json -demo
 ```
 
 To run in live mode with real funds, set the `-demo` flag to `false`:
 
 ```bash
 # WARNING: This will trade with real money
-./live-bot-v2 -config configs/bybit/btc_5m_bybit.json -demo=false
+./live-bot-dca -config configs/bybit/btc_5m_bybit.json -demo=false
 ```
 
 ## 📋 Command-Line Flags
@@ -53,7 +53,7 @@ To run in live mode with real funds, set the `-demo` flag to `false`:
 
 ## ⚙️ Configuration
 
-The V2 bot uses a nested configuration structure that separates the strategy, exchange, and risk parameters. You can find examples in the `configs/bybit/` and `configs/binance/` directories.
+The live bot uses a nested configuration structure that separates the strategy, exchange, and risk parameters. You can find examples in the `configs/bybit/` and `configs/binance/` directories.
 
 ### Supported Indicators (12 Total)
 
@@ -198,7 +198,7 @@ dca-backtest -symbol BNBUSDT -indicators "supertrend,stochastic_rsi,keltner,obv"
 dca-backtest -symbol HYPEUSDT -indicators "rsi,macd,bb,ema,hull_ma,supertrend,mfi,keltner,wavetrend,obv,stochastic_rsi" -optimize
 
 # Then use the optimized config in live trading
-./live-bot-v2 -config results/BTCUSDT_5m/best_config.json -demo
+./live-bot-dca -config results/BTCUSDT_5m/best_config.json -demo
 ```
 
 ---

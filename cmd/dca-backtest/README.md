@@ -4,11 +4,11 @@ The DCA Backtest command provides a clean, focused interface specifically design
 
 ## Overview
 
-This command represents the completion of **Phase 5** of the backtest system refactor, providing:
+This command provides a clean, focused interface for DCA strategy backtesting and optimization:
 
-- **Clean Interface**: DCA-specific command line interface (~200 lines vs 4,147 original)
+- **Clean Interface**: DCA-specific command line interface
 - **Focused Functionality**: Streamlined for DCA strategies only
-- **Orchestrator Integration**: Uses the refactored orchestrator system
+- **Orchestrator Integration**: Uses the modular orchestrator system
 - **Modern CLI**: Enhanced help, validation, and user experience
 
 ## Features
@@ -19,7 +19,7 @@ This command represents the completion of **Phase 5** of the backtest system ref
 - ✅ **Parameter Optimization**: Genetic algorithm optimization
 - ✅ **Multi-Interval Analysis**: Test across all available timeframes
 - ✅ **Walk-Forward Validation**: Robust strategy validation
-- ✅ **Advanced/Classic Indicators**: Two complete indicator combos
+- ✅ **12 Technical Indicators**: Complete indicator library
 
 ### Output Formats
 
@@ -74,7 +74,6 @@ dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi" -period 30d -optimize
 | `base-amount`     | 40      | Base DCA investment amount              |
 | `max-multiplier`  | 3.0     | Maximum position multiplier             |
 | `price-threshold` | 0.02    | Minimum price drop % for next DCA entry |
-| `advanced-combo`  | false   | Use advanced indicators vs classic      |
 
 ### Available Indicators (12 Total)
 
@@ -225,8 +224,8 @@ All indicators can be used individually with dedicated flags:
 
 ```bash
 # Individual indicator flags
-dca-backtest -symbol BTCUSDT -rsi -macd -bb -ema        # Classic combo
-dca-backtest -symbol ETHUSDT -hullma -mfi -keltner -wavetrend  # Advanced combo
+dca-backtest -symbol BTCUSDT -rsi -macd -bb -ema        # Classic indicators
+dca-backtest -symbol ETHUSDT -hullma -mfi -keltner -wavetrend  # Advanced indicators
 dca-backtest -symbol HYPEUSDT -stochrsi -supertrend -obv      # Momentum + Volume
 
 # Mix and match any indicators
@@ -279,8 +278,6 @@ The genetic algorithm optimization automatically finds the best parameters for *
 **Volume:**
 
 - **OBV**: Trend change threshold
-
-**Note**: SuperTrend is available in the codebase but not currently integrated into the optimization system.
 
 ### Algorithm Configuration
 
@@ -417,7 +414,7 @@ cmd/dca-backtest/main.go
 The DCA command provides the same functionality as the generic backtest but with:
 
 - **Better UX**: Focused on DCA strategies
-- **Cleaner Code**: ~200 lines vs 612 lines
+- **Cleaner Code**: Streamlined and modular design
 - **Enhanced Help**: DCA-specific examples and documentation
 - **Validation**: Built-in parameter validation
 - **Future Ready**: Easy to extend for new features

@@ -2,14 +2,33 @@
 
 A sophisticated cryptocurrency trading bot that implements an enhanced Dollar Cost Averaging (DCA) strategy with multi-exchange support, advanced backtesting, and real-time monitoring.
 
+## Why This Bot?
+
+### 🎯 **Intelligent DCA Strategy**
+
+Unlike simple DCA bots, this system uses 12 technical indicators with genetic algorithm optimization to make intelligent entry decisions, maximizing returns while minimizing risk.
+
+### 🔬 **Scientific Approach**
+
+- **Backtesting First**: Test strategies thoroughly before risking real money
+- **Optimization**: Genetic algorithms find optimal parameters for your specific market conditions
+- **Validation**: Walk-forward testing ensures strategies work in different market conditions
+
+### 🏗️ **Production Ready**
+
+- **Multi-Exchange**: Support for Bybit, Binance, and easily extensible to more exchanges
+- **Risk Management**: Built-in safety controls and position sizing
+- **Monitoring**: Comprehensive observability with Prometheus and Grafana
+- **Scalable**: Modular architecture designed for production deployment
+
 ## Features
 
 ### 🎯 **Enhanced DCA Strategy**
 
-- **Multi-indicator approach** with 11 technical indicators:
-  - **Classic Combo**: RSI, MACD, Enhanced Bollinger Bands with %B, EMA
-  - **Advanced Combo**: Hull MA, MFI, Keltner Channels, WaveTrend
-  - **Momentum**: Stochastic RSI, SuperTrend
+- **Multi-indicator approach** with 12 technical indicators:
+  - **Trend Indicators**: SMA, EMA, Hull MA, SuperTrend
+  - **Oscillators**: RSI, MACD, Stochastic RSI, MFI, WaveTrend
+  - **Bands**: Bollinger Bands, Keltner Channels
   - **Volume**: OBV (On-Balance Volume)
 - **Dynamic position sizing** based on signal strength and confidence
 - **Precision %B signals** from enhanced Bollinger Bands
@@ -49,166 +68,193 @@ A sophisticated cryptocurrency trading bot that implements an enhanced Dollar Co
 - Telegram integration for real-time trade alerts
 - Configurable notification settings
 
+## Project Structure
+
+```
+crypto-dca-bot/
+├── cmd/                          # Command-line applications
+│   ├── dca-backtest/            # DCA strategy backtesting engine
+│   ├── live-bot-dca/            # Live trading bot
+│   └── grid-backtest/           # Grid trading backtesting
+├── internal/                     # Core business logic
+│   ├── indicators/              # 12 technical indicators
+│   ├── strategy/                # Trading strategies
+│   ├── exchange/                # Exchange adapters
+│   └── monitoring/              # Health checks and metrics
+├── pkg/                         # Reusable packages
+│   ├── optimization/            # Genetic algorithm optimization
+│   ├── reporting/               # Excel and JSON reporting
+│   └── config/                  # Configuration management
+└── configs/                     # Example configurations
+```
+
 ## Architecture
 
-The V2 bot introduces a modular, exchange-agnostic architecture:
+The system uses a modular, exchange-agnostic architecture:
 
 ```
-LiveBot V2 → Exchange Interface → Exchange Adapter → Exchange API
+LiveBot → Exchange Interface → Exchange Adapter → Exchange API
 ```
 
-- **Exchange Interface**: A universal API for all trading operations.
+- **Exchange Interface**: A universal API for all trading operations
 - **Exchange Adapters**: Exchange-specific implementations for Bybit, Binance, etc.
-- **Exchange Factory**: Dynamically loads the correct exchange adapter based on the configuration.
+- **Exchange Factory**: Dynamically loads the correct exchange adapter based on configuration
+- **Strategy Engine**: Pluggable strategy system supporting DCA, Grid, and custom strategies
+- **Optimization Engine**: Genetic algorithm optimization for parameter tuning
 
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.24 or later
-- Docker and Docker Compose
-- Bybit or Binance API credentials
+- Docker and Docker Compose (optional)
+- Exchange API credentials (Bybit/Binance)
 
 ### Installation
 
-1.  **Clone the Repository**
+```bash
+# Clone the repository
+git clone https://github.com/ducminhle1904/crypto-dca-bot.git
+cd crypto-dca-bot
 
-    ```bash
-    git clone https://github.com/ducminhle1904/crypto-dca-bot.git
-    cd crypto-dca-bot
-    ```
+# Install dependencies
+go mod download
 
-2.  **Install Dependencies**
+# Configure environment
+cp .env.example .env
+# Edit .env with your API credentials
+```
 
-    ```bash
-    go mod download
-    ```
+### Getting Started
 
-3.  **Configure Environment**
-    Create a `.env` file and add your API keys:
+1. **Backtesting**: Start with the DCA backtesting engine to develop and optimize your strategies
+2. **Live Trading**: Use the live bot to execute your optimized strategies in real-time
+3. **Monitoring**: Set up monitoring and alerts for production trading
 
-    ```bash
-    cp .env.example .env
-    # Edit the .env file with your API credentials
-    ```
+For detailed usage instructions, see the component-specific documentation:
 
-4.  **Run with Docker Compose**
-    ```bash
-    docker-compose up -d
-    ```
+- [DCA Backtesting Guide](cmd/dca-backtest/README.md)
+- [Live Trading Bot Guide](cmd/live-bot-dca/README.md)
+- [Grid Trading Guide](cmd/grid-backtest/README.md)
 
 ## Configuration
 
-The bot uses a nested JSON configuration format and environment variables.
+The system uses a modular configuration approach with JSON files and environment variables.
 
-### Configuration File (`configs/bybit/btc_5m_bybit.json`)
+### Configuration Structure
+
+- **Strategy Configuration**: DCA parameters, indicators, and thresholds
+- **Exchange Configuration**: Exchange-specific settings and credentials
+- **Risk Management**: Balance limits, commission rates, and safety controls
+- **Environment Variables**: API keys and sensitive configuration data
+
+### Example Configuration
 
 ```json
 {
   "strategy": {
     "symbol": "BTCUSDT",
     "base_amount": 40,
-    ...
+    "indicators": ["hull_ma", "stochastic_rsi", "keltner"],
+    "optimization": true
   },
   "exchange": {
     "name": "bybit",
-    "bybit": { ... }
+    "demo_mode": true
   },
   "risk": {
     "initial_balance": 1000.0,
-    ...
+    "commission": 0.001
   }
 }
 ```
 
-### Environment Variables (`.env`)
+### Environment Setup
 
 ```bash
-# Bybit API credentials
+# Exchange API credentials
 BYBIT_API_KEY="your_bybit_api_key"
 BYBIT_API_SECRET="your_bybit_api_secret"
-
-# Binance API credentials
 BINANCE_API_KEY="your_binance_api_key"
 BINANCE_API_SECRET="your_binance_api_secret"
 
-# Telegram notifications
+# Notifications
 TELEGRAM_TOKEN="your_telegram_bot_token"
 TELEGRAM_CHAT_ID="your_telegram_chat_id"
 ```
 
-## Usage
+## Components
 
-### Running the Live Bot (V2)
+### 🤖 **Live Trading Bot**
 
-```bash
-# Run the V2 bot with a Bybit configuration in demo mode
-go run cmd/live-bot-v2/main.go -config configs/bybit/btc_5m_bybit.json -demo
+A production-ready live trading bot that executes DCA strategies in real-time across multiple exchanges.
 
-# Run with a Binance configuration in live mode
-go run cmd/live-bot-v2/main.go -config configs/binance/btc_5m_binance.json -demo=false
-```
+**Key Features:**
 
-### Running DCA Backtests
+- Multi-exchange support (Bybit, Binance)
+- Real-time indicator analysis
+- Automated position management
+- Risk management and safety controls
+- Demo and live trading modes
 
-```bash
-# Basic backtest with enhanced Bollinger Bands
-go run cmd/dca-backtest/main.go -symbol BTCUSDT -interval 5m -indicators "bb"
+**Documentation:** [`cmd/live-bot-dca/README.md`](cmd/live-bot-dca/README.md)
 
-# Advanced multi-indicator backtest
-go run cmd/dca-backtest/main.go -symbol ETHUSDT -interval 1h -indicators "rsi,macd,bb,stochrsi,obv"
+### 📊 **DCA Backtesting Engine**
 
-# Individual indicator flags
-go run cmd/dca-backtest/main.go -symbol HYPEUSDT -rsi -bb -stochrsi -obv
+A comprehensive backtesting system for strategy development and optimization.
 
-# Run with optimization (finds best thresholds)
-go run cmd/dca-backtest/main.go -symbol SUIUSDT -indicators "bb,stochrsi" -optimize
+**Key Features:**
 
-# Use configuration file with custom indicator settings
-go run cmd/dca-backtest/main.go -config configs/bybit/dca/hype_5m_bybit.json
+- 12 technical indicators with genetic algorithm optimization
+- Walk-forward validation for robust testing
+- Multi-interval analysis across all timeframes
+- Professional Excel reporting with 4 detailed sheets
+- Configuration export for live trading
 
-# Advanced combo with all momentum indicators
-go run cmd/dca-backtest/main.go -symbol BTCUSDT -indicators "supertrend,stochrsi,obv,keltner,wavetrend"
-```
+**Documentation:** [`cmd/dca-backtest/README.md`](cmd/dca-backtest/README.md)
 
-#### **Backtest Outputs**
+### 📈 **Grid Trading Backtest**
 
-- **Console**: Real-time performance metrics and statistics
-- **Excel Report**: Professional 4-sheet analysis (`trades.xlsx`)
-  - **Trades**: Cycle-organized trade details
-  - **Cycles**: Balance tracking and capital usage analysis
-  - **Detailed Analysis**: Comprehensive performance insights
-  - **Timeline**: Chronological trading activity view
-- **Configuration**: Optimized parameters (`best.json`)
+Advanced grid trading strategy backtesting with optimization capabilities.
 
-For detailed DCA backtesting documentation, see [`cmd/dca-backtest/README.md`](cmd/dca-backtest/README.md).
+**Key Features:**
 
-### Monitoring
+- Grid strategy implementation
+- Parameter optimization
+- Performance analysis
+- Multi-timeframe support
 
-- **Health Check**: `http://localhost:8081/health`
-- **Prometheus Metrics**: `http://localhost:8080/metrics`
-- **Grafana Dashboard**: `http://localhost:3000` (admin/admin)
+**Documentation:** [`cmd/grid-backtest/README.md`](cmd/grid-backtest/README.md)
 
-## Deployment
+## Monitoring & Observability
 
-### Docker
+### Real-time Monitoring
 
-```bash
-# Build the Docker image
-docker build -t crypto-dca-bot .
+- **Health Checks**: System status and component health monitoring
+- **Prometheus Metrics**: Performance metrics and trading statistics
+- **Grafana Dashboards**: Visual analytics and performance tracking
+- **Telegram Alerts**: Real-time notifications for trades and system events
 
-# Run the container with your environment variables
-docker run -d \
-  --name dca-bot \
-  -p 8080:8080 \
-  -p 8081:8081 \
-  --env-file .env \
-  crypto-dca-bot
-```
+### Key Metrics
 
-### Kubernetes
+- Trading performance and P&L
+- System health and uptime
+- API rate limits and errors
+- Risk management alerts
 
-A sample Kubernetes deployment configuration is available in the repository.
+## Deployment Options
+
+### Docker Deployment
+
+Containerized deployment with Docker Compose for easy setup and management.
+
+### Kubernetes Deployment
+
+Production-ready Kubernetes manifests for scalable deployment in cloud environments.
+
+### Local Development
+
+Direct Go execution for development and testing with hot reloading.
 
 ## Disclaimer
 
