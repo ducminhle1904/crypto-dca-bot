@@ -52,6 +52,11 @@ type MainBacktestConfig struct {
 	WaveTrendOversold   float64 `json:"wavetrend_oversold"`
 	OBVTrendThreshold   float64 `json:"obv_trend_threshold"`
 	
+	// Stochastic RSI parameters
+	StochasticRSIPeriod     int     `json:"stochastic_rsi_period"`
+	StochasticRSIOverbought float64 `json:"stochastic_rsi_overbought"`
+	StochasticRSIOversold   float64 `json:"stochastic_rsi_oversold"`
+	
 	// Indicator inclusion
 	Indicators     []string `json:"indicators"`
 
@@ -143,6 +148,12 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		case "obv":
 			strategyConfig.OBV = &OBVConfig{
 				TrendThreshold: cfg.OBVTrendThreshold,
+			}
+		case "stochastic_rsi", "stochrsi", "stoch_rsi":
+			strategyConfig.StochasticRSI = &StochasticRSIConfig{
+				Period:     cfg.StochasticRSIPeriod,
+				Overbought: cfg.StochasticRSIOverbought,
+				Oversold:   cfg.StochasticRSIOversold,
 			}
 		}
 	}

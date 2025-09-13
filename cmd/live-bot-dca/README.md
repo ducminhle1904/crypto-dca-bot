@@ -55,23 +55,150 @@ To run in live mode with real funds, set the `-demo` flag to `false`:
 
 The V2 bot uses a nested configuration structure that separates the strategy, exchange, and risk parameters. You can find examples in the `configs/bybit/` and `configs/binance/` directories.
 
-### Supported Indicators
+### Supported Indicators (12 Total)
 
-The live bot supports all 11 technical indicators:
+**Trend Indicators (4)**:
 
-- **Classic**: RSI, MACD, Enhanced Bollinger Bands with %B, EMA
-- **Advanced**: Hull MA, MFI, Keltner Channels, WaveTrend
-- **Momentum**: Stochastic RSI, SuperTrend
-- **Volume**: OBV (On-Balance Volume)
+- **SMA** (Simple Moving Average) - `sma` - Basic trend following
+- **EMA** (Exponential Moving Average) - `ema` - Responsive trend direction
+- **Hull MA** (Hull Moving Average) - `hull_ma`, `hullma` - Smooth, low-lag trend
+- **SuperTrend** - `supertrend`, `st` - ATR-based trend following with dynamic support/resistance
 
-Configure indicators in your JSON config file with custom thresholds and parameters. Use the DCA backtest tool first to find optimal settings:
+**Oscillators (5)**:
+
+- **RSI** (Relative Strength Index) - `rsi` - Overbought/oversold momentum
+- **MACD** (Moving Average Convergence Divergence) - `macd` - Trend momentum
+- **Stochastic RSI** - `stochastic_rsi`, `stochrsi`, `stoch_rsi` - Enhanced RSI oscillator
+- **MFI** (Money Flow Index) - `mfi` - Volume-weighted RSI
+- **WaveTrend** - `wavetrend` - Advanced momentum oscillator
+
+**Bands (2)**:
+
+- **Bollinger Bands** - `bb`, `bollinger` - %B-based precision signals
+- **Keltner Channels** - `keltner` - Volatility-based bands
+
+**Volume (1)**:
+
+- **OBV** (On-Balance Volume) - `obv` - Volume-price trend analysis
+
+## 🏆 Recommended Indicator Combinations
+
+Based on extensive testing and analysis, here are the **Tier 1** recommended combinations for optimal DCA performance:
+
+### 1. "The Golden Trio" - 3 Indicators ⭐⭐⭐⭐⭐
+
+```json
+"indicators": ["hull_ma", "stochastic_rsi", "keltner"]
+```
+
+**Why this works:**
+
+- **Hull MA**: Trend confirmation (price above = uptrend)
+- **Stochastic RSI**: Momentum timing (oversold recovery)
+- **Keltner Channels**: Volatility-based entry (lower band = oversold)
+
+**Perfect for**: Most market conditions, balanced risk/reward
+
+### 2. "The Momentum Master" - 4 Indicators ⭐⭐⭐⭐⭐
+
+```json
+"indicators": ["hull_ma", "stochastic_rsi", "macd", "obv"]
+```
+
+**Why this works:**
+
+- **Hull MA**: Trend direction
+- **Stochastic RSI**: Short-term momentum
+- **MACD**: Medium-term momentum confirmation
+- **OBV**: Volume confirmation
+
+**Perfect for**: Trending markets, high-volume assets
+
+### 3. "The Complete System" - 5 Indicators ⭐⭐⭐⭐⭐
+
+```json
+"indicators": ["hull_ma", "stochastic_rsi", "keltner", "macd", "obv"]
+```
+
+**Why this works:**
+
+- All major signal types covered
+- Multiple confirmation layers
+- Reduces false signals significantly
+
+**Perfect for**: Conservative trading, maximum reliability
+
+### 4. "The Classic Power" - 4 Indicators ⭐⭐⭐⭐
+
+```json
+"indicators": ["rsi", "macd", "bb", "ema"]
+```
+
+**Why this works:**
+
+- **RSI**: Classic overbought/oversold signals
+- **MACD**: Trend momentum confirmation
+- **Bollinger Bands**: %B-based precision entries
+- **EMA**: Trend direction filter
+
+**Perfect for**: Traditional technical analysis approach
+
+### 5. "The Advanced Momentum" - 4 Indicators ⭐⭐⭐⭐
+
+```json
+"indicators": ["hull_ma", "mfi", "wavetrend", "keltner"]
+```
+
+**Why this works:**
+
+- **Hull MA**: Smooth trend following
+- **MFI**: Volume-weighted momentum
+- **WaveTrend**: Advanced oscillator signals
+- **Keltner Channels**: Volatility-based entries
+
+**Perfect for**: Advanced traders, complex market conditions
+
+### 6. "The Trend Master" - 4 Indicators ⭐⭐⭐⭐⭐
+
+```json
+"indicators": ["supertrend", "stochastic_rsi", "keltner", "obv"]
+```
+
+**Why this works:**
+
+- **SuperTrend**: ATR-based trend following with dynamic support/resistance
+- **Stochastic RSI**: Momentum timing for entries
+- **Keltner Channels**: Volatility-based confirmation
+- **OBV**: Volume trend confirmation
+
+**Perfect for**: Strong trending markets, high volatility assets
+
+### Quick Setup Commands
 
 ```bash
-# Find optimal parameters first
-dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi,obv" -optimize
+# Find optimal parameters for Golden Trio (3 indicators)
+dca-backtest -symbol BTCUSDT -indicators "hull_ma,stochastic_rsi,keltner" -optimize
+
+# Find optimal parameters for Momentum Master (4 indicators)
+dca-backtest -symbol ETHUSDT -indicators "hull_ma,stochastic_rsi,macd,obv" -optimize
+
+# Find optimal parameters for Complete System (5 indicators)
+dca-backtest -symbol SUIUSDT -indicators "hull_ma,stochastic_rsi,keltner,macd,obv" -optimize
+
+# Find optimal parameters for Classic Power (4 indicators)
+dca-backtest -symbol ADAUSDT -indicators "rsi,macd,bb,ema" -optimize
+
+# Find optimal parameters for Advanced Momentum (4 indicators)
+dca-backtest -symbol SOLUSDT -indicators "hull_ma,mfi,wavetrend,keltner" -optimize
+
+# Find optimal parameters for Trend Master (4 indicators)
+dca-backtest -symbol BNBUSDT -indicators "supertrend,stochastic_rsi,keltner,obv" -optimize
+
+# Find optimal parameters for all 12 indicators
+dca-backtest -symbol HYPEUSDT -indicators "rsi,macd,bb,ema,hull_ma,supertrend,mfi,keltner,wavetrend,obv,stochastic_rsi" -optimize
 
 # Then use the optimized config in live trading
-./live-bot-v2 -config optimized_config.json -demo
+./live-bot-v2 -config results/BTCUSDT_5m/best_config.json -demo
 ```
 
 ---

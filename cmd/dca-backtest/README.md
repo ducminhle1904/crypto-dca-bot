@@ -76,30 +76,148 @@ dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi" -period 30d -optimize
 | `price-threshold` | 0.02    | Minimum price drop % for next DCA entry |
 | `advanced-combo`  | false   | Use advanced indicators vs classic      |
 
-### Available Indicators
+### Available Indicators (12 Total)
 
-**Classic Combo (default)**:
+**Trend Indicators (4)**:
 
-- **RSI** (Relative Strength Index) - Overbought/oversold momentum
-- **MACD** (Moving Average Convergence Divergence) - Trend momentum
-- **Enhanced Bollinger Bands** - %B-based precision signals (90%/10% default)
-- **EMA** (Exponential Moving Average) - Trend direction
+- **SMA** (Simple Moving Average) - `sma` - Basic trend following
+- **EMA** (Exponential Moving Average) - `ema` - Responsive trend direction
+- **Hull MA** (Hull Moving Average) - `hull_ma`, `hullma` - Smooth, low-lag trend
+- **SuperTrend** - `supertrend`, `st` - ATR-based trend following with dynamic support/resistance
 
-**Advanced Combo**:
+**Oscillators (5)**:
 
-- **Hull Moving Average** - Smooth, low-lag trend indicator
-- **Money Flow Index (MFI)** - Volume-weighted RSI
-- **Keltner Channels** - Volatility-based bands
-- **WaveTrend Oscillator** - Advanced momentum oscillator
+- **RSI** (Relative Strength Index) - `rsi` - Overbought/oversold momentum
+- **MACD** (Moving Average Convergence Divergence) - `macd` - Trend momentum
+- **Stochastic RSI** - `stochastic_rsi`, `stochrsi`, `stoch_rsi` - Enhanced RSI oscillator
+- **MFI** (Money Flow Index) - `mfi` - Volume-weighted RSI
+- **WaveTrend** - `wavetrend` - Advanced momentum oscillator
 
-**Momentum Indicators**:
+**Bands (2)**:
 
-- **Stochastic RSI** - Enhanced RSI oscillator (14 period, 80%/20% default)
-- **SuperTrend** - Trend-following indicator with ATR bands
+- **Bollinger Bands** - `bb`, `bollinger` - %B-based precision signals
+- **Keltner Channels** - `keltner` - Volatility-based bands
 
-**Volume Indicators**:
+**Volume (1)**:
 
-- **OBV** (On-Balance Volume) - Volume-price trend analysis (1% threshold)
+- **OBV** (On-Balance Volume) - `obv` - Volume-price trend analysis
+
+## 🏆 Recommended Indicator Combinations
+
+Based on extensive testing and analysis, here are the **Tier 1** recommended combinations for optimal DCA performance:
+
+### 1. "The Golden Trio" - 3 Indicators ⭐⭐⭐⭐⭐
+
+```bash
+-indicators "hull_ma,stochastic_rsi,keltner"
+```
+
+**Why this works:**
+
+- **Hull MA**: Trend confirmation (price above = uptrend)
+- **Stochastic RSI**: Momentum timing (oversold recovery)
+- **Keltner Channels**: Volatility-based entry (lower band = oversold)
+
+**Perfect for**: Most market conditions, balanced risk/reward
+
+### 2. "The Momentum Master" - 4 Indicators ⭐⭐⭐⭐⭐
+
+```bash
+-indicators "hull_ma,stochastic_rsi,macd,obv"
+```
+
+**Why this works:**
+
+- **Hull MA**: Trend direction
+- **Stochastic RSI**: Short-term momentum
+- **MACD**: Medium-term momentum confirmation
+- **OBV**: Volume confirmation
+
+**Perfect for**: Trending markets, high-volume assets
+
+### 3. "The Complete System" - 5 Indicators ⭐⭐⭐⭐⭐
+
+```bash
+-indicators "hull_ma,stochastic_rsi,keltner,macd,obv"
+```
+
+**Why this works:**
+
+- All major signal types covered
+- Multiple confirmation layers
+- Reduces false signals significantly
+
+**Perfect for**: Conservative trading, maximum reliability
+
+### 4. "The Classic Power" - 4 Indicators ⭐⭐⭐⭐
+
+```bash
+-indicators "rsi,macd,bb,ema"
+```
+
+**Why this works:**
+
+- **RSI**: Classic overbought/oversold signals
+- **MACD**: Trend momentum confirmation
+- **Bollinger Bands**: %B-based precision entries
+- **EMA**: Trend direction filter
+
+**Perfect for**: Traditional technical analysis approach
+
+### 5. "The Advanced Momentum" - 4 Indicators ⭐⭐⭐⭐
+
+```bash
+-indicators "hull_ma,mfi,wavetrend,keltner"
+```
+
+**Why this works:**
+
+- **Hull MA**: Smooth trend following
+- **MFI**: Volume-weighted momentum
+- **WaveTrend**: Advanced oscillator signals
+- **Keltner Channels**: Volatility-based entries
+
+**Perfect for**: Advanced traders, complex market conditions
+
+### 6. "The Trend Master" - 4 Indicators ⭐⭐⭐⭐⭐
+
+```bash
+-indicators "supertrend,stochastic_rsi,keltner,obv"
+```
+
+**Why this works:**
+
+- **SuperTrend**: ATR-based trend following with dynamic support/resistance
+- **Stochastic RSI**: Momentum timing for entries
+- **Keltner Channels**: Volatility-based confirmation
+- **OBV**: Volume trend confirmation
+
+**Perfect for**: Strong trending markets, high volatility assets
+
+### Quick Test Commands
+
+```bash
+# Test the Golden Trio (3 indicators)
+dca-backtest -symbol BTCUSDT -indicators "hull_ma,stochastic_rsi,keltner" -optimize
+
+# Test the Momentum Master (4 indicators)
+dca-backtest -symbol ETHUSDT -indicators "hull_ma,stochastic_rsi,macd,obv" -optimize
+
+# Test the Complete System (5 indicators)
+dca-backtest -symbol SUIUSDT -indicators "hull_ma,stochastic_rsi,keltner,macd,obv" -optimize
+
+# Test the Classic Power (4 indicators)
+dca-backtest -symbol ADAUSDT -indicators "rsi,macd,bb,ema" -optimize
+
+# Test the Advanced Momentum (4 indicators)
+dca-backtest -symbol SOLUSDT -indicators "hull_ma,mfi,wavetrend,keltner" -optimize
+
+# Test the Trend Master (4 indicators)
+dca-backtest -symbol BNBUSDT -indicators "supertrend,stochastic_rsi,keltner,obv" -optimize
+
+# Test all 12 indicators together
+dca-backtest -symbol HYPEUSDT -indicators "rsi,macd,bb,ema,hull_ma,supertrend,mfi,keltner,wavetrend,obv,stochastic_rsi" -optimize
+```
 
 ### Individual Indicator Flags
 
@@ -138,17 +256,31 @@ The genetic algorithm optimization automatically finds the best parameters for *
 
 ### Optimized Parameters
 
-- **RSI**: Period, overbought/oversold thresholds
-- **MACD**: Fast/slow/signal periods
-- **Bollinger Bands**: Period, standard deviation, %B overbought/oversold thresholds
+**Trend Indicators:**
+
+- **SMA**: Period
 - **EMA**: Period
 - **Hull MA**: Period
-- **MFI**: Period, overbought/oversold thresholds
-- **Keltner Channels**: Period, multiplier
-- **WaveTrend**: N1/N2 periods, overbought/oversold levels
-- **Stochastic RSI**: Period, overbought/oversold thresholds
 - **SuperTrend**: ATR period, multiplier
+
+**Oscillators:**
+
+- **RSI**: Period, overbought/oversold thresholds
+- **MACD**: Fast/slow/signal periods
+- **Stochastic RSI**: Period, overbought/oversold thresholds
+- **MFI**: Period, overbought/oversold thresholds
+- **WaveTrend**: N1/N2 periods, overbought/oversold levels
+
+**Bands:**
+
+- **Bollinger Bands**: Period, standard deviation, %B overbought/oversold thresholds
+- **Keltner Channels**: Period, multiplier
+
+**Volume:**
+
 - **OBV**: Trend change threshold
+
+**Note**: SuperTrend is available in the codebase but not currently integrated into the optimization system.
 
 ### Algorithm Configuration
 

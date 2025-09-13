@@ -13,7 +13,6 @@ type TechnicalIndicator interface {
 	GetSignalStrength() float64
 	GetName() string
 	GetRequiredPeriods() int
-	// ResetState resets internal state for new data periods (walk-forward validation)
 	ResetState()
 }
 

@@ -33,6 +33,7 @@ const (
 	IndicatorTypeHullMA           IndicatorType = "HULL_MA"
 	IndicatorTypeOBV              IndicatorType = "OBV"
 	IndicatorTypeStochasticRSI    IndicatorType = "STOCHASTIC_RSI"
+	IndicatorTypeSuperTrend       IndicatorType = "SUPERTREND"
 )
 
 // IndicatorFactory creates technical indicators based on type and parameters
@@ -161,6 +162,19 @@ func (f *IndicatorFactory) CreateIndicator(indicatorType IndicatorType, params m
 		
 		return oscillators.NewStochasticRSIWithThresholds(period, overbought, oversold), nil
 		
+	case IndicatorTypeSuperTrend:
+		period := 14
+		multiplier := 2.5
+		
+		if p, ok := params["period"].(int); ok {
+			period = p
+		}
+		if m, ok := params["multiplier"].(float64); ok {
+			multiplier = m
+		}
+		
+		return trend.NewSuperTrendWithParams(period, multiplier), nil
+		
 	default:
 		return nil, fmt.Errorf("unknown indicator type: %s", indicatorType)
 	}
@@ -180,6 +194,7 @@ func (f *IndicatorFactory) GetAvailableIndicators() []IndicatorType {
 		IndicatorTypeHullMA,
 		IndicatorTypeOBV,
 		IndicatorTypeStochasticRSI,
+		IndicatorTypeSuperTrend,
 	}
 }
 
@@ -208,6 +223,8 @@ func ParseIndicatorType(s string) (IndicatorType, error) {
 		return IndicatorTypeOBV, nil
 	case "STOCHASTIC_RSI", "STOCH_RSI", "STOCHRSI":
 		return IndicatorTypeStochasticRSI, nil
+	case "SUPERTREND", "ST":
+		return IndicatorTypeSuperTrend, nil
 	default:
 		return "", fmt.Errorf("unknown indicator type: %s", s)
 	}
