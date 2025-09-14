@@ -3,32 +3,31 @@
     "symbol": "HYPEUSDT",
     "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 1.5,
+    "max_multiplier": 3.5,
     "price_threshold": 0.01,
-    "price_threshold_multiplier": 1.2,
+    "price_threshold_multiplier": 1.25,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.02,
+    "tp_percent": 0.03,
     "use_tp_levels": true,
     "auto_tp_orders": true,
     "cycle": true,
-    "indicators": ["hullma", "mfi", "macd", "keltner"],
+    "indicators": ["hull_ma", "stochastic_rsi", "macd", "obv"],
     "macd": {
-      "fast_period": 10,
-      "slow_period": 35,
+      "fast_period": 6,
+      "slow_period": 26,
       "signal_period": 9
     },
     "hull_ma": {
-      "period": 0
+      "period": 25
     },
-    "mfi": {
+    "obv": {
+      "trend_threshold": 0.005
+    },
+    "stochastic_rsi": {
       "period": 12,
-      "oversold": 30,
-      "overbought": 75
-    },
-    "keltner_channels": {
-      "period": 40,
-      "multiplier": 1.5
+      "overbought": 90,
+      "oversold": 20
     }
   },
   "exchange": {

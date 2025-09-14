@@ -1,35 +1,35 @@
 {
   "strategy": {
-    "symbol": "SUIUSDT",
-    "data_file": "data\\bybit\\linear\\SUIUSDT\\5\\candles.csv",
+    "symbol": "SOLUSDT",
+    "data_file": "data\\bybit\\linear\\SOLUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 1.8,
+    "max_multiplier": 4,
     "price_threshold": 0.01,
-    "price_threshold_multiplier": 1.05,
+    "price_threshold_multiplier": 1.15,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.04,
+    "tp_percent": 0.06,
     "use_tp_levels": true,
     "auto_tp_orders": true,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "hull_ma": {
-      "period": 22
+      "period": 25
     },
     "mfi": {
-      "period": 16,
-      "oversold": 25,
-      "overbought": 75
+      "period": 22,
+      "oversold": 30,
+      "overbought": 85
     },
     "keltner_channels": {
-      "period": 30,
-      "multiplier": 2
+      "period": 15,
+      "multiplier": 2.2
     },
     "wavetrend": {
-      "n1": 20,
-      "n2": 18,
-      "overbought": 50,
-      "oversold": -60
+      "n1": 15,
+      "n2": 24,
+      "overbought": 70,
+      "oversold": -80
     }
   },
   "exchange": {
@@ -44,7 +44,7 @@
   "risk": {
     "initial_balance": 500,
     "commission": 0.0005,
-    "min_order_qty": 10
+    "min_order_qty": 0.1
   },
   "notifications": {
     "enabled": false,

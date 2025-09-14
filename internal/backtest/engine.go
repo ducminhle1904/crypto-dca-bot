@@ -750,7 +750,16 @@ func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, ti
     // Execute partial exit
     proceeds := sellQty * currentPrice
     commission := proceeds * b.commission
-    pnl := (currentPrice - avgEntry) * sellQty - commission
+    
+    // Calculate proportional cost for the quantity being sold
+    // Use the actual cost basis (total cost / total quantity) instead of simple average entry
+    proportionalCost := 0.0
+    if b.cycleGrossQtySum > 0 {
+        proportionalCost = (b.cycleCostSum / b.cycleGrossQtySum) * sellQty
+    }
+    
+    // PnL = (exit proceeds - commission) - proportional entry cost
+    pnl := (proceeds - commission) - proportionalCost
     
     // Update TP level status
     tpLevel.Hit = true
@@ -778,14 +787,24 @@ func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPric
     // For TP levels, we create a synthetic "exit trade" that represents the partial exit
     // This is cleaner than trying to modify existing entry trades
     
+    // Calculate proportional cost for consistency with executeTPLevel
+    proportionalCost := 0.0
+    if b.cycleGrossQtySum > 0 {
+        proportionalCost = (b.cycleCostSum / b.cycleGrossQtySum) * sellQty
+    }
+    
+    // Calculate PnL using the same method as executeTPLevel
+    proceeds := sellQty * currentPrice
+    pnl := (proceeds - totalCommission) - proportionalCost
+    
     // Create a synthetic trade representing this partial exit
     partialExitTrade := Trade{
         EntryTime:  timestamp, // Use TP hit time as "entry" for the exit trade
         ExitTime:   timestamp, // Same time for exit
-        EntryPrice: avgEntry,  // Use average entry as the "entry" price
+        EntryPrice: avgEntry,  // Use average entry as the "entry" price (for display purposes)
         ExitPrice:  currentPrice, // Current price as exit
         Quantity:   sellQty,   // Quantity sold at this TP level
-        PnL:        (currentPrice - avgEntry) * sellQty - totalCommission, // PnL for this partial exit
+        PnL:        pnl,       // PnL calculated using proportional cost basis
         Commission: totalCommission, // Commission for this partial exit
         Cycle:      b.currentCycleNumber, // Current cycle
     }
