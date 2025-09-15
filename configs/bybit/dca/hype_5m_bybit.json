@@ -4,31 +4,42 @@
     "category": "linear",
     "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 3.5,
-    "price_threshold": 0.01,
-    "price_threshold_multiplier": 1.25,
+    "max_multiplier": 2,
+    "dca_spacing": {
+      "strategy": "volatility_adaptive",
+      "parameters": {
+        "atr_period": 10,
+        "base_threshold": 0.005,
+        "level_multiplier": 1.05,
+        "max_threshold": 0.05,
+        "min_threshold": 0.003,
+        "volatility_sensitivity": 2.5
+      }
+    },
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.03,
+    "tp_percent": 0.035,
     "use_tp_levels": true,
     "auto_tp_orders": true,
     "cycle": true,
-    "indicators": ["hull_ma", "stochastic_rsi", "macd", "obv"],
-    "macd": {
-      "fast_period": 6,
-      "slow_period": 26,
-      "signal_period": 9
-    },
+    "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "hull_ma": {
-      "period": 25
+      "period": 12
     },
-    "obv": {
-      "trend_threshold": 0.005
-    },
-    "stochastic_rsi": {
+    "mfi": {
       "period": 12,
-      "overbought": 90,
-      "oversold": 20
+      "oversold": 30,
+      "overbought": 75
+    },
+    "keltner_channels": {
+      "period": 50,
+      "multiplier": 1.5
+    },
+    "wavetrend": {
+      "n1": 8,
+      "n2": 18,
+      "overbought": 70,
+      "oversold": -50
     }
   },
   "exchange": {

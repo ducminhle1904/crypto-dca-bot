@@ -62,16 +62,10 @@ func NewVolatilityAdaptiveSpacing(params map[string]interface{}) (*VolatilityAda
 
 // CalculateThreshold calculates the volatility-adaptive threshold for the next DCA entry
 func (s *VolatilityAdaptiveSpacing) CalculateThreshold(level int, context *MarketContext) float64 {
-	// Calculate ATR if not provided in context
+	// Use ATR provided in context (calculated by strategy's ATR calculator)
 	atr := context.ATR
-	if atr <= 0 && len(context.RecentCandles) >= s.atrPeriod {
-		// Calculate ATR from recent candles
-		if atrValue, err := s.atrCalculator.Calculate(context.RecentCandles); err == nil {
-			atr = atrValue
-		}
-	}
-
-	// If still no ATR available, use base threshold with level multiplier
+	
+	// If no ATR available, use base threshold with level multiplier
 	if atr <= 0 || context.CurrentPrice <= 0 {
 		return s.applyLevelMultiplier(s.baseThreshold, level)
 	}

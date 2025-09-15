@@ -5,8 +5,6 @@
     "data_file": "data\\bybit\\linear\\SOLUSDT\\5\\candles.csv",
     "base_amount": 40,
     "max_multiplier": 4,
-    "price_threshold": 0.01,
-    "price_threshold_multiplier": 1.15,
     "interval": "5m",
     "window_size": 100,
     "tp_percent": 0.06,

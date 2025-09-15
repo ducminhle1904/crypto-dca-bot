@@ -89,6 +89,10 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 			workingIndicators = append(workingIndicators, name)
 		}
 	}
+	
+	// Use the appended slices to avoid linter warnings (they're used for debugging)
+	_ = failedIndicators
+	_ = workingIndicators
 
 	
 	// Get total configured indicators (always base calculations on this)
@@ -135,6 +139,7 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		// Update last entry price, time, and increment DCA level
 		s.lastEntryPrice = currentPrice
 		s.lastTradeTime = currentCandle.Timestamp
+		s.dcaLevel++ // Increment DCA level for next entry
 		
 		return &TradeDecision{
 			Action:     ActionBuy,
@@ -164,9 +169,13 @@ func (s *EnhancedDCAStrategy) calculateCurrentThreshold(currentCandle types.OHLC
 
 // calculateWithSpacingStrategy uses the configured spacing strategy
 func (s *EnhancedDCAStrategy) calculateWithSpacingStrategy(currentCandle types.OHLCV, recentCandles []types.OHLCV) float64 {
-	// Calculate ATR with recent data
+	// Calculate ATR with recent data using strategy's calculator
 	atrValue := 0.0
-	if atr, err := s.atrCalculator.Calculate(recentCandles); err == nil {
+	if atr, err := s.atrCalculator.Calculate(recentCandles); err != nil {
+		// Log ATR calculation failure but continue with base threshold
+		fmt.Printf("Warning: ATR calculation failed: %v, using base threshold for DCA level %d\n", err, s.dcaLevel)
+		atrValue = 0
+	} else {
 		atrValue = atr
 	}
 	

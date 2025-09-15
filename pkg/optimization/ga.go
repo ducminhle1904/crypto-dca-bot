@@ -21,17 +21,17 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
-// GA Constants - Optimized for Walk-Forward Validation (180-day windows)
+// GA Constants - Balanced for large datasets
 const (
-	GAPopulationSize    = 24   // Smaller population for faster convergence (was 45)
-	GAGenerations       = 15   // Fewer generations - still effective for 180d data (was 30)
-	GAMutationRate      = 0.2 // Higher mutation for faster exploration (was 0.1)
-	GACrossoverRate     = 0.85 // Higher crossover for better mixing (was 0.8)
-	GAEliteSize         = 4    // Keep best 4 individuals (~17% of population)
-	TournamentSize      = 2    // Smaller tournament for speed (was 3)
-	MaxParallelWorkers  = 6    // More parallel workers for speed (was 4)
-	ProgressReportInterval = 3 // More frequent progress reports (was 5)
-	DetailReportInterval   = 8 // Less frequent detailed reports (was 10)
+	GAPopulationSize    = 40   // Moderate population for good exploration without being too slow
+	GAGenerations       = 25   // Moderate generations for convergence on large data
+	GAMutationRate      = 0.18 // Slightly higher mutation for exploration
+	GACrossoverRate     = 0.8  // Good crossover rate for mixing
+	GAEliteSize         = 6    // Keep best 6 individuals (~15% of population)
+	TournamentSize      = 3    // Standard tournament size
+	MaxParallelWorkers  = 6    // Balanced parallel workers
+	ProgressReportInterval = 5 // Progress reports every 5 generations
+	DetailReportInterval   = 10 // Detailed reports every 10 generations
 )
 
 // Individual represents a candidate solution - extracted from main.go
@@ -108,14 +108,9 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 		}
 	}
 	
-	log.Printf("✅ GA → %.2f%%", bestIndividual.Fitness*100)
-	
-	// CRITICAL FIX: Re-run the best configuration to ensure consistency with standalone runs
+	// Re-run the best configuration to ensure consistency with standalone runs
 	// The GA cached results may have strategy state contamination from parallel execution
-	log.Printf("🔍 Final validation: Re-running best config to ensure consistency...")
 	finalResults := RunBacktestWithData(bestIndividual.Config, data)
-	log.Printf("🔍 Final validation result: %.2f%% return, %d trades", finalResults.TotalReturn*100, finalResults.TotalTrades)
-	
 	return finalResults, bestIndividual.Config, nil
 }
 

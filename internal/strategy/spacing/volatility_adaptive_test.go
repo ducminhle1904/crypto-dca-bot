@@ -220,3 +220,63 @@ func TestVolatilityAdaptiveSpacing_Parameters(t *testing.T) {
 		t.Errorf("ATR period not found or wrong type")
 	}
 }
+
+func TestVolatilityAdaptiveSpacing_DCALevelProgression(t *testing.T) {
+	// Test that DCA level progression works correctly
+	params := map[string]interface{}{
+		"base_threshold":         0.01,  // 1%
+		"volatility_sensitivity": 2.0,   // 2x sensitivity
+		"atr_period":            3,      // Short period for testing
+		"max_threshold":         0.05,   // 5% max
+		"min_threshold":         0.003,  // 0.3% min
+		"level_multiplier":      1.1,    // 1.1x per level
+	}
+
+	strategy, err := NewVolatilityAdaptiveSpacing(params)
+	if err != nil {
+		t.Fatalf("Failed to create strategy: %v", err)
+	}
+
+	// Create test market context with consistent data
+	testCandles := []types.OHLCV{
+		{High: 100.0, Low: 95.0, Close: 98.0, Timestamp: time.Now()},
+		{High: 102.0, Low: 97.0, Close: 99.0, Timestamp: time.Now()},
+		{High: 101.0, Low: 96.0, Close: 97.0, Timestamp: time.Now()},
+	}
+
+	context := &MarketContext{
+		CurrentPrice:   97.0,
+		LastEntryPrice: 100.0,
+		ATR:           2.0, // Fixed ATR for consistent testing
+		CurrentCandle:  testCandles[2],
+		RecentCandles: testCandles,
+		Timestamp:     time.Now(),
+	}
+
+	// Test progressive threshold increase with DCA levels
+	thresholds := make([]float64, 5)
+	for level := 0; level < 5; level++ {
+		thresholds[level] = strategy.CalculateThreshold(level, context)
+	}
+
+	// Verify that thresholds increase with DCA level (progressive spacing)
+	for i := 1; i < len(thresholds); i++ {
+		if thresholds[i] <= thresholds[i-1] {
+			t.Errorf("Threshold should increase with DCA level: Level %d (%.6f) should be > Level %d (%.6f)", 
+				i, thresholds[i], i-1, thresholds[i-1])
+		}
+	}
+
+	// Verify that all thresholds are within bounds
+	for level, threshold := range thresholds {
+		if threshold < 0.003 || threshold > 0.05 {
+			t.Errorf("Level %d threshold %.6f is outside bounds [0.003, 0.05]", level, threshold)
+		}
+	}
+
+	// Log the progression for verification
+	t.Logf("DCA Level Progression:")
+	for level, threshold := range thresholds {
+		t.Logf("  Level %d: %.4f%% (%.6f)", level, threshold*100, threshold)
+	}
+}
