@@ -13,6 +13,7 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/common"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/oscillators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	configpkg "github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
@@ -41,7 +42,7 @@ type GAIndividual struct {
 
 // OptimizeWithGA runs genetic algorithm optimization - extracted from main.go optimizeForInterval
 func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time.Duration) (*backtest.BacktestResults, interface{}, error) {
-	// Create local RNG to avoid race conditions
+	// Create local RNG with random seed for non-deterministic optimization
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
 	// MinOrderQty should be fetched at orchestrator level before calling OptimizeWithGA
@@ -540,6 +541,10 @@ func runDCABacktestWithData(cfg *configpkg.DCAConfig, data []types.OHLCV) *backt
 	// Create strategy with configured indicators
 	strat := createDCAStrategy(cfg)
 	
+	// FIXED: Reset strategy state to prevent contamination between optimization runs
+	// This ensures each backtest evaluation starts with clean indicator state
+	strat.ResetForNewPeriod()
+	
 	// Create and run backtest engine
 	tp := cfg.TPPercent
 	if !cfg.Cycle { 
@@ -621,6 +626,14 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	if include["hullma"] || include["hull_ma"] {
 		hullMA := trend.NewHullMA(cfg.HullMAPeriod)
 		dca.AddIndicator(hullMA)
+	}
+	if include["obv"] {
+		obv := volume.NewOBV()
+		dca.AddIndicator(obv)
+	}
+	if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
+		stochRSI := oscillators.NewStochasticRSI()
+		dca.AddIndicator(stochRSI)
 	}
 	
 	return dca
