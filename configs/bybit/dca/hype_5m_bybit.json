@@ -1,6 +1,7 @@
 {
   "strategy": {
     "symbol": "HYPEUSDT",
+    "category": "linear",
     "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
     "base_amount": 40,
     "max_multiplier": 3.5,

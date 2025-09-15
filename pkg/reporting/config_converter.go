@@ -3,6 +3,8 @@ package reporting
 import (
 	"reflect"
 	"strings"
+
+	config "github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 )
 
 // Configuration conversion functions for JSON output
@@ -21,9 +23,10 @@ type MainBacktestConfig struct {
 	// DCA Strategy parameters
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
-	PriceThreshold float64 `json:"price_threshold"`
-	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Progressive DCA spacing multiplier
+	PriceThreshold float64 `json:"price_threshold,omitempty"`
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier,omitempty"`
 	
+	DCASpacing     *config.DCASpacingConfig `json:"dca_spacing,omitempty"`
 	
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
@@ -70,9 +73,7 @@ type MainBacktestConfig struct {
 }
 
 // ConvertToNestedConfig converts a MainBacktestConfig to the new nested format
-// Moved from cmd/backtest/main.go
 func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
-	// Extract interval from data file path (e.g., "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m")
 	interval := ExtractIntervalFromPath(cfg.DataFile)
 	if interval == "" {
 		interval = "5m" // Default fallback
@@ -84,8 +85,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		DataFile:       cfg.DataFile,
 		BaseAmount:     cfg.BaseAmount,
 		MaxMultiplier:  cfg.MaxMultiplier,
-		PriceThreshold: cfg.PriceThreshold,
-		PriceThresholdMultiplier: cfg.PriceThresholdMultiplier,
+		DCASpacing:     cfg.DCASpacing,
 		Interval:       interval,
 		WindowSize:     cfg.WindowSize,
 		TPPercent:      cfg.TPPercent,
@@ -181,9 +181,6 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		},
 	}
 }
-
-// Convenience functions for working with BacktestConfig
-// These are wrappers that use the conversion logic above
 
 // PrintBacktestConfigJSON prints a MainBacktestConfig as nested JSON format
 func PrintBacktestConfigJSON(cfg interface{}) {

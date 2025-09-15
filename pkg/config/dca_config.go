@@ -5,8 +5,6 @@ const (
 	// Default DCA parameter values
 	DefaultBaseAmount     = 40.0
 	DefaultMaxMultiplier  = 3.0
-	DefaultPriceThreshold = 0.02 // 2%
-	DefaultPriceThresholdMultiplier = 1.0 // 1.0x = no multiplier (disabled by default)
 	DefaultTPPercent      = 0.02 // 2%
 	
 	// Multiple TP configuration
@@ -69,8 +67,9 @@ type DCAConfig struct {
 	// DCA Strategy parameters
 	BaseAmount     float64 `json:"base_amount"`
 	MaxMultiplier  float64 `json:"max_multiplier"`
-	PriceThreshold float64 `json:"price_threshold"`
-	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"`
+	
+	// DCA Spacing Strategy configuration
+	DCASpacing     *DCASpacingConfig `json:"dca_spacing,omitempty"`
 	
 	RSIPeriod      int     `json:"rsi_period"`
 	RSIOversold    float64 `json:"rsi_oversold"`
@@ -173,13 +172,6 @@ func (c *DCAConfig) SetTPPercent(val float64) {
 	c.TPPercent = val
 }
 
-func (c *DCAConfig) SetPriceThreshold(val float64) {
-	c.PriceThreshold = val
-}
-
-func (c *DCAConfig) SetPriceThresholdMultiplier(val float64) {
-	c.PriceThresholdMultiplier = val
-}
 
 func (c *DCAConfig) SetHullMAPeriod(val int) {
 	c.HullMAPeriod = val
@@ -285,8 +277,6 @@ func NewDefaultDCAConfig() *DCAConfig {
 		WindowSize:     DefaultWindowSize,
 		BaseAmount:     DefaultBaseAmount,
 		MaxMultiplier:  DefaultMaxMultiplier,
-		PriceThreshold: DefaultPriceThreshold,
-		PriceThresholdMultiplier: DefaultPriceThresholdMultiplier,
 		RSIPeriod:      DefaultRSIPeriod,
 		RSIOversold:    DefaultRSIOversold,
 		RSIOverbought:  DefaultRSIOverbought,
@@ -315,5 +305,28 @@ func NewDefaultDCAConfig() *DCAConfig {
 		StochasticRSIPeriod: DefaultStochasticRSIPeriod,
 		StochasticRSIOverbought: DefaultStochasticRSIOverbought,
 		StochasticRSIOversold: DefaultStochasticRSIOversold,
+		// DCASpacing is nil by default - uses legacy fixed spacing
+		DCASpacing:     nil,
 	}
+}
+
+// DCASpacingConfig holds configuration for DCA spacing strategies
+type DCASpacingConfig struct {
+	Strategy   string                 `json:"strategy"`   // Strategy name (e.g., "volatility_adaptive")
+	Parameters map[string]interface{} `json:"parameters"` // Strategy-specific parameters
+}
+
+// GetDCASpacingConfig returns the spacing configuration, or nil for legacy fixed spacing
+func (c *DCAConfig) GetDCASpacingConfig() *DCASpacingConfig {
+	return c.DCASpacing
+}
+
+// SetDCASpacingConfig sets the spacing configuration
+func (c *DCAConfig) SetDCASpacingConfig(spacingConfig *DCASpacingConfig) {
+	c.DCASpacing = spacingConfig
+}
+
+// HasSpacingStrategy returns true if a spacing strategy is configured
+func (c *DCAConfig) HasSpacingStrategy() bool {
+	return c.DCASpacing != nil && c.DCASpacing.Strategy != ""
 }

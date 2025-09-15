@@ -32,8 +32,12 @@ type StrategyConfig struct {
 	Category                 string  `json:"category"`                   // Trading category (spot, linear, inverse)
 	BaseAmount               float64 `json:"base_amount"`               // Base DCA amount in USD
 	MaxMultiplier            float64 `json:"max_multiplier"`            // Maximum multiplier for DCA
-	PriceThreshold           float64 `json:"price_threshold"`           // Price drop threshold to trigger DCA
-	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier"` // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
+	// Legacy fields (deprecated - use dca_spacing instead)
+	PriceThreshold           float64 `json:"price_threshold,omitempty"`           // Price drop threshold to trigger DCA (deprecated)
+	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier,omitempty"` // Multiplier for progressive DCA spacing (deprecated)
+	
+	// DCA Spacing Strategy configuration (new)
+	DCASpacing *DCASpacingConfig `json:"dca_spacing,omitempty"` // DCA spacing strategy configuration
 	
 	// Market data settings
 	Interval   string `json:"interval"`    // Trading interval (5m, 15m, 1h, etc.)
@@ -73,6 +77,12 @@ type StrategyConfig struct {
 	
 	// Momentum indicators
 	StochasticRSI IndicatorStochasticRSIConfig `json:"stochastic_rsi"`
+}
+
+// DCASpacingConfig holds DCA spacing strategy configuration
+type DCASpacingConfig struct {
+	Strategy   string                 `json:"strategy"`   // Strategy name (e.g., "fixed", "volatility_adaptive")
+	Parameters map[string]interface{} `json:"parameters"` // Strategy-specific parameters
 }
 
 
@@ -201,8 +211,32 @@ func (c *LiveBotConfig) setDefaults() error {
 	if c.Strategy.MaxMultiplier == 0 {
 		c.Strategy.MaxMultiplier = 5.0
 	}
-	if c.Strategy.PriceThreshold == 0 {
-		c.Strategy.PriceThreshold = 0.05 // 5% drop
+	// Migration: Convert old-style spacing to new format
+	if c.Strategy.DCASpacing == nil {
+		// Check if old format is present
+		if c.Strategy.PriceThreshold > 0 || c.Strategy.PriceThresholdMultiplier > 1.0 {
+			// Migrate to new format
+			c.Strategy.DCASpacing = &DCASpacingConfig{
+				Strategy: "fixed",
+				Parameters: map[string]interface{}{
+					"base_threshold":       c.Strategy.PriceThreshold,
+					"threshold_multiplier": c.Strategy.PriceThresholdMultiplier,
+					"max_threshold":        0.10, // 10% safety limit
+					"min_threshold":        0.003, // 0.3% safety limit
+				},
+			}
+		} else {
+			// Create default spacing strategy
+			c.Strategy.DCASpacing = &DCASpacingConfig{
+				Strategy: "fixed",
+				Parameters: map[string]interface{}{
+					"base_threshold":       0.05, // 5% drop default
+					"threshold_multiplier": 1.15, // 1.15x multiplier default
+					"max_threshold":        0.10, // 10% safety limit
+					"min_threshold":        0.003, // 0.3% safety limit
+				},
+			}
+		}
 	}
 	if c.Strategy.TPPercent == 0 {
 		c.Strategy.TPPercent = 0.02 // 2% profit (aligned with backtest default)
@@ -353,8 +387,13 @@ func (c *LiveBotConfig) validate() error {
 	if c.Strategy.MaxMultiplier < 1.0 {
 		return fmt.Errorf("max multiplier must be at least 1.0")
 	}
-	if c.Strategy.PriceThreshold <= 0 || c.Strategy.PriceThreshold > 1.0 {
-		return fmt.Errorf("price threshold must be between 0 and 1.0")
+	// Validate DCA spacing configuration
+	if c.Strategy.DCASpacing != nil {
+		if c.Strategy.DCASpacing.Strategy == "" {
+			return fmt.Errorf("DCA spacing strategy cannot be empty")
+		}
+	} else {
+		return fmt.Errorf("DCA spacing configuration is required")
 	}
 
 

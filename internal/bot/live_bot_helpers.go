@@ -401,7 +401,7 @@ func (bot *LiveBot) printBotConfiguration() {
 		{"💰 Initial Balance", fmt.Sprintf("$%.2f", bot.balance)},
 		{"📈 Base DCA Amount", fmt.Sprintf("$%.2f", bot.config.Strategy.BaseAmount)},
 		{"🔄 Max Multiplier", fmt.Sprintf("%.2f", bot.config.Strategy.MaxMultiplier)},
-		{"📊 Price Threshold", fmt.Sprintf("%.2f%%", bot.config.Strategy.PriceThreshold*100)},
+		{"📊 DCA Spacing", bot.getDCASpacingDisplay()},
 		{"🎯 Take Profit", fmt.Sprintf("%.2f%%", bot.config.Strategy.TPPercent*100)},
 	})
 	
@@ -446,6 +446,39 @@ func (bot *LiveBot) getTradingModeString() string {
 		return "🧪 DEMO MODE (Paper Trading)"
 	}
 	return "💰 LIVE TRADING MODE (Real Money!)"
+}
+
+// getDCASpacingDisplay returns a formatted string for DCA spacing strategy display
+func (bot *LiveBot) getDCASpacingDisplay() string {
+	if bot.config.Strategy.DCASpacing == nil {
+		return "❌ Not configured"
+	}
+	
+	strategy := bot.config.Strategy.DCASpacing.Strategy
+	params := bot.config.Strategy.DCASpacing.Parameters
+	
+	switch strategy {
+	case "fixed":
+		if baseThresh, ok := params["base_threshold"].(float64); ok {
+			if multiplier, ok := params["threshold_multiplier"].(float64); ok && multiplier > 1.0 {
+				return fmt.Sprintf("Fixed Progressive (%.1f%% × %.2fx)", baseThresh*100, multiplier)
+			}
+			return fmt.Sprintf("Fixed (%.1f%%)", baseThresh*100)
+		}
+		return "Fixed Progressive"
+		
+	case "volatility_adaptive":
+		if baseThresh, ok := params["base_threshold"].(float64); ok {
+			if sensitivity, ok := params["volatility_sensitivity"].(float64); ok {
+				return fmt.Sprintf("ATR-Adaptive (%.1f%%, %.1fx sens)", baseThresh*100, sensitivity)
+			}
+			return fmt.Sprintf("ATR-Adaptive (%.1f%%)", baseThresh*100)
+		}
+		return "ATR-Adaptive"
+		
+	default:
+		return fmt.Sprintf("%s Strategy", strategy)
+	}
 }
 
 // Helper functions

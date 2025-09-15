@@ -20,6 +20,7 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/logger"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -39,6 +40,7 @@ type LiveBot struct {
 	config   *config.LiveBotConfig
 	exchange exchange.LiveTradingExchange
 	strategy *strategy.EnhancedDCAStrategy
+	spacingStrategy spacing.DCASpacingStrategy
 	logger   *logger.Logger
 	
 	// Trading parameters extracted from config
@@ -119,25 +121,37 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 	return bot, nil
 }
 
-// calculateRequiredThreshold calculates the price drop threshold required for the current DCA level
-func (bot *LiveBot) calculateRequiredThreshold() float64 {
-	baseThreshold := bot.config.Strategy.PriceThreshold
-	multiplier := bot.config.Strategy.PriceThresholdMultiplier
-	
-	if multiplier <= 1.0 {
-		return baseThreshold
+// calculateRequiredThreshold calculates the price drop threshold required for the current DCA level using spacing strategy
+func (bot *LiveBot) calculateRequiredThreshold(currentPrice float64, recentCandles []types.OHLCV) float64 {
+	if bot.spacingStrategy == nil {
+		// Fallback to default if no spacing strategy (shouldn't happen)
+		bot.logger.LogWarning("Threshold Calculation", "No spacing strategy available, using fallback")
+		return 0.02 // 2% fallback
 	}
 	
-	// Get DCA level safely with mutex protection
+	// Get DCA level and last entry price safely with mutex protection
 	bot.positionMutex.RLock()
 	currentDCALevel := bot.dcaLevel
+	lastEntryPrice := bot.averagePrice
 	bot.positionMutex.RUnlock()
 	
-	// Calculate progressive threshold: base * (multiplier ^ dcaLevel)
-	threshold := baseThreshold
-	for i := 1; i < currentDCALevel; i++ {
-		threshold *= multiplier
+	// Create market context for spacing strategy
+	context := &spacing.MarketContext{
+		CurrentPrice:   currentPrice,
+		LastEntryPrice: lastEntryPrice,
+		ATR:           0, // Will be calculated by strategy if needed
+		CurrentCandle: types.OHLCV{}, // Will be set if we have current candle
+		RecentCandles: recentCandles,
+		Timestamp:     time.Now(),
 	}
+	
+	// Set current candle if we have recent data
+	if len(recentCandles) > 0 {
+		context.CurrentCandle = recentCandles[len(recentCandles)-1]
+	}
+	
+	// Calculate threshold using spacing strategy
+	threshold := bot.spacingStrategy.CalculateThreshold(currentDCALevel, context)
 	
 	return threshold
 }
@@ -318,8 +332,31 @@ func (bot *LiveBot) Stop() {
 func (bot *LiveBot) initializeStrategy() error {
 	// Create strategy
 	bot.strategy = strategy.NewEnhancedDCAStrategy(bot.config.Strategy.BaseAmount)
-	bot.strategy.SetPriceThreshold(bot.config.Strategy.PriceThreshold)
-	bot.strategy.SetPriceThresholdMultiplier(bot.config.Strategy.PriceThresholdMultiplier)
+	
+	// Configure DCA spacing strategy
+	if bot.config.Strategy.DCASpacing == nil {
+		return fmt.Errorf("DCA spacing configuration is required")
+	}
+
+	spacingConfig := spacing.SpacingConfig{
+		Strategy:   bot.config.Strategy.DCASpacing.Strategy,
+		Parameters: bot.config.Strategy.DCASpacing.Parameters,
+	}
+	
+	spacingStrategy, err := spacing.CreateSpacingStrategy(spacingConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create spacing strategy: %w", err)
+	}
+	
+	// Validate strategy configuration
+	if err := spacingStrategy.ValidateConfig(); err != nil {
+		return fmt.Errorf("invalid spacing strategy configuration: %w", err)
+	}
+	
+	// Set the spacing strategy in both bot and enhanced strategy
+	bot.spacingStrategy = spacingStrategy
+	bot.strategy.SetSpacingStrategy(spacingStrategy)
+	bot.logger.Info("✅ Using %s spacing strategy", spacingStrategy.GetName())
 
 	// Add indicators based on configuration
 	bot.logger.Info("🔧 Initializing %d indicators: %v", len(bot.config.Strategy.Indicators), bot.config.Strategy.Indicators)
@@ -788,9 +825,17 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	currentAvgPrice := bot.averagePrice
 	bot.positionMutex.RUnlock()
 	
-	if currentDCALevel > 0 && currentAvgPrice > 0 && bot.config.Strategy.PriceThreshold > 0 {
+	// DCA spacing strategy validation with proper market context
+	if currentDCALevel > 0 && currentAvgPrice > 0 {
+		// Get recent klines for spacing strategy context
+		recentCandles, err := bot.getRecentKlines()
+		if err != nil {
+			bot.logger.LogWarning("DCA Validation", "Failed to get recent candles for spacing calculation: %v", err)
+			recentCandles = []types.OHLCV{} // Use empty slice as fallback
+		}
+		
 		priceDrop := (currentAvgPrice - price) / currentAvgPrice
-		requiredThreshold := bot.calculateRequiredThreshold()
+		requiredThreshold := bot.calculateRequiredThreshold(price, recentCandles)
 		
 		if priceDrop < requiredThreshold {
 			bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price drop %.2f%% < required %.2f%% (DCA Level %d)", 

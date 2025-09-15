@@ -45,9 +45,13 @@ func (v *DCAValidator) validateDCAConfig(cfg *DCAConfig) error {
 		return fmt.Errorf("window size must be positive, got: %d", cfg.WindowSize)
 	}
 	
-	if cfg.PriceThreshold < 0 || cfg.PriceThreshold > MaxThreshold {
-		return fmt.Errorf("price threshold must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.PriceThreshold)
+	// Validate DCA spacing configuration if present
+	if cfg.DCASpacing != nil {
+		if cfg.DCASpacing.Strategy == "" {
+			return fmt.Errorf("DCA spacing strategy cannot be empty")
+		}
 	}
+	// Note: DCA spacing can be added later from command line flags, so we don't require it here
 	
 	if cfg.TPPercent < 0 || cfg.TPPercent > MaxThreshold {
 		return fmt.Errorf("TP percent must be between 0 and %.2f (0-100%%), got: %.4f", MaxThreshold, cfg.TPPercent)

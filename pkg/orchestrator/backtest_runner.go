@@ -17,6 +17,7 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
@@ -152,14 +153,32 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 	// Use optimized Enhanced DCA strategy
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
 
-	// Set price threshold for DCA entry spacing
-	dca.SetPriceThreshold(cfg.PriceThreshold)
-	
-	// Set price threshold multiplier for progressive DCA spacing
-	dca.SetPriceThresholdMultiplier(cfg.PriceThresholdMultiplier)
-	
 	// Set maximum position multiplier from configuration
 	dca.SetMaxMultiplier(cfg.MaxMultiplier)
+
+	// Configure spacing strategy - all configs must have one
+	if cfg.DCASpacing == nil {
+		return nil, fmt.Errorf("no DCA spacing strategy configured - please specify dca_spacing in your configuration")
+	}
+
+	spacingConfig := spacing.SpacingConfig{
+		Strategy:   cfg.DCASpacing.Strategy,
+		Parameters: cfg.DCASpacing.Parameters,
+	}
+	
+	spacingStrategy, err := spacing.CreateSpacingStrategy(spacingConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create spacing strategy: %w", err)
+	}
+	
+	// Validate strategy configuration
+	if err := spacingStrategy.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("invalid spacing strategy configuration: %w", err)
+	}
+	
+	// Set the spacing strategy
+	dca.SetSpacingStrategy(spacingStrategy)
+	log.Printf("✅ Using %s spacing strategy", spacingStrategy.GetName())
 
 	// Indicator inclusion map
 	include := make(map[string]bool)
@@ -227,8 +246,8 @@ func (r *DefaultBacktestRunner) logBacktestConfig(cfg *config.DCAConfig, data []
 	// Indicator information - use actual indicators
 	indicatorDescription := r.getIndicatorDescription(cfg.Indicators)
 	log.Printf("🎯 INDICATORS: %s", indicatorDescription)
-	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f, TP=%.2f%%, PriceThreshold=%.2f%%",
-		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty, cfg.TPPercent*100, cfg.PriceThreshold*100)
+	log.Printf("⚙️ Params: base=$%.0f, maxMult=%.2f, window=%d, commission=%.4f, minQty=%.6f, TP=%.2f%%",
+		cfg.BaseAmount, cfg.MaxMultiplier, cfg.WindowSize, cfg.Commission, cfg.MinOrderQty, cfg.TPPercent*100)
 }
 
 // getIndicatorDescription returns a description based on the actual indicators used

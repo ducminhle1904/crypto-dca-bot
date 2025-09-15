@@ -30,6 +30,9 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	StochasticRSIPeriods: []int{10, 12, 14, 16, 18, 20, 22},
 	StochasticRSIOverboughts: []float64{75.0, 80.0, 85.0, 90.0},
 	StochasticRSIOversolds: []float64{10.0, 15.0, 20.0, 25.0},
+	VolatilitySensitivity: []float64{1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
+	ATRPeriods:           []int{7, 10, 12, 14, 16, 18, 21, 24, 28},
+	LevelMultipliers:     []float64{1.05, 1.1, 1.15, 1.2, 1.25, 1.3},
 }
 
 // GetDefaultOptimizationRanges returns the default optimization ranges

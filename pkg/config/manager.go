@@ -47,12 +47,6 @@ func (m *DCAConfigManager) LoadConfig(configFile, dataFile, symbol string, balan
 	if maxMultiplier, ok := params["max_multiplier"].(float64); ok {
 		cfg.MaxMultiplier = maxMultiplier
 	}
-	if priceThreshold, ok := params["price_threshold"].(float64); ok {
-		cfg.PriceThreshold = priceThreshold
-	}
-	if priceThresholdMultiplier, ok := params["price_threshold_multiplier"].(float64); ok {
-		cfg.PriceThresholdMultiplier = priceThresholdMultiplier
-	}
 	
 	// Load from config file if provided
 	if configFile != "" {
@@ -101,13 +95,14 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	cfg.Interval = strategy.Interval
 	cfg.BaseAmount = strategy.BaseAmount
 	cfg.MaxMultiplier = strategy.MaxMultiplier
-	cfg.PriceThreshold = strategy.PriceThreshold
-	cfg.PriceThresholdMultiplier = strategy.PriceThresholdMultiplier
 	cfg.WindowSize = strategy.WindowSize
 	cfg.TPPercent = strategy.TPPercent
 	cfg.UseTPLevels = strategy.UseTPLevels
 	cfg.Cycle = strategy.Cycle
 	cfg.Indicators = strategy.Indicators
+	
+	// Map DCA spacing strategy
+	cfg.DCASpacing = strategy.DCASpacing
 	
 	// Map indicator-specific configurations - no artificial separation needed
 	// Load config for any indicator that's present (allows flexible mixing)
@@ -191,20 +186,19 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		interval = "5m" // Default fallback
 	}
 	
-	// Only include the combo that was actually used
+	// Create strategy configuration
 	strategyConfig := StrategyConfig{
 		Symbol:         dcaCfg.Symbol,
 		DataFile:       dcaCfg.DataFile,
 		BaseAmount:     dcaCfg.BaseAmount,
 		MaxMultiplier:  dcaCfg.MaxMultiplier,
-		PriceThreshold: dcaCfg.PriceThreshold,
-		PriceThresholdMultiplier: dcaCfg.PriceThresholdMultiplier,
 		Interval:       interval,
 		WindowSize:     dcaCfg.WindowSize,
 		TPPercent:      dcaCfg.TPPercent,
 		UseTPLevels:    true, // Always use multi-level TP
 		Cycle:          dcaCfg.Cycle,
 		Indicators:     dcaCfg.Indicators,
+		DCASpacing:     dcaCfg.DCASpacing,
 	}
 	
 	// Add configurations for indicators that are actually present
@@ -317,6 +311,7 @@ func (m *DCAConfigManager) SaveConfig(cfg Config, path string) error {
 	
 	return os.WriteFile(path, data, 0644)
 }
+
 
 // extractIntervalFromPath extracts interval from data file path
 // Example: "data/bybit/linear/BTCUSDT/5m/candles.csv" -> "5m"

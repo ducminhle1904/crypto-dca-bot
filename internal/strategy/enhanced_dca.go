@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/base"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -15,10 +17,12 @@ type EnhancedDCAStrategy struct {
 	maxMultiplier    float64
 	minConfidence    float64
 	lastTradeTime    time.Time
-	priceThreshold   float64  // Base price drop % for first DCA entry
-	priceThresholdMultiplier float64  // Multiplier for progressive DCA spacing (e.g., 1.1x per level)
 	lastEntryPrice   float64  // Track last entry price for threshold calculation
 	dcaLevel         int      // Current DCA level (0 = first entry, 1+ = subsequent entries)
+	
+	// DCA spacing strategy
+	spacingStrategy  spacing.DCASpacingStrategy // Pluggable spacing strategy
+	atrCalculator    *base.ATR                  // ATR calculator for market context
 }
 
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
@@ -28,21 +32,22 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		baseAmount:       baseAmount,
 		maxMultiplier:    3.0,
 		minConfidence:    0.5,
-		priceThreshold:   0.0, // Default: no threshold (disabled)
-		priceThresholdMultiplier: 1.0, // Default: no multiplier (1.0x)
 		lastEntryPrice:   0.0, // No previous entry
 		dcaLevel:         0,   // Start at level 0
+		spacingStrategy:  nil, // Will be set by orchestrator
+		atrCalculator:    base.NewATR(14), // 14-period ATR for market context
 	}
 }
 
-// SetPriceThreshold sets the base price drop % required for DCA entries
-func (s *EnhancedDCAStrategy) SetPriceThreshold(threshold float64) {
-	s.priceThreshold = threshold
+
+// SetSpacingStrategy sets the advanced spacing strategy (new feature)
+func (s *EnhancedDCAStrategy) SetSpacingStrategy(spacingStrategy spacing.DCASpacingStrategy) {
+	s.spacingStrategy = spacingStrategy
 }
 
-// SetPriceThresholdMultiplier sets the multiplier for progressive DCA spacing
-func (s *EnhancedDCAStrategy) SetPriceThresholdMultiplier(multiplier float64) {
-	s.priceThresholdMultiplier = multiplier
+// GetSpacingStrategy returns the current spacing strategy
+func (s *EnhancedDCAStrategy) GetSpacingStrategy() spacing.DCASpacingStrategy {
+	return s.spacingStrategy
 }
 
 // AddIndicator adds a technical indicator to the strategy
@@ -104,15 +109,20 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 
 	if confidence >= s.minConfidence {
 		// Apply price threshold check for DCA entries
-		if s.priceThreshold > 0 && s.lastEntryPrice > 0 {
+		if s.spacingStrategy != nil && s.lastEntryPrice > 0 {
 			priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
-			requiredThreshold := s.calculateCurrentThreshold()
+			requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
 			
 			if priceDrop < requiredThreshold {
+				strategyInfo := "Fixed Progressive"
+				if s.spacingStrategy != nil {
+					strategyInfo = s.spacingStrategy.GetName()
+				}
+				
 				return &TradeDecision{
 					Action: ActionHold,
-					Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d)", 
-						priceDrop*100, requiredThreshold*100, s.dcaLevel),
+					Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s)", 
+						priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo),
 				}, nil
 			}
 		}
@@ -142,19 +152,38 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	}, nil
 }
 
-// calculateCurrentThreshold calculates the progressive price threshold based on DCA level
-func (s *EnhancedDCAStrategy) calculateCurrentThreshold() float64 {
-	if s.priceThresholdMultiplier <= 1.0 {
-		return s.priceThreshold // No multiplier effect
+// calculateCurrentThreshold calculates the price threshold based on DCA level using the configured spacing strategy
+func (s *EnhancedDCAStrategy) calculateCurrentThreshold(currentCandle types.OHLCV, recentCandles []types.OHLCV) float64 {
+	if s.spacingStrategy == nil {
+		// This should not happen if configuration is properly validated
+		return 0.01 // Fallback to 1%
 	}
 	
-	threshold := s.priceThreshold
-	for i := 0; i < s.dcaLevel; i++ {
-		threshold *= s.priceThresholdMultiplier
-	}
-	
-	return threshold
+	return s.calculateWithSpacingStrategy(currentCandle, recentCandles)
 }
+
+// calculateWithSpacingStrategy uses the configured spacing strategy
+func (s *EnhancedDCAStrategy) calculateWithSpacingStrategy(currentCandle types.OHLCV, recentCandles []types.OHLCV) float64 {
+	// Calculate ATR with recent data
+	atrValue := 0.0
+	if atr, err := s.atrCalculator.Calculate(recentCandles); err == nil {
+		atrValue = atr
+	}
+	
+	// Create market context
+	context := &spacing.MarketContext{
+		CurrentPrice:   currentCandle.Close,
+		LastEntryPrice: s.lastEntryPrice,
+		ATR:           atrValue,
+		CurrentCandle: currentCandle,
+		RecentCandles: recentCandles,
+		Timestamp:     currentCandle.Timestamp,
+	}
+	
+	// Calculate threshold using spacing strategy
+	return s.spacingStrategy.CalculateThreshold(s.dcaLevel, context)
+}
+
 
 func (s *EnhancedDCAStrategy) calculatePositionSize(strength, confidence float64) float64 {
 	// The base amount is multiplied by the confidence and strength of the signal
@@ -180,6 +209,12 @@ func (s *EnhancedDCAStrategy) OnCycleComplete() {
 	s.dcaLevel = 0
 	// Clear indicator cache to start fresh for next cycle
 	s.indicatorManager.ClearCache()
+	// Reset spacing strategy state
+	if s.spacingStrategy != nil {
+		s.spacingStrategy.Reset()
+	}
+	// Reset ATR calculator
+	s.atrCalculator = base.NewATR(14)
 }
 
 // GetIndicatorManager returns the indicator manager (useful for advanced configuration)
@@ -209,18 +244,23 @@ func (s *EnhancedDCAStrategy) SetMaxMultiplier(multiplier float64) {
 
 // GetConfiguration returns current strategy configuration
 func (s *EnhancedDCAStrategy) GetConfiguration() map[string]interface{} {
-	return map[string]interface{}{
+	config := map[string]interface{}{
 		"base_amount":                 s.baseAmount,
 		"max_multiplier":              s.maxMultiplier,
 		"min_confidence":              s.minConfidence,
-		"price_threshold":             s.priceThreshold,
-		"price_threshold_multiplier":  s.priceThresholdMultiplier,
 		"current_dca_level":           s.dcaLevel,
-		"current_threshold":           s.calculateCurrentThreshold(),
 		"indicator_count":             s.GetIndicatorCount(),
 		"last_entry_price":            s.lastEntryPrice,
 		"last_trade_time":             s.lastTradeTime,
 	}
+	
+	// Add spacing strategy info if available
+	if s.spacingStrategy != nil {
+		config["spacing_strategy"] = s.spacingStrategy.GetName()
+		config["spacing_parameters"] = s.spacingStrategy.GetParameters()
+	}
+	
+	return config
 }
 
 // ResetForNewPeriod resets strategy state for walk-forward validation periods
@@ -232,6 +272,14 @@ func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
 	s.lastEntryPrice = 0.0
 	s.lastTradeTime = time.Time{}
 	s.dcaLevel = 0
+	
+	// Reset spacing strategy state
+	if s.spacingStrategy != nil {
+		s.spacingStrategy.Reset()
+	}
+	
+	// Reset ATR calculator
+	s.atrCalculator = base.NewATR(14)
 }
 
 // SetDCALevel sets the current DCA level (for live bot state synchronization)

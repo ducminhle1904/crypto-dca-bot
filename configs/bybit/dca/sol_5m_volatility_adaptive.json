@@ -14,6 +14,19 @@
     "auto_tp_orders": true,
     "cycle": true,
     "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
+
+    "dca_spacing": {
+      "strategy": "volatility_adaptive",
+      "parameters": {
+        "base_threshold": 0.008,
+        "volatility_sensitivity": 1.8,
+        "atr_period": 14,
+        "max_threshold": 0.04,
+        "min_threshold": 0.003,
+        "level_multiplier": 1.12
+      }
+    },
+
     "hull_ma": {
       "period": 25
     },
