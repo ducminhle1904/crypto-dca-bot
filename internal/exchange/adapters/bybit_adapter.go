@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange/bybit"
@@ -306,6 +307,44 @@ func (b *BybitAdapter) PlaceMarketOrder(ctx context.Context, params exchange.Ord
 		OrderStatus:   string(order.OrderStatus), // Convert OrderStatus to string
 		CreatedTime:   order.CreatedTime,
 		UpdatedTime:   order.UpdatedTime,
+	}
+	
+	// If market order response has empty execution data, try to get updated order details
+	// This can happen when the order is executed but the response doesn't include execution details immediately
+	if order.OrderType == bybit.OrderTypeMarket && 
+	   (order.CumExecQty == "" || order.CumExecQty == "0" || order.AvgPrice == "" || order.AvgPrice == "0") {
+		
+		log.Printf("🔍 Market order response missing execution data, querying order details for ID: %s", order.OrderID)
+		
+		// Wait a moment for execution to complete
+		time.Sleep(1 * time.Second)
+		
+		// Try to get updated order details from order history
+		if orders, err := b.client.GetOrderHistory(ctx, params.Category, params.Symbol, 5); err == nil {
+			for _, historyOrder := range orders {
+				if historyOrder.OrderID == order.OrderID {
+					// Update result with actual execution data from history
+					if historyOrder.CumExecQty != "" && historyOrder.CumExecQty != "0" {
+						result.CumExecQty = historyOrder.CumExecQty
+						result.Quantity = historyOrder.CumExecQty
+					}
+					if historyOrder.AvgPrice != "" && historyOrder.AvgPrice != "0" {
+						result.AvgPrice = historyOrder.AvgPrice
+						result.Price = historyOrder.AvgPrice
+					}
+					if historyOrder.CumExecValue != "" {
+						result.CumExecValue = historyOrder.CumExecValue
+					}
+					result.OrderStatus = string(historyOrder.OrderStatus)
+					
+					log.Printf("✅ Updated order execution data from history: Qty=%s, Price=%s, Value=%s, Status=%s", 
+						result.CumExecQty, result.AvgPrice, result.CumExecValue, result.OrderStatus)
+					break
+				}
+			}
+		} else {
+			log.Printf("⚠️ Failed to get order history for execution data: %v", err)
+		}
 	}
 
 	return result, nil

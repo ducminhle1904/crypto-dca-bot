@@ -16,40 +16,98 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 )
 
+// parseStringToFloat safely parses a string to float64 with comprehensive validation
+func parseStringToFloat(s, fieldName string) (float64, error) {
+	if s == "" {
+		return 0, fmt.Errorf("%s is empty string", fieldName)
+	}
+	// Trim whitespace that might cause parsing errors
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("%s contains only whitespace", fieldName)
+	}
+	// Check for common invalid values
+	if s == "null" || s == "undefined" || s == "NaN" {
+		return 0, fmt.Errorf("%s has invalid numeric value: %s", fieldName, s)
+	}
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s parse error: %w", fieldName, err)
+	}
+	return val, nil
+}
+
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
 	ctx := context.Background()
 	
-	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
-	if err != nil {
-		return fmt.Errorf("failed to get current positions: %w", err)
+	// For better sync reliability, retry up to 3 times with delays
+	// This is especially important right after placing orders
+	var positions []exchange.Position
+	var err error
+	
+	for attempt := 1; attempt <= 3; attempt++ {
+		positions, err = bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+		if err != nil {
+			log.Printf("⚠️ Position sync attempt %d failed: %v", attempt, err)
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // 500ms, 1s, then fail
+				continue
+			}
+			return fmt.Errorf("failed to get current positions after %d attempts: %w", attempt, err)
+		}
+		
+		// Log to file only for debugging (not terminal)
+		// Only log to terminal if positions found
+		if len(positions) > 0 {
+			// Check if any position has meaningful data before logging
+			hasAnyValidData := false
+			for _, pos := range positions {
+				if pos.Symbol == bot.symbol {
+					if pos.Size != "0" && pos.Size != "" || pos.PositionValue != "" && pos.PositionValue != "0" {
+						hasAnyValidData = true
+						break
+					}
+				}
+			}
+			if hasAnyValidData {
+				log.Printf("🔍 Found %d positions for %s", len(positions), bot.symbol)
+			}
+		}
+		
+		break
 	}
 	
-	// Look for our symbol position
+	// Look for our symbol position - check for both "Buy" and "Long" sides
 	var foundPosition bool
 	var positionValue, avgPrice float64
 	var needsStrategySync bool
 	
 	for _, pos := range positions {
-		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
-				continue
-			}
-			avgPrice, err := strconv.ParseFloat(strings.TrimSpace(pos.AvgPrice), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse average price '%s': %v", pos.AvgPrice, err)
-				continue
-			}
-			_, err = strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse position size '%s': %v", pos.Size, err)
+		// Check for exact symbol match first
+		if pos.Symbol == bot.symbol {
+			// Parse numeric values with better error handling
+			posValue, posValueErr := parseStringToFloat(pos.PositionValue, "PositionValue")
+			avgPriceVal, avgPriceErr := parseStringToFloat(pos.AvgPrice, "AvgPrice")
+			posSize, posSizeErr := parseStringToFloat(pos.Size, "Size")
+			
+			// Skip positions with all parsing errors
+			if posValueErr != nil && avgPriceErr != nil && posSizeErr != nil {
 				continue
 			}
 			
-			if positionValue > 0 && avgPrice > 0 {
+			// Check if position has meaningful data (non-zero size OR non-zero value)
+			hasValidSize := posSizeErr == nil && posSize > 0.001
+			hasValidValue := posValueErr == nil && posValue > 0.01
+			hasValidPrice := avgPriceErr == nil && avgPriceVal > 0
+			
+			// Accept position if it has size and price, regardless of side field
+			if (hasValidSize || hasValidValue) && hasValidPrice {
+				positionValue = posValue
+				avgPrice = avgPriceVal
 				foundPosition = true
+				log.Printf("✅ Found valid position: Value=$%.2f, AvgPrice=$%.4f, Size=%.6f", 
+					positionValue, avgPrice, posSize)
 				break
 			}
 		}
@@ -89,7 +147,6 @@ func (bot *LiveBot) syncPositionData() error {
 	
 	// No position found - reset state if bot thinks it has one
 	if bot.currentPosition > 0 {
-		log.Printf("🔄 No exchange position found - resetting bot state")
 		bot.currentPosition = 0
 		bot.averagePrice = 0
 		bot.totalInvested = 0

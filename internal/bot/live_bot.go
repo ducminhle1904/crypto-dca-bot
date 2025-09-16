@@ -493,19 +493,18 @@ func (bot *LiveBot) syncExistingPosition() error {
 	
 	// Look for our symbol position with enhanced identification
 	for _, pos := range positions {
-		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, err := parseFloat(pos.PositionValue)
-			if err != nil {
-				bot.logger.LogWarning("Position Sync", "Failed to parse position value '%s': %v", pos.PositionValue, err)
-				continue
-			}
-			avgPrice, err := parseFloat(pos.AvgPrice)
-			if err != nil {
-				bot.logger.LogWarning("Position Sync", "Failed to parse average price '%s': %v", pos.AvgPrice, err)
+		if pos.Symbol == bot.symbol {
+			positionValue, valueErr := parseFloat(pos.PositionValue)
+			avgPrice, priceErr := parseFloat(pos.AvgPrice)
+			posSize, sizeErr := parseFloat(pos.Size)
+			
+			// Skip positions with no meaningful data
+			if (valueErr != nil || positionValue <= 0) && (sizeErr != nil || posSize <= 0) {
 				continue
 			}
 			
-			if positionValue > 0 && avgPrice > 0 {
+			// Check if position has valid data regardless of side (for futures)
+			if (positionValue > 0.01 || posSize > 0.001) && avgPrice > 0 && priceErr == nil {
 				// Protect state modifications with mutex
 				bot.positionMutex.Lock()
 				bot.currentPosition = positionValue
@@ -521,7 +520,7 @@ func (bot *LiveBot) syncExistingPosition() error {
 				
 				bot.logger.LogPositionSync(positionValue, avgPrice, pos.Size, pos.UnrealisedPnl)
 				// Show brief console message
-				fmt.Printf("🔄 Existing position synced (see log for details)\n")
+				fmt.Printf("🔄 Existing position synced: $%.2f @ $%.4f (see log for details)\n", positionValue, avgPrice)
 				
 				// Sync strategy state after position sync
 				bot.syncStrategyState()
@@ -596,18 +595,10 @@ func (bot *LiveBot) shouldStop() bool {
 
 // checkAndTrade performs market analysis and executes trades
 func (bot *LiveBot) checkAndTrade() {
-	startTime := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			bot.logger.Error("Error in trading loop: %v", r)
 		}
-		
-		// Log performance metrics for each trading cycle
-		duration := time.Since(startTime)
-		bot.logger.LogPerformanceMetrics("Trading Cycle", duration, map[string]interface{}{
-			"timestamp": startTime.Format("2006-01-02 15:04:05"),
-			"duration_ms": duration.Milliseconds(),
-		})
 	}()
 
 	// Check for stop signal before starting
@@ -688,7 +679,8 @@ func (bot *LiveBot) checkAndTrade() {
 			if result.Error != nil {
 				indicatorMap[name] = fmt.Sprintf("ERROR: %v", result.Error)
 			} else {
-				indicatorMap[name] = fmt.Sprintf("Value: %.4f", result.Value)
+				bias := bot.interpretIndicatorBias(name, result.Value, currentPrice)
+				indicatorMap[name] = bias
 			}
 		}
 		
@@ -701,7 +693,7 @@ func (bot *LiveBot) checkAndTrade() {
 		bot.logger.LogDetailedMarketAnalysis(klinesInterface, indicatorMap, action, decision.Confidence)
 		
 		// Log additional debug information
-		bot.logger.LogDebugOnly("Market Analysis Debug", "Decision: %s, Confidence: %.2f%%, Strength: %.2f%%, Amount: $%.2f", 
+		bot.logger.LogDebugOnly("Market Analysis Debug - Decision: %s, Confidence: %.2f%%, Strength: %.2f%%, Amount: $%.2f", 
 			action, decision.Confidence*100, decision.Strength*100, decision.Amount)
 	}
 
@@ -729,13 +721,8 @@ func (bot *LiveBot) checkAndTrade() {
 	exchangePnL := bot.getExchangePnL()
 	bot.logger.LogMarketStatus(currentPrice, action, safeBalance, safePosition, safeAvgPrice, safeDCALevel, exchangePnL, filledTPSummary, activeTPCount)
 
-	// Execute trading action
+	// Execute trading action (logging moved to after validation checks)
 	if action != "HOLD" {
-		if bot.exchange.IsDemo() {
-			bot.logger.Trade("🧪 DEMO MODE: Executing %s at $%.2f (paper trading)", action, currentPrice)
-		} else {
-			bot.logger.Trade("💰 LIVE MODE: Executing %s at $%.2f (real money)", action, currentPrice)
-		}
 		bot.executeTrade(decision, action, currentPrice)
 	}
 }
@@ -869,13 +856,14 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 			recentCandles = []types.OHLCV{} // Use empty slice as fallback
 		}
 		
-		priceDrop := (currentAvgPrice - price) / currentAvgPrice
+		// Calculate price change: positive = price went down (good for DCA), negative = price went up (not ideal for DCA)
+		priceChange := (currentAvgPrice - price) / currentAvgPrice
 		requiredThreshold := bot.calculateRequiredThreshold(price, recentCandles)
 		
 		// Log detailed DCA spacing information
 		spacingContext := map[string]interface{}{
 			"dca_level": currentDCALevel,
-			"price_drop_percent": priceDrop * 100,
+			"price_change_percent": priceChange * 100,
 			"required_threshold_percent": requiredThreshold * 100,
 			"data_points": len(recentCandles),
 		}
@@ -889,9 +877,15 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		bot.logger.LogDCASpacingDetails(currentDCALevel, price, currentAvgPrice, requiredThreshold, 
 			bot.spacingStrategy.GetName(), spacingContext)
 		
-		if priceDrop < requiredThreshold {
-			bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price drop %.2f%% < required %.2f%% (DCA Level %d)", 
-				priceDrop*100, requiredThreshold*100, currentDCALevel)
+		if priceChange < requiredThreshold {
+			// Determine direction for clearer messaging
+			if priceChange < 0 {
+				bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price went UP %.2f%% from avg, need DOWN %.2f%% (DCA Level %d)", 
+					-priceChange*100, requiredThreshold*100, currentDCALevel)
+			} else {
+				bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price drop %.2f%% < required %.2f%% (DCA Level %d)", 
+					priceChange*100, requiredThreshold*100, currentDCALevel)
+			}
 			return
 		}
 	}
@@ -989,6 +983,13 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		OrderType: exchange.OrderTypeMarket,
 	}
 
+	// Log execution now that all checks have passed
+	if bot.exchange.IsDemo() {
+		bot.logger.Trade("🧪 DEMO MODE: Executing BUY at $%.2f (paper trading)", price)
+	} else {
+		bot.logger.Trade("💰 LIVE MODE: Executing BUY at $%.2f (real money)", price)
+	}
+
 	order, err := bot.placeOrderWithRetry(orderParams, true) // true for market order
 	if err != nil {
 		bot.logger.Error("Failed to place buy order after retries: %v", err)
@@ -1022,6 +1023,9 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		}
 		return
 	}
+
+	// Log order placement result (execution details will be synced from exchange)
+	bot.logger.Info("📤 Order placed successfully - ID: %s, syncing actual execution from exchange...", order.OrderID)
 
 	// Sync with exchange data first to get actual executed values
 	bot.syncAfterTrade(order, "BUY")
@@ -1078,6 +1082,14 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 			}
 		} else {
 			bot.logger.LogWarning("Multi-Level TP Setup", "No position found after trade execution (position: %.6f, avgPrice: %.4f)", currentPositionForTP, avgPrice)
+			
+			// For demo mode, provide guidance on likely issue
+			if bot.exchange.IsDemo() {
+				bot.logger.LogWarning("Multi-Level TP Setup", "This is common in demo mode when order execution details are not properly simulated")
+				bot.logger.LogWarning("Multi-Level TP Setup", "The bot will continue trading but TP orders won't be placed until a valid position is detected")
+			} else {
+				bot.logger.Error("Multi-Level TP Setup: No position found in live mode - this indicates a serious issue with order execution")
+			}
 		}
 	} else if bot.config.Strategy.AutoTPOrders && currentDCALevelForTP > 1 {
 		bot.logger.Info("🔄 DCA trade detected - TP orders will be updated by syncAfterTrade process")
@@ -1470,8 +1482,13 @@ func (bot *LiveBot) executeSell(price float64) {
 
 // syncAfterTrade syncs bot state with exchange after trade execution
 func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
-	// Wait briefly for exchange to settle the trade
-	time.Sleep(500 * time.Millisecond)
+	// Wait longer for exchange to settle the trade, especially for market orders
+	// Market orders need time for execution data to be available
+	if order.OrderType == exchange.OrderTypeMarket {
+		time.Sleep(2 * time.Second) // Increased wait time for market orders
+	} else {
+		time.Sleep(500 * time.Millisecond)
+	}
 	
 	// Sync balance with exchange
 	if err := bot.syncAccountBalance(); err != nil {
@@ -2211,6 +2228,96 @@ func parseFloat(s string) (float64, error) {
 	}
 	return strconv.ParseFloat(s, 64)
 }
+
+// interpretIndicatorBias converts raw indicator values into meaningful bias descriptions
+func (bot *LiveBot) interpretIndicatorBias(name string, value float64, currentPrice float64) string {
+	switch strings.ToLower(name) {
+	case "rsi":
+		if value > 70 {
+			return fmt.Sprintf("Overbought (%.1f > 70)", value)
+		} else if value < 30 {
+			return fmt.Sprintf("Oversold (%.1f < 30)", value)
+		} else if value > 50 {
+			return fmt.Sprintf("Bullish (%.1f > 50)", value)
+		} else {
+			return fmt.Sprintf("Bearish (%.1f < 50)", value)
+		}
+	
+	case "mfi", "money flow index":
+		if value > 80 {
+			return fmt.Sprintf("Overbought (%.1f > 80)", value)
+		} else if value < 20 {
+			return fmt.Sprintf("Oversold (%.1f < 20)", value)
+		} else if value > 50 {
+			return fmt.Sprintf("Bullish (%.1f > 50)", value)
+		} else {
+			return fmt.Sprintf("Bearish (%.1f < 50)", value)
+		}
+	
+	case "wavetrend":
+		if value > 50 {
+			return fmt.Sprintf("Strong Overbought (%.1f > 50)", value)
+		} else if value > 20 {
+			return fmt.Sprintf("Overbought (%.1f > 20)", value)
+		} else if value < -50 {
+			return fmt.Sprintf("Strong Oversold (%.1f < -50)", value)
+		} else if value < -20 {
+			return fmt.Sprintf("Oversold (%.1f < -20)", value)
+		} else if value > 0 {
+			return fmt.Sprintf("Bullish (%.1f > 0)", value)
+		} else {
+			return fmt.Sprintf("Bearish (%.1f < 0)", value)
+		}
+	
+	case "hull_ma", "hull ma":
+		if value > currentPrice {
+			return fmt.Sprintf("Bullish ($%.2f > $%.2f)", value, currentPrice)
+		} else {
+			return fmt.Sprintf("Bearish ($%.2f < $%.2f)", value, currentPrice)
+		}
+	
+	case "ema", "sma", "ma":
+		if value > currentPrice {
+			return fmt.Sprintf("Bullish ($%.2f > $%.2f)", value, currentPrice)
+		} else {
+			return fmt.Sprintf("Bearish ($%.2f < $%.2f)", value, currentPrice)
+		}
+	
+	case "keltner", "keltner channels":
+		// For Keltner Channels, the value is usually the middle line
+		diff := ((value - currentPrice) / currentPrice) * 100
+		if diff > 1 {
+			return fmt.Sprintf("Below Band ($%.2f, +%.1f%%)", value, diff)
+		} else if diff < -1 {
+			return fmt.Sprintf("Above Band ($%.2f, %.1f%%)", value, diff)
+		} else {
+			return fmt.Sprintf("Near Middle ($%.2f)", value)
+		}
+	
+	case "bollinger", "bb":
+		// Similar to Keltner for middle band
+		diff := ((value - currentPrice) / currentPrice) * 100
+		if diff > 1 {
+			return fmt.Sprintf("Below Band ($%.2f, +%.1f%%)", value, diff)
+		} else if diff < -1 {
+			return fmt.Sprintf("Above Band ($%.2f, %.1f%%)", value, diff)
+		} else {
+			return fmt.Sprintf("Near Middle ($%.2f)", value)
+		}
+	
+	case "macd":
+		if value > 0 {
+			return fmt.Sprintf("Bullish (%.4f > 0)", value)
+		} else {
+			return fmt.Sprintf("Bearish (%.4f < 0)", value)
+		}
+	
+	default:
+		// For unknown indicators, just show the value with some basic interpretation
+		return fmt.Sprintf("%.4f", value)
+	}
+}
+
 
 // placeOrderWithRetry places an order with timeout and retry logic
 func (bot *LiveBot) placeOrderWithRetry(params exchange.OrderParams, isMarket bool) (*exchange.Order, error) {

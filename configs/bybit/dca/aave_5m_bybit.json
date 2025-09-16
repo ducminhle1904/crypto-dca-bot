@@ -1,33 +1,42 @@
 {
   "strategy": {
     "symbol": "AAVEUSDT",
+    "category": "linear",
     "data_file": "data\\bybit\\linear\\AAVEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 1.5,
-    "price_threshold": 0.015,
-    "price_threshold_multiplier": 1.3,
+    "max_multiplier": 2.5,
+    "dca_spacing": {
+      "strategy": "volatility_adaptive",
+      "parameters": {
+        "atr_period": 21,
+        "base_threshold": 0.008,
+        "level_multiplier": 1.05,
+        "max_threshold": 0.05,
+        "min_threshold": 0.003,
+        "volatility_sensitivity": 1.2
+      }
+    },
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.055,
+    "tp_percent": 0.07,
     "use_tp_levels": true,
     "auto_tp_orders": true,
-    "cancel_orphaned_orders": false,
     "cycle": true,
-    "indicators": ["hull_ma", "mfi", "keltner", "wavetrend"],
+    "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "hull_ma": {
-      "period": 10
+      "period": 12
     },
     "mfi": {
-      "period": 22,
+      "period": 16,
       "oversold": 30,
-      "overbought": 80
+      "overbought": 75
     },
     "keltner_channels": {
-      "period": 50,
-      "multiplier": 1.8
+      "period": 30,
+      "multiplier": 1.5
     },
     "wavetrend": {
-      "n1": 12,
+      "n1": 20,
       "n2": 28,
       "overbought": 70,
       "oversold": -70

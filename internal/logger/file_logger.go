@@ -298,14 +298,22 @@ func (l *Logger) LogDCASpacingDetails(level int, currentPrice, lastEntryPrice, t
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	
+	// Calculate price change: positive = price went down (good for DCA), negative = price went up
+	priceChange := ((lastEntryPrice - currentPrice) / lastEntryPrice) * 100
+	var changeDirection string
+	if priceChange >= 0 {
+		changeDirection = fmt.Sprintf("Price Drop: %.4f%%", priceChange)
+	} else {
+		changeDirection = fmt.Sprintf("Price UP: %.4f%% from avg", -priceChange)
+	}
+	
 	spacingLog := fmt.Sprintf(`
 [%s] [DCA] ==================== DCA SPACING CALCULATION ====================
 🔄 DCA Level: %d | Strategy: %s
 💰 Current Price: $%.4f | Last Entry: $%.4f
 📏 Required Threshold: %.4f%% (%.6f)
-📊 Price Drop: %.4f%%`, 
-		timestamp, level, strategy, currentPrice, lastEntryPrice, threshold*100, threshold, 
-		((lastEntryPrice-currentPrice)/lastEntryPrice)*100)
+📊 %s`, 
+		timestamp, level, strategy, currentPrice, lastEntryPrice, threshold*100, threshold, changeDirection)
 
 	if len(context) > 0 {
 		spacingLog += "\n🔍 Context Details:"
