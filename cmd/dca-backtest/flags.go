@@ -23,8 +23,13 @@ type DCAFlags struct {
 	// DCA strategy parameters
 	BaseAmount               *float64
 	MaxMultiplier            *float64
-	PriceThreshold           *float64
-	PriceThresholdMultiplier *float64
+	
+	// DCA spacing strategy parameters
+	DCASpacingStrategy       *string  // DCA spacing strategy (fixed, volatility_adaptive)
+	SpacingBaseThreshold     *float64 // Base threshold for spacing strategy
+	SpacingMultiplier        *float64 // Multiplier for fixed spacing strategy  
+	SpacingVolatilitySens    *float64 // Volatility sensitivity for adaptive spacing
+	SpacingATRPeriod         *int     // ATR period for adaptive spacing
 	
 	// Indicator selection (flexible system)
 	Indicators       *string  // Comma-separated list of indicators
@@ -83,8 +88,13 @@ func NewDCAFlags() *DCAFlags {
 		// DCA strategy parameters
 		BaseAmount:               flag.Float64("base-amount", DefaultBaseAmount, "Base DCA amount"),
 		MaxMultiplier:            flag.Float64("max-multiplier", DefaultMaxMultiplier, "Maximum position multiplier"),
-		PriceThreshold:           flag.Float64("price-threshold", DefaultPriceThreshold, "Price drop % for next DCA (0.02 = 2%)"),
-		PriceThresholdMultiplier: flag.Float64("price-threshold-multiplier", DefaultPriceThresholdMultiplier, "Progressive multiplier for DCA spacing (1.1 = 10% increase per level)"),
+		
+		// DCA spacing strategy parameters
+		DCASpacingStrategy:       flag.String("dca-spacing", "fixed", "DCA spacing strategy (fixed, volatility_adaptive)"),
+		SpacingBaseThreshold:     flag.Float64("spacing-threshold", 0.01, "Base threshold for DCA spacing (0.01 = 1%)"),
+		SpacingMultiplier:        flag.Float64("spacing-multiplier", 1.15, "Multiplier for fixed progressive spacing"),
+		SpacingVolatilitySens:    flag.Float64("spacing-sensitivity", 1.8, "Volatility sensitivity for adaptive spacing"),
+		SpacingATRPeriod:         flag.Int("spacing-atr-period", 14, "ATR period for adaptive spacing"),
 		
 		// Indicator selection (flexible system)
 		Indicators:       flag.String("indicators", "", "Comma-separated list of indicators (e.g., rsi,macd,supertrend)"),
@@ -167,6 +177,18 @@ func PrintDCAUsageExamples() {
 			"dca-backtest -symbol BTCUSDT -optimize -wf-rolling -wf-train-days 90 -wf-test-days 30",
 			"Optimize with rolling walk-forward validation (90-day train, 30-day test)",
 		},
+		{
+			"dca-backtest -symbol BTCUSDT -dca-spacing fixed -spacing-threshold 0.02 -spacing-multiplier 1.2",
+			"Use fixed progressive DCA spacing (2% base, 1.2x multiplier)",
+		},
+		{
+			"dca-backtest -symbol ETHUSDT -dca-spacing volatility_adaptive -spacing-sensitivity 2.0 -spacing-atr-period 21",
+			"Use volatility-adaptive DCA spacing with high sensitivity",
+		},
+		{
+			"dca-backtest -symbol BTCUSDT -optimize -dca-spacing volatility_adaptive",
+			"Optimize with volatility-adaptive DCA spacing strategy",
+		},
 	}
 	
 	fmt.Printf("\n📚 USAGE EXAMPLES:\n")
@@ -195,8 +217,13 @@ func PrintDCAFlagGroups() {
 🔄 DCA STRATEGY FLAGS:
   -base-amount AMOUNT   Base DCA amount (default: 40)
   -max-multiplier MULT  Maximum position multiplier (default: 3.0)
-  -price-threshold PCT  Price drop %% for next DCA (default: 0.02)
-  -advanced-combo       Use advanced indicators instead of classic
+
+📊 DCA SPACING STRATEGY FLAGS:
+  -dca-spacing STRATEGY         DCA spacing strategy: fixed, volatility_adaptive (default: fixed)
+  -spacing-threshold PCT        Base threshold for DCA spacing (default: 0.01)
+  -spacing-multiplier MULT      Multiplier for fixed progressive spacing (default: 1.15)
+  -spacing-sensitivity SENS     Volatility sensitivity for adaptive spacing (default: 1.8)
+  -spacing-atr-period PERIOD    ATR period for adaptive spacing (default: 14)
 
 🧬 ANALYSIS FLAGS:
   -optimize             Run genetic algorithm optimization
@@ -235,10 +262,7 @@ func ValidateDCAFlags(flags *DCAFlags) error {
 		return fmt.Errorf("max multiplier must be greater than 1.0, got: %.2f", *flags.MaxMultiplier)
 	}
 	
-	// Validate price threshold
-	if *flags.PriceThreshold <= 0 || *flags.PriceThreshold >= 1.0 {
-		return fmt.Errorf("price threshold must be between 0 and 1.0, got: %.4f", *flags.PriceThreshold)
-	}
+	// Price threshold validation is now handled by DCA spacing strategy validation
 	
 	// Validate walk-forward settings if enabled
 	if *flags.WFEnable {

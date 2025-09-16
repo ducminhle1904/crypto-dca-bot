@@ -15,22 +15,23 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	configpkg "github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	datamanager "github.com/ducminhle1904/crypto-dca-bot/pkg/data"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
-// GA Constants - Optimized for Walk-Forward Validation (180-day windows)
+// GA Constants - Balanced for large datasets
 const (
-	GAPopulationSize    = 24   // Smaller population for faster convergence (was 45)
-	GAGenerations       = 15   // Fewer generations - still effective for 180d data (was 30)
-	GAMutationRate      = 0.2 // Higher mutation for faster exploration (was 0.1)
-	GACrossoverRate     = 0.85 // Higher crossover for better mixing (was 0.8)
-	GAEliteSize         = 4    // Keep best 4 individuals (~17% of population)
-	TournamentSize      = 2    // Smaller tournament for speed (was 3)
-	MaxParallelWorkers  = 6    // More parallel workers for speed (was 4)
-	ProgressReportInterval = 3 // More frequent progress reports (was 5)
-	DetailReportInterval   = 8 // Less frequent detailed reports (was 10)
+	GAPopulationSize    = 40   // Moderate population for good exploration without being too slow
+	GAGenerations       = 25   // Moderate generations for convergence on large data
+	GAMutationRate      = 0.18 // Slightly higher mutation for exploration
+	GACrossoverRate     = 0.8  // Good crossover rate for mixing
+	GAEliteSize         = 6    // Keep best 6 individuals (~15% of population)
+	TournamentSize      = 3    // Standard tournament size
+	MaxParallelWorkers  = 6    // Balanced parallel workers
+	ProgressReportInterval = 5 // Progress reports every 5 generations
+	DetailReportInterval   = 10 // Detailed reports every 10 generations
 )
 
 // Individual represents a candidate solution - extracted from main.go
@@ -82,7 +83,6 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 	population := InitializePopulation(baseConfig, populationSize, rng)
 	
 	var bestIndividual *GAIndividual
-	var bestResults *backtest.BacktestResults
 	
 	for gen := 0; gen < generations; gen++ {
 		// Evaluate fitness for all individuals in parallel
@@ -94,11 +94,10 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 		// Track best individual
 		if bestIndividual == nil || population[0].Fitness > bestIndividual.Fitness {
 			bestIndividual = &GAIndividual{
-				Config:  population[0].Config,
+				Config:  copyConfig(population[0].Config), // Deep copy to prevent mutation
 				Fitness: population[0].Fitness,
 				Results: population[0].Results,
 			}
-			bestResults = population[0].Results
 		}
 		
 		// Silent generation processing
@@ -109,8 +108,10 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 		}
 	}
 	
-	log.Printf("✅ GA → %.2f%%", bestIndividual.Fitness*100)
-	return bestResults, bestIndividual.Config, nil
+	// Re-run the best configuration to ensure consistency with standalone runs
+	// The GA cached results may have strategy state contamination from parallel execution
+	finalResults := RunBacktestWithData(bestIndividual.Config, data)
+	return finalResults, bestIndividual.Config, nil
 }
 
 // InitializePopulation creates initial random population - extracted from main.go
@@ -259,8 +260,23 @@ func copyConfig(config interface{}) interface{} {
 		copy(copied.Indicators, dcaConfig.Indicators)
 	}
 	
+	if dcaConfig.DCASpacing != nil {
+		spacingCopy := *dcaConfig.DCASpacing
+		
+		// Deep copy the Parameters map
+		if dcaConfig.DCASpacing.Parameters != nil {
+			spacingCopy.Parameters = make(map[string]interface{})
+			for k, v := range dcaConfig.DCASpacing.Parameters {
+				spacingCopy.Parameters[k] = v
+			}
+		}
+		
+		copied.DCASpacing = &spacingCopy
+	}
+	
 	return &copied
 }
+
 
 func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	dcaConfig, ok := config.(*configpkg.DCAConfig)
@@ -275,9 +291,39 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	
 	// Randomize strategy parameters using predefined ranges
 	dcaConfig.MaxMultiplier = RandomChoice(ranges.Multipliers, rng)
-	dcaConfig.PriceThreshold = RandomChoice(ranges.PriceThresholds, rng)
-	dcaConfig.PriceThresholdMultiplier = RandomChoice(ranges.PriceThresholdMultipliers, rng)
 	dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
+	
+	// Preserve existing DCA spacing strategy or default to fixed
+	originalStrategy := "fixed"
+	if dcaConfig.DCASpacing != nil {
+		originalStrategy = dcaConfig.DCASpacing.Strategy
+	}
+	
+	// Create DCA spacing configuration with randomized parameters based on strategy
+	switch originalStrategy {
+	case "volatility_adaptive":
+		dcaConfig.DCASpacing = &configpkg.DCASpacingConfig{
+			Strategy: "volatility_adaptive",
+			Parameters: map[string]interface{}{
+				"base_threshold":        RandomChoice(ranges.PriceThresholds, rng),
+				"volatility_sensitivity": RandomChoice(ranges.VolatilitySensitivity, rng),
+				"atr_period":            RandomChoice(ranges.ATRPeriods, rng),
+				"level_multiplier":      RandomChoice(ranges.LevelMultipliers, rng),
+				"max_threshold":         0.05,  // 5% safety limit for adaptive
+				"min_threshold":         0.003, // 0.3% safety limit
+			},
+		}
+	default: // "fixed"
+		dcaConfig.DCASpacing = &configpkg.DCASpacingConfig{
+			Strategy: "fixed",
+			Parameters: map[string]interface{}{
+				"base_threshold":       RandomChoice(ranges.PriceThresholds, rng),
+				"threshold_multiplier": RandomChoice(ranges.PriceThresholdMultipliers, rng),
+				"max_threshold":        0.10, // 10% safety limit
+				"min_threshold":        0.003, // 0.3% safety limit
+			},
+		}
+	}
 	
 	// Default to classic indicators for genetic algorithm optimization if none specified
 	if len(dcaConfig.Indicators) == 0 {
@@ -350,9 +396,22 @@ func RunBacktestWithData(config interface{}, data []types.OHLCV) *backtest.Backt
 		return &backtest.BacktestResults{TotalReturn: 0.0}
 	}
 	
-	// Run backtest using the real strategy and backtest engine
-	// This is similar to runBacktestWithData in main.go but adapted for DCAConfig
-	return runDCABacktestWithData(dcaConfig, data)
+	// CRITICAL FIX: Use SHARED strategy creation logic to ensure 100% consistency
+	strat := createDCAStrategy(dcaConfig)
+	
+	// Reset strategy state to prevent contamination from previous runs
+	strat.ResetForNewPeriod()
+	
+	tp := dcaConfig.TPPercent
+	if !dcaConfig.Cycle {
+		tp = 0
+	}
+	
+	engine := backtest.NewBacktestEngine(dcaConfig.InitialBalance, dcaConfig.Commission, strat, tp, dcaConfig.MinOrderQty, dcaConfig.UseTPLevels)
+	results := engine.Run(data, dcaConfig.WindowSize)
+	results.UpdateMetrics()
+	
+	return results
 }
 
 func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
@@ -368,9 +427,17 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 	if rng.Float64() < 0.5 {
 		childConfig.MaxMultiplier = parent2Config.MaxMultiplier
 	}
-	if rng.Float64() < 0.5 {
-		childConfig.PriceThreshold = parent2Config.PriceThreshold
+	// DCA spacing crossover - inherit parent2's spacing parameters
+	if parent2Config.DCASpacing != nil && childConfig.DCASpacing != nil && 
+	   parent2Config.DCASpacing.Strategy == childConfig.DCASpacing.Strategy {
+		// Only crossover if both parents have the same strategy
+		for param, value := range parent2Config.DCASpacing.Parameters {
+			if rng.Float64() < 0.5 {
+				childConfig.DCASpacing.Parameters[param] = value
+			}
+		}
 	}
+	
 	if rng.Float64() < 0.5 {
 		childConfig.TPPercent = parent2Config.TPPercent
 	}
@@ -447,11 +514,30 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 	if rng.Float64() < 0.1 {
 		dcaConfig.MaxMultiplier = RandomChoice(ranges.Multipliers, rng)
 	}
-	if rng.Float64() < 0.1 {
-		dcaConfig.PriceThreshold = RandomChoice(ranges.PriceThresholds, rng)
-	}
-	if rng.Float64() < 0.1 {
-		dcaConfig.PriceThresholdMultiplier = RandomChoice(ranges.PriceThresholdMultipliers, rng)
+	// Mutate DCA spacing parameters based on strategy
+	if dcaConfig.DCASpacing != nil {
+		// Always mutate base_threshold for both strategies
+		if rng.Float64() < 0.1 {
+			dcaConfig.DCASpacing.Parameters["base_threshold"] = RandomChoice(ranges.PriceThresholds, rng)
+		}
+		
+		// Strategy-specific parameter mutations
+		switch dcaConfig.DCASpacing.Strategy {
+		case "volatility_adaptive":
+			if rng.Float64() < 0.1 {
+				dcaConfig.DCASpacing.Parameters["volatility_sensitivity"] = RandomChoice(ranges.VolatilitySensitivity, rng)
+			}
+			if rng.Float64() < 0.1 {
+				dcaConfig.DCASpacing.Parameters["atr_period"] = RandomChoice(ranges.ATRPeriods, rng)
+			}
+			if rng.Float64() < 0.1 {
+				dcaConfig.DCASpacing.Parameters["level_multiplier"] = RandomChoice(ranges.LevelMultipliers, rng)
+			}
+		case "fixed":
+			if rng.Float64() < 0.1 {
+				dcaConfig.DCASpacing.Parameters["threshold_multiplier"] = RandomChoice(ranges.PriceThresholdMultipliers, rng)
+			}
+		}
 	}
 	if rng.Float64() < 0.1 {
 		dcaConfig.TPPercent = RandomChoice(ranges.TPCandidates, rng)
@@ -527,8 +613,41 @@ func getConfigField(config interface{}, field string) float64 {
 		return dcaConfig.MaxMultiplier
 	case "TPPercent":
 		return dcaConfig.TPPercent
-	case "PriceThreshold":
-		return dcaConfig.PriceThreshold
+	case "BaseThreshold":
+		if dcaConfig.DCASpacing != nil {
+			if val, ok := dcaConfig.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				return val
+			}
+		}
+		return 0.01 // Default fallback
+	case "ThresholdMultiplier":
+		if dcaConfig.DCASpacing != nil {
+			if val, ok := dcaConfig.DCASpacing.Parameters["threshold_multiplier"].(float64); ok {
+				return val
+			}
+		}
+		return 1.15 // Default fallback
+	case "VolatilitySensitivity":
+		if dcaConfig.DCASpacing != nil {
+			if val, ok := dcaConfig.DCASpacing.Parameters["volatility_sensitivity"].(float64); ok {
+				return val
+			}
+		}
+		return 1.8 // Default fallback
+	case "ATRPeriod":
+		if dcaConfig.DCASpacing != nil {
+			if val, ok := dcaConfig.DCASpacing.Parameters["atr_period"].(int); ok {
+				return float64(val)
+			}
+		}
+		return 14.0 // Default fallback
+	case "LevelMultiplier":
+		if dcaConfig.DCASpacing != nil {
+			if val, ok := dcaConfig.DCASpacing.Parameters["level_multiplier"].(float64); ok {
+				return val
+			}
+		}
+		return 1.1 // Default fallback
 	default:
 		return 0.0
 	}
@@ -538,12 +657,15 @@ func getConfigField(config interface{}, field string) float64 {
 func runDCABacktestWithData(cfg *configpkg.DCAConfig, data []types.OHLCV) *backtest.BacktestResults {
 	start := time.Now()
 	
-	// Create strategy with configured indicators
-	strat := createDCAStrategy(cfg)
-	
-	// FIXED: Reset strategy state to prevent contamination between optimization runs
-	// This ensures each backtest evaluation starts with clean indicator state
-	strat.ResetForNewPeriod()
+		// CRITICAL FIX: Use consistent strategy creation with proper error handling
+		strat := createDCAStrategy(cfg)
+		
+		// FIXED: Reset strategy state to prevent contamination between optimization runs
+		// This ensures each backtest evaluation starts with clean indicator state
+		strat.ResetForNewPeriod()
+		
+		// IMPORTANT: Log spacing strategy being used for debugging consistency
+		log.Printf("✅ Using %s spacing strategy", cfg.DCASpacing.Strategy)
 	
 	// Create and run backtest engine
 	tp := cfg.TPPercent
@@ -565,24 +687,79 @@ func runDCABacktestWithData(cfg *configpkg.DCAConfig, data []types.OHLCV) *backt
 func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	// Use optimized Enhanced DCA strategy
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
-	dca.SetPriceThreshold(cfg.PriceThreshold)
 	
 	// Set maximum position multiplier from configuration
 	dca.SetMaxMultiplier(cfg.MaxMultiplier)
 	
+	// Configure spacing strategy - required for consistency
+	if cfg.DCASpacing == nil {
+		// This should not happen in GA optimization, but handle gracefully
+		return dca
+	}
+	
+	spacingConfig := spacing.SpacingConfig{
+		Strategy:   cfg.DCASpacing.Strategy,
+		Parameters: cfg.DCASpacing.Parameters,
+	}
+	
+	spacingStrategy, err := spacing.CreateSpacingStrategy(spacingConfig)
+	if err != nil {
+		// Log error but continue with default fixed spacing for GA robustness
+		log.Printf("⚠️ GA: Failed to create spacing strategy: %v, using default fixed spacing", err)
+		defaultConfig := spacing.SpacingConfig{
+			Strategy: "fixed",
+			Parameters: map[string]interface{}{
+				"base_threshold":       0.01,  // 1%
+				"threshold_multiplier": 1.15,  // 1.15x
+			},
+		}
+		spacingStrategy, _ = spacing.CreateSpacingStrategy(defaultConfig)
+	}
+	
+	if err := spacingStrategy.ValidateConfig(); err != nil {
+		// Log error but continue with default fixed spacing for GA robustness
+		log.Printf("⚠️ GA: Spacing strategy validation failed: %v, using default fixed spacing", err)
+		defaultConfig := spacing.SpacingConfig{
+			Strategy: "fixed",
+			Parameters: map[string]interface{}{
+				"base_threshold":       0.01,  // 1%
+				"threshold_multiplier": 1.15,  // 1.15x
+			},
+		}
+		spacingStrategy, _ = spacing.CreateSpacingStrategy(defaultConfig)
+	}
+	
+	dca.SetSpacingStrategy(spacingStrategy)
+	
 	// Create a set for efficient lookup
 	include := make(map[string]bool)
 	for _, name := range cfg.Indicators {
-		include[strings.ToLower(name)] = true
+		include[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 	
-	// Create strategy based on which indicators are present in config
-	indicatorSet := make(map[string]bool)
-	for _, ind := range cfg.Indicators {
-		indicatorSet[strings.ToLower(ind)] = true
+	// Add indicators in EXACT same order as orchestrator for deterministic results
+	if include["rsi"] {
+		rsi := oscillators.NewRSI(cfg.RSIPeriod)
+		rsi.SetOversold(cfg.RSIOversold)
+		rsi.SetOverbought(cfg.RSIOverbought)
+		dca.AddIndicator(rsi)
 	}
-	
-	// Add indicators based on what's present in the config
+	if include["macd"] {
+		macd := oscillators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		dca.AddIndicator(macd)
+	}
+	if include["bb"] || include["bollinger"] {
+		bb := bands.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+		dca.AddIndicator(bb)
+	}
+	if include["ema"] {
+		ema := common.NewEMA(cfg.EMAPeriod)
+		dca.AddIndicator(ema)
+	}
+	if include["hullma"] || include["hull_ma"] {
+		hullMA := trend.NewHullMA(cfg.HullMAPeriod)
+		dca.AddIndicator(hullMA)
+	}
 	if include["supertrend"] || include["st"] {
 		supertrend := trend.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
 		dca.AddIndicator(supertrend)
@@ -602,30 +779,6 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 		wavetrend.SetOverbought(cfg.WaveTrendOverbought)
 		wavetrend.SetOversold(cfg.WaveTrendOversold)
 		dca.AddIndicator(wavetrend)
-	}
-	
-	if include["rsi"] {
-		rsi := oscillators.NewRSI(cfg.RSIPeriod)
-		rsi.SetOversold(cfg.RSIOversold)
-		rsi.SetOverbought(cfg.RSIOverbought)
-		dca.AddIndicator(rsi)
-	}
-	if include["macd"] {
-		macd := oscillators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
-		dca.AddIndicator(macd)
-	}
-	if include["bb"] || include["bollinger"] {
-		bb := bands.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
-		dca.AddIndicator(bb)
-	}
-	if include["ema"] {
-		ema := common.NewEMA(cfg.EMAPeriod)
-		dca.AddIndicator(ema)
-	}
-	
-	if include["hullma"] || include["hull_ma"] {
-		hullMA := trend.NewHullMA(cfg.HullMAPeriod)
-		dca.AddIndicator(hullMA)
 	}
 	if include["obv"] {
 		obv := volume.NewOBV()

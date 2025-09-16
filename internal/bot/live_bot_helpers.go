@@ -16,71 +16,137 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 )
 
+// parseStringToFloat safely parses a string to float64 with comprehensive validation
+func parseStringToFloat(s, fieldName string) (float64, error) {
+	if s == "" {
+		return 0, fmt.Errorf("%s is empty string", fieldName)
+	}
+	// Trim whitespace that might cause parsing errors
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("%s contains only whitespace", fieldName)
+	}
+	// Check for common invalid values
+	if s == "null" || s == "undefined" || s == "NaN" {
+		return 0, fmt.Errorf("%s has invalid numeric value: %s", fieldName, s)
+	}
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s parse error: %w", fieldName, err)
+	}
+	return val, nil
+}
+
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
-	bot.positionMutex.Lock()
-	defer bot.positionMutex.Unlock()
-	
 	ctx := context.Background()
 	
-	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
-	if err != nil {
-		return fmt.Errorf("failed to get current positions: %w", err)
+	// For better sync reliability, retry up to 3 times with delays
+	// This is especially important right after placing orders
+	var positions []exchange.Position
+	var err error
+	
+	for attempt := 1; attempt <= 3; attempt++ {
+		positions, err = bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+		if err != nil {
+			log.Printf("⚠️ Position sync attempt %d failed: %v", attempt, err)
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // 500ms, 1s, then fail
+				continue
+			}
+			return fmt.Errorf("failed to get current positions after %d attempts: %w", attempt, err)
+		}
+		
+		// Log to file only for debugging (not terminal)
+		// Only log to terminal if positions found
+		if len(positions) > 0 {
+			// Check if any position has meaningful data before logging
+			hasAnyValidData := false
+			for _, pos := range positions {
+				if pos.Symbol == bot.symbol {
+					if pos.Size != "0" && pos.Size != "" || pos.PositionValue != "" && pos.PositionValue != "0" {
+						hasAnyValidData = true
+						break
+					}
+				}
+			}
+			if hasAnyValidData {
+				log.Printf("🔍 Found %d positions for %s", len(positions), bot.symbol)
+			}
+		}
+		
+		break
 	}
 	
-	// Look for our symbol position
+	// Look for our symbol position - check for both "Buy" and "Long" sides
+	var foundPosition bool
+	var positionValue, avgPrice float64
+	var needsStrategySync bool
+	
 	for _, pos := range positions {
-		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
-			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse position value '%s': %v", pos.PositionValue, err)
-				continue
-			}
-			avgPrice, err := strconv.ParseFloat(strings.TrimSpace(pos.AvgPrice), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse average price '%s': %v", pos.AvgPrice, err)
-				continue
-			}
-			_, err = strconv.ParseFloat(strings.TrimSpace(pos.Size), 64)
-			if err != nil {
-				log.Printf("⚠️ Failed to parse position size '%s': %v", pos.Size, err)
+		// Check for exact symbol match first
+		if pos.Symbol == bot.symbol {
+			// Parse numeric values with better error handling
+			posValue, posValueErr := parseStringToFloat(pos.PositionValue, "PositionValue")
+			avgPriceVal, avgPriceErr := parseStringToFloat(pos.AvgPrice, "AvgPrice")
+			posSize, posSizeErr := parseStringToFloat(pos.Size, "Size")
+			
+			// Skip positions with all parsing errors
+			if posValueErr != nil && avgPriceErr != nil && posSizeErr != nil {
 				continue
 			}
 			
-			if positionValue > 0 && avgPrice > 0 {
-				// Check if average price has changed (indicating new DCA entry)
-				if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
-					log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
-				}
-				
-				// Use exchange data directly - no self-calculation
-				// Note: Already protected by positionMutex from calling function
-				bot.currentPosition = positionValue
-				bot.averagePrice = avgPrice
-				bot.totalInvested = positionValue
-				
-				// Only estimate DCA level during bot startup when dcaLevel is 0
-				// NEVER override DCA level during active trading to maintain proper progression
-				if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
-					// Add zero-value check to prevent division by zero
-					estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
-					bot.dcaLevel = estimatedLevel
-					log.Printf("🔄 Startup: Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
-						bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
-				}
-				// During active trading, preserve the tracked DCA level progression
-				
-		// Position synced successfully
-		return nil
+			// Check if position has meaningful data (non-zero size OR non-zero value)
+			hasValidSize := posSizeErr == nil && posSize > 0.001
+			hasValidValue := posValueErr == nil && posValue > 0.01
+			hasValidPrice := avgPriceErr == nil && avgPriceVal > 0
+			
+			// Accept position if it has size and price, regardless of side field
+			if (hasValidSize || hasValidValue) && hasValidPrice {
+				positionValue = posValue
+				avgPrice = avgPriceVal
+				foundPosition = true
+				log.Printf("✅ Found valid position: Value=$%.2f, AvgPrice=$%.4f, Size=%.6f", 
+					positionValue, avgPrice, posSize)
+				break
 			}
 		}
 	}
 	
+	// Update bot state with proper mutex protection
+	bot.positionMutex.Lock()
+	defer bot.positionMutex.Unlock()
+	
+	if foundPosition {
+		// Check if average price has changed (indicating new DCA entry)
+		if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
+			log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
+		}
+		
+		// Use exchange data directly - no self-calculation
+		bot.currentPosition = positionValue
+		bot.averagePrice = avgPrice
+		bot.totalInvested = positionValue
+		
+		// Only estimate DCA level during bot startup when dcaLevel is 0
+		// NEVER override DCA level during active trading to maintain proper progression
+		if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
+			// Add defensive check to prevent division by zero
+			if bot.config.Strategy.BaseAmount > 0 {
+				estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
+				bot.dcaLevel = estimatedLevel
+				log.Printf("🔄 Startup: Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
+					bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
+			}
+		}
+		// During active trading, preserve the tracked DCA level progression
+		
+		// Position synced successfully
+		return nil
+	}
+	
 	// No position found - reset state if bot thinks it has one
-	needsStrategySync := false
 	if bot.currentPosition > 0 {
-		log.Printf("🔄 No exchange position found - resetting bot state")
-		// Note: Already protected by positionMutex from calling function
 		bot.currentPosition = 0
 		bot.averagePrice = 0
 		bot.totalInvested = 0
@@ -88,15 +154,15 @@ func (bot *LiveBot) syncPositionData() error {
 		needsStrategySync = true
 	}
 	
-	// Release mutex before calling syncStrategyState to avoid deadlock
+	// Sync strategy state after releasing mutex to avoid deadlock
 	if needsStrategySync {
-		// Note: We're about to return, so defer unlock will happen first
-		// Need to manually unlock and then sync
+		// Release mutex before calling syncStrategyState
 		bot.positionMutex.Unlock()
 		bot.syncStrategyState()
-		// Re-acquire lock for the defer statement (will be unlocked again immediately)
+		// Re-acquire mutex for proper cleanup
 		bot.positionMutex.Lock()
 	}
+	
 	return nil
 }
 
@@ -144,11 +210,13 @@ func (bot *LiveBot) closeOpenPositions() error {
 			saleValue := positionSize * currentPrice
 			profit := saleValue - positionValue
 			
-			// Add zero-value check to prevent division by zero
-			var profitPercent float64
-			if positionValue > 0 {
-				profitPercent = (profit / positionValue) * 100
-			}
+		// Add defensive check to prevent division by zero
+		var profitPercent float64
+		if positionValue > 0 {
+			profitPercent = (profit / positionValue) * 100
+		} else {
+			log.Printf("⚠️ Warning: Position value is zero, cannot calculate profit percentage")
+		}
 			
 			bot.logger.Info("🔄 POSITION CLOSED (SHUTDOWN) - Order: %s, Qty: %s %s, Entry: $%.2f, Exit: $%.2f, P&L: $%.2f (%.2f%%)", 
 				order.OrderID, pos.Size, bot.symbol, avgPrice, currentPrice, profit, profitPercent)
@@ -401,7 +469,7 @@ func (bot *LiveBot) printBotConfiguration() {
 		{"💰 Initial Balance", fmt.Sprintf("$%.2f", bot.balance)},
 		{"📈 Base DCA Amount", fmt.Sprintf("$%.2f", bot.config.Strategy.BaseAmount)},
 		{"🔄 Max Multiplier", fmt.Sprintf("%.2f", bot.config.Strategy.MaxMultiplier)},
-		{"📊 Price Threshold", fmt.Sprintf("%.2f%%", bot.config.Strategy.PriceThreshold*100)},
+		{"📊 DCA Spacing", bot.getDCASpacingDisplay()},
 		{"🎯 Take Profit", fmt.Sprintf("%.2f%%", bot.config.Strategy.TPPercent*100)},
 	})
 	
@@ -446,6 +514,39 @@ func (bot *LiveBot) getTradingModeString() string {
 		return "🧪 DEMO MODE (Paper Trading)"
 	}
 	return "💰 LIVE TRADING MODE (Real Money!)"
+}
+
+// getDCASpacingDisplay returns a formatted string for DCA spacing strategy display
+func (bot *LiveBot) getDCASpacingDisplay() string {
+	if bot.config.Strategy.DCASpacing == nil {
+		return "❌ Not configured"
+	}
+	
+	strategy := bot.config.Strategy.DCASpacing.Strategy
+	params := bot.config.Strategy.DCASpacing.Parameters
+	
+	switch strategy {
+	case "fixed":
+		if baseThresh, ok := params["base_threshold"].(float64); ok {
+			if multiplier, ok := params["threshold_multiplier"].(float64); ok && multiplier > 1.0 {
+				return fmt.Sprintf("Fixed Progressive (%.1f%% × %.2fx)", baseThresh*100, multiplier)
+			}
+			return fmt.Sprintf("Fixed (%.1f%%)", baseThresh*100)
+		}
+		return "Fixed Progressive"
+		
+	case "volatility_adaptive":
+		if baseThresh, ok := params["base_threshold"].(float64); ok {
+			if sensitivity, ok := params["volatility_sensitivity"].(float64); ok {
+				return fmt.Sprintf("ATR-Adaptive (%.1f%%, %.1fx sens)", baseThresh*100, sensitivity)
+			}
+			return fmt.Sprintf("ATR-Adaptive (%.1f%%)", baseThresh*100)
+		}
+		return "ATR-Adaptive"
+		
+	default:
+		return fmt.Sprintf("%s Strategy", strategy)
+	}
 }
 
 // Helper functions

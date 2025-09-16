@@ -87,4 +87,9 @@ type OptimizationRanges struct {
 	StochasticRSIPeriods []int
 	StochasticRSIOverboughts []float64
 	StochasticRSIOversolds []float64
+	
+	// DCA Spacing: Volatility Adaptive parameters
+	VolatilitySensitivity []float64
+	ATRPeriods           []int
+	LevelMultipliers     []float64
 }

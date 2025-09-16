@@ -27,8 +27,6 @@ const (
 	DefaultWindowSize     = 100
 	DefaultBaseAmount     = 40.0
 	DefaultMaxMultiplier  = 3.0
-	DefaultPriceThreshold = 0.02 // 2%
-	DefaultPriceThresholdMultiplier = 1.0 // 1.0x = no multiplier
 	DefaultTPPercent      = 0.02 // 2%
 	DefaultDataRoot       = "data"
 	DefaultExchange       = "bybit"
@@ -58,8 +56,7 @@ func main() {
 	
 	// Load configuration first to see if it has indicators
 	cfg, err := loadDCAConfiguration(*flags.ConfigFile, *flags.DataFile, *flags.Symbol, *flags.Interval, 
-		*flags.InitialBalance, *flags.Commission, *flags.WindowSize, *flags.BaseAmount, *flags.MaxMultiplier, 
-		*flags.PriceThreshold, *flags.PriceThresholdMultiplier, flags)
+		*flags.InitialBalance, *flags.Commission, *flags.WindowSize, *flags.BaseAmount, *flags.MaxMultiplier, flags)
 	if err != nil {
 		log.Fatalf("❌ Configuration error: %v", err)
 	}
@@ -191,8 +188,7 @@ func loadEnvironment(envFile string) {
 }
 
 func loadDCAConfiguration(configFile, dataFile, symbol, interval string, 
-	initialBalance, commission float64, windowSize int, baseAmount, maxMultiplier, 
-	priceThreshold, priceThresholdMultiplier float64, flags *DCAFlags) (*config.DCAConfig, error) {
+	initialBalance, commission float64, windowSize int, baseAmount, maxMultiplier float64, flags *DCAFlags) (*config.DCAConfig, error) {
 	
 	// Resolve config file path
 	if configFile != "" && !strings.ContainsAny(configFile, "/\\") {
@@ -204,8 +200,6 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	params := map[string]interface{}{
 		"base_amount":                 baseAmount,
 		"max_multiplier":              maxMultiplier,
-		"price_threshold":             priceThreshold,
-		"price_threshold_multiplier":  priceThresholdMultiplier,
 	}
 	
 	cfgInterface, err := configManager.LoadConfig(configFile, dataFile, symbol, 
@@ -250,6 +244,24 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		}
 	}
 	
+	// Configure DCA spacing strategy from command line flags if not present in config
+	if cfg.DCASpacing == nil {
+		// Create DCA spacing configuration from flags
+		dcaSpacingConfig, err := createDCASpacingFromFlags(flags)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DCA spacing configuration: %w", err)
+		}
+		cfg.DCASpacing = dcaSpacingConfig
+		log.Printf("📊 Using DCA spacing from command line: %s strategy", cfg.DCASpacing.Strategy)
+	} else {
+		log.Printf("📊 Using DCA spacing from config file: %s strategy", cfg.DCASpacing.Strategy)
+	}
+	
+	// Validate that DCA spacing is now present
+	if cfg.DCASpacing == nil {
+		return nil, fmt.Errorf("DCA spacing configuration is required - please specify dca_spacing in config file or use DCA spacing flags")
+	}
+	
 	// Preserve interval from config file, or use command line value if no config file
 	effectiveInterval := interval
 	if cfg.Interval != "" {
@@ -285,19 +297,31 @@ func printConfigSummary(cfg *config.DCAConfig) {
 	fmt.Printf("   Base Amount: $%.2f\n", cfg.BaseAmount)
 	fmt.Printf("   Max Multiplier: %.2fx\n", cfg.MaxMultiplier)
 	
-	// Enhanced price threshold display
-	fmt.Printf("   Price Threshold: %.2f%%", cfg.PriceThreshold*100)
-	if cfg.PriceThresholdMultiplier > 1.0 {
-		fmt.Printf(" → Progressive DCA Spacing\n")
-		fmt.Printf("   Multiplier: %.2fx per level (%.2f%% → %.2f%% → %.2f%% → %.2f%% → %.2f%%)\n",
-			cfg.PriceThresholdMultiplier,
-			cfg.PriceThreshold*100,
-			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*100,
-			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100,
-			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100,
-			cfg.PriceThreshold*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*cfg.PriceThresholdMultiplier*100)
+	// DCA Spacing Strategy display
+	if cfg.DCASpacing != nil {
+		fmt.Printf("   DCA Spacing: %s\n", cfg.DCASpacing.Strategy)
+		if cfg.DCASpacing.Strategy == "fixed" {
+			if baseThreshold, ok := cfg.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				if multiplier, ok := cfg.DCASpacing.Parameters["threshold_multiplier"].(float64); ok && multiplier > 1.0 {
+					fmt.Printf("   Progression: %.2f%% → %.2f%% → %.2f%% → %.2f%% → %.2f%%\n",
+						baseThreshold*100,
+						baseThreshold*multiplier*100,
+						baseThreshold*multiplier*multiplier*100,
+						baseThreshold*multiplier*multiplier*multiplier*100,
+						baseThreshold*multiplier*multiplier*multiplier*multiplier*100)
+				} else {
+					fmt.Printf("   Threshold: %.2f%% (Fixed)\n", baseThreshold*100)
+				}
+			}
+		} else if cfg.DCASpacing.Strategy == "volatility_adaptive" {
+			if baseThreshold, ok := cfg.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				if sensitivity, ok := cfg.DCASpacing.Parameters["volatility_sensitivity"].(float64); ok {
+					fmt.Printf("   ATR-based: %.2f%% base, %.1fx sensitivity\n", baseThreshold*100, sensitivity)
+				}
+			}
+		}
 	} else {
-		fmt.Printf(" (Fixed)\n")
+		fmt.Printf("   DCA Spacing: Not configured\n")
 	}
 	
 	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", cfg.TPPercent*100)
@@ -436,7 +460,7 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 	fmt.Printf("\n📈 INTERVAL COMPARISON - %s\n", results.Symbol)
 	fmt.Printf("%s\n", strings.Repeat("=", 90))
 	fmt.Printf("%-8s | %7s | %6s | %5s | %7s | %5s | %8s | %6s | %s\n",
-		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Mult", "Indicators")
+		"Interval", "Return%", "Trades", "Base$", "MaxMult", "TP%", "Thresh%", "Spacing", "Indicators")
 	fmt.Printf("%s\n", strings.Repeat("-", 90))
 	
 	for _, r := range results.Results {
@@ -448,34 +472,44 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 		c := r.OptimizedCfg
 		comboInfo := GetIndicatorDescription(c.Indicators)
 		
-		// Format multiplier display
-		multDisplay := "1.00x"
-		if c.PriceThresholdMultiplier > 1.0 {
-			multDisplay = fmt.Sprintf("%.2fx", c.PriceThresholdMultiplier)
+		// Format spacing display
+		spacingDisplay := "N/A"
+		threshDisplay := "N/A"
+		if c.DCASpacing != nil {
+			spacingDisplay = c.DCASpacing.Strategy
+			if baseThresh, ok := c.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				threshDisplay = fmt.Sprintf("%.2f", baseThresh*100)
+			}
 		}
 		
-		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8.2f | %6s | %s\n",
+		fmt.Printf("%-8s | %7.2f | %6d | %5.0f | %7.2f | %5.2f | %8s | %6s | %s\n",
 			r.Interval,
 			r.Results.TotalReturn*100,
 			r.Results.TotalTrades,
 			c.BaseAmount,
 			c.MaxMultiplier,
 			c.TPPercent*100,
-			c.PriceThreshold*100,
-			multDisplay,
+			threshDisplay+"%",
+			spacingDisplay,
 			comboInfo,
 		)
 	}
 	
 	best := results.BestResult
 	fmt.Printf("\n🏆 BEST: %s (%.2f%% return)\n", best.Interval, best.Results.TotalReturn*100)
-	thresholdInfo := fmt.Sprintf("%.2f%%", best.OptimizedCfg.PriceThreshold*100)
-	if best.OptimizedCfg.PriceThresholdMultiplier > 1.0 {
-		thresholdInfo += fmt.Sprintf(" (%.2fx)", best.OptimizedCfg.PriceThresholdMultiplier)
+	
+	spacingInfo := "N/A"
+	if best.OptimizedCfg.DCASpacing != nil {
+		if baseThresh, ok := best.OptimizedCfg.DCASpacing.Parameters["base_threshold"].(float64); ok {
+			spacingInfo = fmt.Sprintf("%.2f%% (%s)", baseThresh*100, best.OptimizedCfg.DCASpacing.Strategy)
+		} else {
+			spacingInfo = best.OptimizedCfg.DCASpacing.Strategy
+		}
 	}
-	fmt.Printf("Settings: Base=$%.0f, Mult=%.2fx, TP=%.2f%%, Thresh=%s\n\n",
+	
+	fmt.Printf("Settings: Base=$%.0f, Mult=%.2fx, TP=%.2f%%, Spacing=%s\n\n",
 		best.OptimizedCfg.BaseAmount, best.OptimizedCfg.MaxMultiplier,
-		best.OptimizedCfg.TPPercent*100, thresholdInfo)
+		best.OptimizedCfg.TPPercent*100, spacingInfo)
 	
 	// Show detailed results for best interval
 	reporting.OutputConsole(best.Results)
@@ -487,20 +521,94 @@ func displayIntervalResults(results *orchestrator.IntervalAnalysisResult, consol
 }
 
 func printOptimizationResults(bestConfig *config.DCAConfig, bestResults *backtest.BacktestResults) {
-	fmt.Printf("\n🎯 OPTIMIZATION RESULTS\n")
+	fmt.Printf("\n🎯 OPTIMIZED DCA STRATEGY CONFIGURATION\n")
 	fmt.Printf("%s\n", strings.Repeat("=", 50))
-	fmt.Printf("Best Return: %.2f%%\n", bestResults.TotalReturn*100)
-	fmt.Printf("Indicators: %s\n", GetIndicatorDescription(bestConfig.Indicators))
-	fmt.Printf("Base Amount: $%.2f\n", bestConfig.BaseAmount)
-	fmt.Printf("Max Multiplier: %.2fx\n", bestConfig.MaxMultiplier)
-	fmt.Printf("Price Threshold: %.2f%%", bestConfig.PriceThreshold*100)
-	if bestConfig.PriceThresholdMultiplier > 1.0 {
-		fmt.Printf(" (Progressive: %.2fx per level)\n", bestConfig.PriceThresholdMultiplier)
+	fmt.Printf("   Best Return: %.2f%%\n", bestResults.TotalReturn*100)
+	fmt.Printf("   Base Amount: $%.2f\n", bestConfig.BaseAmount)
+	fmt.Printf("   Max Multiplier: %.2fx\n", bestConfig.MaxMultiplier)
+	
+	// DCA Spacing Strategy display (matching initial format)
+	if bestConfig.DCASpacing != nil {
+		fmt.Printf("   DCA Spacing: %s Strategy\n", bestConfig.DCASpacing.Strategy)
+		if bestConfig.DCASpacing.Strategy == "fixed" {
+			if baseThreshold, ok := bestConfig.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				if multiplier, ok := bestConfig.DCASpacing.Parameters["threshold_multiplier"].(float64); ok && multiplier > 1.0 {
+					fmt.Printf("   Fixed: %.3f%% base, %.3fx multiplier\n", baseThreshold*100, multiplier)
+					fmt.Printf("   Progression: %.3f%% → %.3f%% → %.3f%% → %.3f%% → %.3f%%\n",
+						baseThreshold*100,
+						baseThreshold*multiplier*100,
+						baseThreshold*multiplier*multiplier*100,
+						baseThreshold*multiplier*multiplier*multiplier*100,
+						baseThreshold*multiplier*multiplier*multiplier*multiplier*100)
+				} else {
+					fmt.Printf("   Fixed: %.3f%% base (no multiplier)\n", baseThreshold*100)
+				}
+			}
+		} else if bestConfig.DCASpacing.Strategy == "volatility_adaptive" {
+			if baseThreshold, ok := bestConfig.DCASpacing.Parameters["base_threshold"].(float64); ok {
+				if sensitivity, ok := bestConfig.DCASpacing.Parameters["volatility_sensitivity"].(float64); ok {
+					fmt.Printf("   ATR-based: %.2f%% base, %.1fx sensitivity", baseThreshold*100, sensitivity)
+					if atrPeriod, ok := bestConfig.DCASpacing.Parameters["atr_period"].(int); ok {
+						fmt.Printf(", %d-period", atrPeriod)
+					}
+					if levelMultiplier, ok := bestConfig.DCASpacing.Parameters["level_multiplier"].(float64); ok && levelMultiplier > 1.0 {
+						fmt.Printf(", %.2fx level progression", levelMultiplier)
+					}
+					fmt.Printf("\n")
+				}
+			}
+		}
 	} else {
-		fmt.Printf(" (Fixed)\n")
+		fmt.Printf("   DCA Spacing: Not configured\n")
 	}
-	fmt.Printf("TP System: 5-level (%.2f%% max)\n", bestConfig.TPPercent*100)
-	fmt.Printf("Indicators: %s\n\n", strings.Join(bestConfig.Indicators, ", "))
+	
+	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", bestConfig.TPPercent*100)
+	
+	indicatorDescription := GetIndicatorDescription(bestConfig.Indicators)
+	fmt.Printf("   Indicators: %s\n", indicatorDescription)
+	
+	// Print optimized indicator settings
+	printOptimizedIndicatorSettings(bestConfig)
+	fmt.Printf("\n")
+}
+
+func printOptimizedIndicatorSettings(cfg *config.DCAConfig) {
+	fmt.Printf("   📈 Optimized Indicator Settings:\n")
+	
+	for _, indicator := range cfg.Indicators {
+		switch strings.ToLower(indicator) {
+		case "rsi":
+			fmt.Printf("      • RSI: period=%d, oversold=%.0f, overbought=%.0f\n", 
+				cfg.RSIPeriod, cfg.RSIOversold, cfg.RSIOverbought)
+		case "macd":
+			fmt.Printf("      • MACD: fast=%d, slow=%d, signal=%d\n", 
+				cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		case "bb", "bollinger":
+			fmt.Printf("      • Bollinger Bands: period=%d, stddev=%.1f\n", 
+				cfg.BBPeriod, cfg.BBStdDev)
+		case "ema":
+			fmt.Printf("      • EMA: period=%d\n", cfg.EMAPeriod)
+		case "hullma", "hull_ma":
+			fmt.Printf("      • Hull MA: period=%d\n", cfg.HullMAPeriod)
+		case "supertrend", "st":
+			fmt.Printf("      • SuperTrend: period=%d, multiplier=%.1f\n", 
+				cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		case "mfi":
+			fmt.Printf("      • MFI: period=%d, oversold=%.0f, overbought=%.0f\n", 
+				cfg.MFIPeriod, cfg.MFIOversold, cfg.MFIOverbought)
+		case "keltner", "kc":
+			fmt.Printf("      • Keltner: period=%d, multiplier=%.1f\n", 
+				cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		case "wavetrend", "wt":
+			fmt.Printf("      • WaveTrend: n1=%d, n2=%d, overbought=%.0f, oversold=%.0f\n", 
+				cfg.WaveTrendN1, cfg.WaveTrendN2, cfg.WaveTrendOverbought, cfg.WaveTrendOversold)
+		case "obv":
+			fmt.Printf("      • OBV: trend_threshold=%.3f\n", cfg.OBVTrendThreshold)
+		case "stochrsi", "stochastic_rsi", "stoch_rsi":
+			fmt.Printf("      • Stochastic RSI: period=%d, overbought=%.1f, oversold=%.1f\n", 
+				cfg.StochasticRSIPeriod, cfg.StochasticRSIOverbought, cfg.StochasticRSIOversold)
+		}
+	}
 }
 
 func guessIntervalFromPath(path string) string {
@@ -543,8 +651,6 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		WindowSize:          cfg.WindowSize,
 		BaseAmount:          cfg.BaseAmount,
 		MaxMultiplier:       cfg.MaxMultiplier,
-		PriceThreshold:      cfg.PriceThreshold,
-		PriceThresholdMultiplier: cfg.PriceThresholdMultiplier,
 		RSIPeriod:           cfg.RSIPeriod,
 		RSIOversold:         cfg.RSIOversold,
 		RSIOverbought:       cfg.RSIOverbought,
@@ -575,5 +681,40 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		UseTPLevels:         cfg.UseTPLevels,
 		Cycle:               cfg.Cycle,
 		MinOrderQty:         cfg.MinOrderQty,
+		DCASpacing:          cfg.DCASpacing,
+	}
+}
+
+// createDCASpacingFromFlags creates DCA spacing configuration from command line flags
+func createDCASpacingFromFlags(flags *DCAFlags) (*config.DCASpacingConfig, error) {
+	strategy := strings.ToLower(strings.TrimSpace(*flags.DCASpacingStrategy))
+	
+	switch strategy {
+	case "fixed":
+		return &config.DCASpacingConfig{
+			Strategy: "fixed",
+			Parameters: map[string]interface{}{
+				"base_threshold":       *flags.SpacingBaseThreshold,
+				"threshold_multiplier": *flags.SpacingMultiplier,
+				"max_threshold":        0.10, // 10% safety limit
+				"min_threshold":        0.003, // 0.3% safety limit
+			},
+		}, nil
+		
+	case "volatility_adaptive", "adaptive", "atr":
+		return &config.DCASpacingConfig{
+			Strategy: "volatility_adaptive",
+			Parameters: map[string]interface{}{
+				"base_threshold":        *flags.SpacingBaseThreshold,
+				"volatility_sensitivity": *flags.SpacingVolatilitySens,
+				"atr_period":            *flags.SpacingATRPeriod,
+				"max_threshold":         0.05, // 5% safety limit for adaptive
+				"min_threshold":         0.003, // 0.3% safety limit
+				"level_multiplier":      1.1,  // Default level multiplier
+			},
+		}, nil
+		
+	default:
+		return nil, fmt.Errorf("unsupported DCA spacing strategy: %s (supported: fixed, volatility_adaptive)", strategy)
 	}
 }

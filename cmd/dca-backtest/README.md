@@ -69,8 +69,8 @@ dca-backtest -symbol BTCUSDT -indicators "bb,stochrsi" -period 30d -optimize
 
 ### DCA Strategy Parameters
 
-| Parameter         | Default | Description                             |
-| ----------------- | ------- | --------------------------------------- |
+| Parameter           | Default | Description                             |
+| ------------------- | ------- | --------------------------------------- |
 | `base-amount`     | 40      | Base DCA investment amount              |
 | `max-multiplier`  | 3.0     | Maximum position multiplier             |
 | `price-threshold` | 0.02    | Minimum price drop % for next DCA entry |
@@ -244,8 +244,8 @@ dca-backtest -symbol ETHUSDT -indicators "rsi,macd,bb,ema,hullma,supertrend,mfi,
 
 ### Account Settings
 
-| Parameter    | Default | Description                |
-| ------------ | ------- | -------------------------- |
+| Parameter      | Default | Description                |
+| -------------- | ------- | -------------------------- |
 | `balance`    | 500     | Initial account balance    |
 | `commission` | 0.0005  | Trading commission (0.05%) |
 
