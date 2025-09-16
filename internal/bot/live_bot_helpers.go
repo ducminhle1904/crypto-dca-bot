@@ -18,9 +18,6 @@ import (
 
 // syncPositionData syncs bot internal state with real exchange position data
 func (bot *LiveBot) syncPositionData() error {
-	bot.positionMutex.Lock()
-	defer bot.positionMutex.Unlock()
-	
 	ctx := context.Background()
 	
 	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
@@ -29,6 +26,10 @@ func (bot *LiveBot) syncPositionData() error {
 	}
 	
 	// Look for our symbol position
+	var foundPosition bool
+	var positionValue, avgPrice float64
+	var needsStrategySync bool
+	
 	for _, pos := range positions {
 		if pos.Symbol == bot.symbol && pos.Side == "Buy" {
 			positionValue, err := strconv.ParseFloat(strings.TrimSpace(pos.PositionValue), 64)
@@ -48,39 +49,47 @@ func (bot *LiveBot) syncPositionData() error {
 			}
 			
 			if positionValue > 0 && avgPrice > 0 {
-				// Check if average price has changed (indicating new DCA entry)
-				if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
-					log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
-				}
-				
-				// Use exchange data directly - no self-calculation
-				// Note: Already protected by positionMutex from calling function
-				bot.currentPosition = positionValue
-				bot.averagePrice = avgPrice
-				bot.totalInvested = positionValue
-				
-				// Only estimate DCA level during bot startup when dcaLevel is 0
-				// NEVER override DCA level during active trading to maintain proper progression
-				if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
-					// Add zero-value check to prevent division by zero
-					estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
-					bot.dcaLevel = estimatedLevel
-					log.Printf("🔄 Startup: Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
-						bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
-				}
-				// During active trading, preserve the tracked DCA level progression
-				
-		// Position synced successfully
-		return nil
+				foundPosition = true
+				break
 			}
 		}
 	}
 	
+	// Update bot state with proper mutex protection
+	bot.positionMutex.Lock()
+	defer bot.positionMutex.Unlock()
+	
+	if foundPosition {
+		// Check if average price has changed (indicating new DCA entry)
+		if bot.averagePrice > 0 && math.Abs(avgPrice-bot.averagePrice) > 0.0001 {
+			log.Printf("💰 Average price changed: $%.4f → $%.4f", bot.averagePrice, avgPrice)
+		}
+		
+		// Use exchange data directly - no self-calculation
+		bot.currentPosition = positionValue
+		bot.averagePrice = avgPrice
+		bot.totalInvested = positionValue
+		
+		// Only estimate DCA level during bot startup when dcaLevel is 0
+		// NEVER override DCA level during active trading to maintain proper progression
+		if bot.config.Strategy.BaseAmount > 0 && bot.dcaLevel == 0 {
+			// Add defensive check to prevent division by zero
+			if bot.config.Strategy.BaseAmount > 0 {
+				estimatedLevel := max(1, int(positionValue/bot.config.Strategy.BaseAmount))
+				bot.dcaLevel = estimatedLevel
+				log.Printf("🔄 Startup: Estimated DCA level: %d (position: $%.2f, base: $%.2f)", 
+					bot.dcaLevel, positionValue, bot.config.Strategy.BaseAmount)
+			}
+		}
+		// During active trading, preserve the tracked DCA level progression
+		
+		// Position synced successfully
+		return nil
+	}
+	
 	// No position found - reset state if bot thinks it has one
-	needsStrategySync := false
 	if bot.currentPosition > 0 {
 		log.Printf("🔄 No exchange position found - resetting bot state")
-		// Note: Already protected by positionMutex from calling function
 		bot.currentPosition = 0
 		bot.averagePrice = 0
 		bot.totalInvested = 0
@@ -88,15 +97,15 @@ func (bot *LiveBot) syncPositionData() error {
 		needsStrategySync = true
 	}
 	
-	// Release mutex before calling syncStrategyState to avoid deadlock
+	// Sync strategy state after releasing mutex to avoid deadlock
 	if needsStrategySync {
-		// Note: We're about to return, so defer unlock will happen first
-		// Need to manually unlock and then sync
+		// Release mutex before calling syncStrategyState
 		bot.positionMutex.Unlock()
 		bot.syncStrategyState()
-		// Re-acquire lock for the defer statement (will be unlocked again immediately)
+		// Re-acquire mutex for proper cleanup
 		bot.positionMutex.Lock()
 	}
+	
 	return nil
 }
 
@@ -144,11 +153,13 @@ func (bot *LiveBot) closeOpenPositions() error {
 			saleValue := positionSize * currentPrice
 			profit := saleValue - positionValue
 			
-			// Add zero-value check to prevent division by zero
-			var profitPercent float64
-			if positionValue > 0 {
-				profitPercent = (profit / positionValue) * 100
-			}
+		// Add defensive check to prevent division by zero
+		var profitPercent float64
+		if positionValue > 0 {
+			profitPercent = (profit / positionValue) * 100
+		} else {
+			log.Printf("⚠️ Warning: Position value is zero, cannot calculate profit percentage")
+		}
 			
 			bot.logger.Info("🔄 POSITION CLOSED (SHUTDOWN) - Order: %s, Qty: %s %s, Entry: $%.2f, Exit: $%.2f, P&L: $%.2f (%.2f%%)", 
 				order.OrderID, pos.Size, bot.symbol, avgPrice, currentPrice, profit, profitPercent)

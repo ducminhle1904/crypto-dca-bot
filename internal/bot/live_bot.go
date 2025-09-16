@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -91,8 +92,9 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 
 
 
-	// Initialize file logger
-	fileLogger, err := logger.NewLogger(symbol, interval)
+	// Initialize file logger with debug mode (can be controlled via environment variable)
+	debugMode := os.Getenv("DCA_BOT_DEBUG") == "true"
+	fileLogger, err := logger.NewLoggerWithDebug(symbol, interval, debugMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -594,10 +596,18 @@ func (bot *LiveBot) shouldStop() bool {
 
 // checkAndTrade performs market analysis and executes trades
 func (bot *LiveBot) checkAndTrade() {
+	startTime := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			bot.logger.Error("Error in trading loop: %v", r)
 		}
+		
+		// Log performance metrics for each trading cycle
+		duration := time.Since(startTime)
+		bot.logger.LogPerformanceMetrics("Trading Cycle", duration, map[string]interface{}{
+			"timestamp": startTime.Format("2006-01-02 15:04:05"),
+			"duration_ms": duration.Milliseconds(),
+		})
 	}()
 
 	// Check for stop signal before starting
@@ -666,8 +676,34 @@ func (bot *LiveBot) checkAndTrade() {
 		bot.logger.LogWarning("Limited data", "Using %d data points (less than configured %d, but sufficient for analysis)", len(klines), bot.config.Strategy.WindowSize)
 	}
 
-	// Analyze market conditions
+	// Analyze market conditions with detailed logging
 	decision, action := bot.analyzeMarket(klines, currentPrice)
+	
+	// Log detailed market analysis for debugging
+	if decision != nil {
+		// Get indicator results for detailed logging
+		indicatorResults := bot.strategy.GetLastResults()
+		indicatorMap := make(map[string]interface{})
+		for name, result := range indicatorResults {
+			if result.Error != nil {
+				indicatorMap[name] = fmt.Sprintf("ERROR: %v", result.Error)
+			} else {
+				indicatorMap[name] = fmt.Sprintf("Value: %.4f", result.Value)
+			}
+		}
+		
+		// Convert klines to interface{} for logging
+		klinesInterface := make([]interface{}, len(klines))
+		for i, kline := range klines {
+			klinesInterface[i] = kline
+		}
+		
+		bot.logger.LogDetailedMarketAnalysis(klinesInterface, indicatorMap, action, decision.Confidence)
+		
+		// Log additional debug information
+		bot.logger.LogDebugOnly("Market Analysis Debug", "Decision: %s, Confidence: %.2f%%, Strength: %.2f%%, Amount: $%.2f", 
+			action, decision.Confidence*100, decision.Strength*100, decision.Amount)
+	}
 
 	// Check for filled TP orders and gather TP information
 	filledOrders := bot.detectFilledTPOrders()
@@ -799,9 +835,8 @@ func (bot *LiveBot) analyzeMarket(klines []types.OHLCV, currentPrice float64) (*
 		return decision, "HOLD"
 	}
 
-	// Note: Take profit is now handled by exchange limit orders placed after each buy
-	// This eliminates the need to wait for candle closes and provides immediate TP protection
-	// The exchange will automatically execute TP orders when price reaches target levels
+	// Take profit is handled by exchange limit orders placed after each buy
+	// This provides immediate TP protection without waiting for candle closes
 }
 
 // executeTrade executes the trading action
@@ -837,6 +872,23 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		priceDrop := (currentAvgPrice - price) / currentAvgPrice
 		requiredThreshold := bot.calculateRequiredThreshold(price, recentCandles)
 		
+		// Log detailed DCA spacing information
+		spacingContext := map[string]interface{}{
+			"dca_level": currentDCALevel,
+			"price_drop_percent": priceDrop * 100,
+			"required_threshold_percent": requiredThreshold * 100,
+			"data_points": len(recentCandles),
+		}
+		
+		// Add spacing strategy details if available
+		if bot.spacingStrategy != nil {
+			spacingContext["strategy_name"] = bot.spacingStrategy.GetName()
+			spacingContext["strategy_params"] = bot.spacingStrategy.GetParameters()
+		}
+		
+		bot.logger.LogDCASpacingDetails(currentDCALevel, price, currentAvgPrice, requiredThreshold, 
+			bot.spacingStrategy.GetName(), spacingContext)
+		
 		if priceDrop < requiredThreshold {
 			bot.logger.Info("🛡️ BOT SAFETY: Blocking DCA buy - price drop %.2f%% < required %.2f%% (DCA Level %d)", 
 				priceDrop*100, requiredThreshold*100, currentDCALevel)
@@ -871,13 +923,30 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		bot.logger.LogWarning("Trading constraints", "Could not get trading constraints: %v", err)
 		return
 	}
-
-	// Calculate quantity and apply constraints with zero-value check
+	
+	// Add defensive check for invalid price
 	if price <= 0 {
 		bot.logger.LogWarning("Order constraints", "Invalid price: %.4f", price)
 		return
 	}
+	
+	// Add defensive check for invalid amount
+	if amount <= 0 {
+		bot.logger.LogWarning("Order constraints", "Invalid amount: %.4f", amount)
+		return
+	}
+	
 	quantity := amount / price
+	
+	// Log detailed order placement information
+	constraintsMap := map[string]interface{}{
+		"min_order_qty": constraints.MinOrderQty,
+		"min_order_value": constraints.MinOrderValue,
+		"qty_step": constraints.QtyStep,
+		"min_price_step": constraints.MinPriceStep,
+	}
+	
+	bot.logger.LogOrderPlacementDetails("Market", "Buy", bot.symbol, quantity, price, amount, constraintsMap)
 
 	// Apply minimum quantity constraint using floor to avoid overshooting
 	if constraints.QtyStep > 0 {
@@ -923,6 +992,34 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	order, err := bot.placeOrderWithRetry(orderParams, true) // true for market order
 	if err != nil {
 		bot.logger.Error("Failed to place buy order after retries: %v", err)
+		
+		// Log detailed error with context
+		errorContext := map[string]interface{}{
+			"order_type": "Market",
+			"side": "Buy",
+			"symbol": bot.symbol,
+			"quantity": quantity,
+			"price": price,
+			"value": amount,
+			"dca_level": currentDCALevelForSizing,
+		}
+		
+		bot.logger.LogErrorWithContext("Order Placement", err, errorContext)
+		
+		// Categorize order placement errors for better debugging
+		if strings.Contains(err.Error(), "timeout") {
+			bot.logger.Error("Order Error Category: Timeout error - exchange may be slow or overloaded")
+		} else if strings.Contains(err.Error(), "insufficient") {
+			bot.logger.Error("Order Error Category: Insufficient balance or margin error")
+		} else if strings.Contains(err.Error(), "constraint") {
+			bot.logger.Error("Order Error Category: Order constraint violation (quantity, price, etc.)")
+		} else if strings.Contains(err.Error(), "symbol") {
+			bot.logger.Error("Order Error Category: Invalid symbol or trading pair error")
+		} else if strings.Contains(err.Error(), "permission") {
+			bot.logger.Error("Order Error Category: API permission or authentication error")
+		} else {
+			bot.logger.Error("Order Error Category: Unknown order placement error: %v", err)
+		}
 		return
 	}
 
@@ -961,10 +1058,20 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 					if pos.Symbol == bot.symbol && pos.Side == "Buy" {
 						bot.logger.Info("🎯 Setting up initial TP orders - Position Size: %s, Avg Price: $%.4f", pos.Size, avgPrice)
 						
-						// Place TP orders with proper error handling (no panic recovery needed)
-						if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
-							bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
-						}
+		// Place TP orders with proper error handling and categorization
+		if err := bot.placeMultiLevelTPOrders(pos.Size, avgPrice); err != nil {
+			bot.logger.LogWarning("Multi-Level TP Setup", "Could not place TP orders: %v", err)
+			// Categorize TP order errors for better debugging
+			if strings.Contains(err.Error(), "timeout") {
+				bot.logger.LogWarning("TP Error Category", "Timeout error - exchange may be slow")
+			} else if strings.Contains(err.Error(), "insufficient") {
+				bot.logger.LogWarning("TP Error Category", "Insufficient balance or quantity error")
+			} else if strings.Contains(err.Error(), "constraint") {
+				bot.logger.LogWarning("TP Error Category", "Order constraint violation")
+			} else {
+				bot.logger.LogWarning("TP Error Category", "Unknown error type: %v", err)
+			}
+		}
 						break
 					}
 				}
@@ -1125,10 +1232,8 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 			Price:     formattedPrice,
 		}
 		
-		// Add debugging and timing for individual order placement
+		// Place TP limit order with timing
 		orderStartTime := time.Now()
-		// Placing TP Level order (logging reduced for readability)
-		
 		tpOrder, err := bot.placeOrderWithRetry(orderParams, false) // false for limit order
 		orderDuration := time.Since(orderStartTime)
 		
@@ -1152,6 +1257,12 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 				FilledQty: "0",
 			}
 		}()
+		
+		// Log detailed TP order information
+		quantityFloat, _ := parseFloat(formattedQty)
+		priceFloat, _ := parseFloat(formattedPrice)
+		bot.logger.LogTPOrderDetails(level, quantityFloat, priceFloat, levelPercent, tpOrder.OrderID, "PLACED")
+		
 		bot.logger.Info("✅ TP Level %d placed: %s %s at $%s (%.2f%%)", 
 			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100)
 		
@@ -1253,7 +1364,6 @@ func (bot *LiveBot) updateMultiLevelTPOrders(newAveragePrice float64) error {
 			continue
 		}
 		
-		// TP order cancelled (logging reduced for readability)
 		cancelledCount++
 	}
 	
@@ -1385,11 +1495,15 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		bot.positionMutex.Lock()
 		// Use the captured previousDCALevel (before position sync interference)
 		// This ensures proper DCA level progression regardless of sync side effects
+		oldDCALevel := bot.dcaLevel
 		if previousDCALevel == 0 {
 			bot.dcaLevel = 1 // First trade: 0 → 1
 		} else {
 			bot.dcaLevel = previousDCALevel + 1 // Subsequent trades: increment
 		}
+		
+		// Log state change for DCA level
+		bot.logger.LogStateChange("DCA Level", oldDCALevel, bot.dcaLevel, "Buy trade executed")
 		
 		// Keep DCA level progression simple and predictable
 		// No position-based validation that can cause level jumping
@@ -1418,14 +1532,24 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		if currentDCALevel >= 2 && bot.config.Strategy.AutoTPOrders {
 			fmt.Printf("🔄 DCA Level %d: Updating TP orders for new avg price $%.4f\n", currentDCALevel, avgPrice)
 			
-			// Update TP orders with proper error handling and timeout protection
-			if err := bot.updateMultiLevelTPOrders(avgPrice); err != nil {
-				bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
-				fmt.Printf("⚠️ TP update failed but bot continues normally: %v\n", err)
-				// Continue execution - don't let TP update failure stop the bot
+		// Update TP orders with proper error handling and timeout protection
+		if err := bot.updateMultiLevelTPOrders(avgPrice); err != nil {
+			bot.logger.LogWarning("TP Update", "Failed to update TP orders after DCA: %v", err)
+			// Categorize TP update errors for better debugging
+			if strings.Contains(err.Error(), "timeout") {
+				bot.logger.LogWarning("TP Update Error", "Timeout during TP order update - exchange may be slow")
+			} else if strings.Contains(err.Error(), "cancel") {
+				bot.logger.LogWarning("TP Update Error", "Failed to cancel existing TP orders")
+			} else if strings.Contains(err.Error(), "place") {
+				bot.logger.LogWarning("TP Update Error", "Failed to place new TP orders")
 			} else {
-				fmt.Printf("✅ TP orders updated successfully for DCA level %d\n", currentDCALevel)
+				bot.logger.LogWarning("TP Update Error", "Unknown TP update error: %v", err)
 			}
+			fmt.Printf("⚠️ TP update failed but bot continues normally: %v\n", err)
+			// Continue execution - don't let TP update failure stop the bot
+		} else {
+			fmt.Printf("✅ TP orders updated successfully for DCA level %d\n", currentDCALevel)
+		}
 		}
 		
 		// Sync strategy state after BUY trade to keep DCA level and entry price current
@@ -1442,13 +1566,15 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 			avgPrice := bot.averagePrice
 			bot.positionMutex.RUnlock()
 			
-			// Add zero-value checks to prevent division by zero
-			if avgPrice > 0 && currentPrice > 0 {
-				profitPercent := (currentPrice - avgPrice) / avgPrice * 100
-				
-				// Log cycle completion
-				bot.logger.LogCycleCompletion(currentPrice, avgPrice, profitPercent)
-			}
+	// Add defensive checks to prevent division by zero
+	if avgPrice > 0 && currentPrice > 0 {
+		profitPercent := (currentPrice - avgPrice) / avgPrice * 100
+		
+		// Log cycle completion
+		bot.logger.LogCycleCompletion(currentPrice, avgPrice, profitPercent)
+	} else {
+		bot.logger.LogWarning("Cycle Completion", "Cannot calculate profit percentage: avgPrice=%.4f, currentPrice=%.4f", avgPrice, currentPrice)
+	}
 		}
 		
 		// Clean up multi-level TP orders since position is closed
@@ -1936,7 +2062,6 @@ func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bo
 	
 	// If we don't have current avg price, we can't validate - be conservative
 	if currentAvgPrice <= 0 {
-		bot.logger.Info("🐛 DEBUG: No avg price available, checking if order is in tracked TP orders")
 		// Check if this order is in our internal tracking
 		bot.tpOrderMutex.RLock()
 		_, isTracked := bot.activeTPOrders[order.OrderID]
@@ -1946,7 +2071,6 @@ func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bo
 	
 	// TP orders should be ABOVE average price (for profit)
 	if orderPrice <= currentAvgPrice {
-		bot.logger.Info("🐛 DEBUG: Order price $%.4f <= avg price $%.4f, not a TP order", orderPrice, currentAvgPrice)
 		return false
 	}
 	
@@ -1956,8 +2080,6 @@ func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bo
 	maxProfitPercent := 15.0 // 15% maximum (beyond this is likely not a TP order)
 	
 	if profitPercent < minProfitPercent || profitPercent > maxProfitPercent {
-		bot.logger.Info("🐛 DEBUG: Order profit %.2f%% outside TP range (%.1f%%-%.1f%%), not a TP order", 
-			profitPercent, minProfitPercent, maxProfitPercent)
 		return false
 	}
 	
@@ -1973,7 +2095,6 @@ func (bot *LiveBot) isTPOrder(order *exchange.Order, currentAvgPrice float64) bo
 			qtyPercent := orderQty / fullPositionQty * 100
 			// TP orders are typically 10%-50% of position (not 100%+ which would be full exit)
 			if qtyPercent > 70 {
-				bot.logger.Info("🐛 DEBUG: Order quantity %.1f%% of position suggests full exit, not TP order", qtyPercent)
 				return false
 			}
 		}
@@ -2028,6 +2149,11 @@ func (bot *LiveBot) detectFilledTPOrders() []string {
 				bot.logger.Info("🎯 TP Order FILLED: Level %d at $%s (%.2f%%) - OrderID: %s", 
 					tpInfo.Level, tpInfo.Price, tpInfo.Percent*100, orderID)
 				
+				// Log detailed TP order fill information
+				quantityFloat, _ := parseFloat(tpInfo.Quantity)
+				priceFloat, _ := parseFloat(tpInfo.Price)
+				bot.logger.LogTPOrderDetails(tpInfo.Level, quantityFloat, priceFloat, tpInfo.Percent, orderID, "FILLED")
+				
 				// Move to filled orders tracking
 				tpInfo.Filled = true
 				bot.filledTPOrders[orderID] = tpInfo
@@ -2036,8 +2162,8 @@ func (bot *LiveBot) detectFilledTPOrders() []string {
 				filledDetail := fmt.Sprintf("TP%d@$%s(%.1f%%)", tpInfo.Level, tpInfo.Price, tpInfo.Percent*100)
 				filledOrderDetails = append(filledOrderDetails, filledDetail)
 			} else {
-				// Invalid TP order data - log debug info
-				bot.logger.Info("🐛 DEBUG: Invalid TP order data detected - Level: %d, Percent: %.4f, OrderID: %s", 
+				// Invalid TP order data - log warning
+				bot.logger.LogWarning("TP Fill Detection", "Invalid TP order data detected - Level: %d, Percent: %.4f, OrderID: %s", 
 					tpInfo.Level, tpInfo.Percent, orderID)
 			}
 			

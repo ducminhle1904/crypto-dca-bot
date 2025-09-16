@@ -112,24 +112,32 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	confidence := float64(buySignals) / float64(totalConfiguredIndicators)
 
 	if confidence >= s.minConfidence {
-		// Apply price threshold check for DCA entries
-		if s.spacingStrategy != nil && s.lastEntryPrice > 0 {
-			priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
-			requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
-			
-			if priceDrop < requiredThreshold {
-				strategyInfo := "Fixed Progressive"
-				if s.spacingStrategy != nil {
-					strategyInfo = s.spacingStrategy.GetName()
-				}
-				
-				return &TradeDecision{
-					Action: ActionHold,
-					Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s)", 
-						priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo),
-				}, nil
-			}
+	// Apply price threshold check for DCA entries with defensive checks
+	if s.spacingStrategy != nil && s.lastEntryPrice > 0 && currentPrice > 0 {
+		// Add defensive check to prevent division by zero
+		if s.lastEntryPrice <= 0 {
+			return &TradeDecision{
+				Action: ActionHold,
+				Reason: "Invalid last entry price for threshold calculation",
+			}, nil
 		}
+		
+		priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
+		requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
+		
+		if priceDrop < requiredThreshold {
+			strategyInfo := "Fixed Progressive"
+			if s.spacingStrategy != nil {
+				strategyInfo = s.spacingStrategy.GetName()
+			}
+			
+			return &TradeDecision{
+				Action: ActionHold,
+				Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s)", 
+					priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo),
+			}, nil
+		}
+	}
 
 		// Calculate net strength based on buy signals across ALL indicators  
 		netStrength := float64(buySignals) / float64(totalConfiguredIndicators)

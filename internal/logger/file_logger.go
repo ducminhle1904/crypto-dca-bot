@@ -17,21 +17,32 @@ type Logger struct {
 	logger     *log.Logger
 	mu         sync.Mutex
 	logDir     string
+	debugMode  bool
 }
 
 // LogLevel represents different types of log entries
 type LogLevel string
 
 const (
-	LogLevelInfo    LogLevel = "INFO"
-	LogLevelWarning LogLevel = "WARN"
-	LogLevelError   LogLevel = "ERROR"
-	LogLevelTrade   LogLevel = "TRADE"
-	LogLevelStatus  LogLevel = "STATUS"
+	LogLevelInfo     LogLevel = "INFO"
+	LogLevelWarning  LogLevel = "WARN"
+	LogLevelError    LogLevel = "ERROR"
+	LogLevelTrade    LogLevel = "TRADE"
+	LogLevelStatus   LogLevel = "STATUS"
+	LogLevelDebug    LogLevel = "DEBUG"
+	LogLevelStrategy LogLevel = "STRATEGY"
+	LogLevelExchange LogLevel = "EXCHANGE"
+	LogLevelDCA      LogLevel = "DCA"
+	LogLevelTP       LogLevel = "TP"
 )
 
 // NewLogger creates a new file logger for the specified symbol and interval
 func NewLogger(symbol, interval string) (*Logger, error) {
+	return NewLoggerWithDebug(symbol, interval, false)
+}
+
+// NewLoggerWithDebug creates a new file logger with debug mode control
+func NewLoggerWithDebug(symbol, interval string, debugMode bool) (*Logger, error) {
 	// Create log directory if it doesn't exist
 	logDir := "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -53,11 +64,12 @@ func NewLogger(symbol, interval string) (*Logger, error) {
 	logger := log.New(file, "", 0)
 
 	l := &Logger{
-		symbol:   symbol,
-		interval: interval,
-		logFile:  file,
-		logger:   logger,
-		logDir:   logDir,
+		symbol:    symbol,
+		interval:  interval,
+		logFile:   file,
+		logger:    logger,
+		logDir:    logDir,
+		debugMode: debugMode,
 	}
 
 	// Write session start header
@@ -230,6 +242,217 @@ func (l *Logger) LogError(context string, err error) {
 func (l *Logger) LogWarning(context string, message string, args ...interface{}) {
 	fullMessage := fmt.Sprintf(context+": "+message, args...)
 	l.Warning("%s", fullMessage)
+}
+
+// Debug logs a debug message
+func (l *Logger) Debug(format string, args ...interface{}) {
+	l.Log(LogLevelDebug, format, args...)
+}
+
+// Strategy logs strategy-related information
+func (l *Logger) Strategy(format string, args ...interface{}) {
+	l.Log(LogLevelStrategy, format, args...)
+}
+
+// Exchange logs exchange-related information
+func (l *Logger) Exchange(format string, args ...interface{}) {
+	l.Log(LogLevelExchange, format, args...)
+}
+
+// DCA logs DCA-specific information
+func (l *Logger) DCA(format string, args ...interface{}) {
+	l.Log(LogLevelDCA, format, args...)
+}
+
+// TP logs take profit order information
+func (l *Logger) TP(format string, args ...interface{}) {
+	l.Log(LogLevelTP, format, args...)
+}
+
+// LogDetailedMarketAnalysis logs comprehensive market analysis details
+func (l *Logger) LogDetailedMarketAnalysis(klines []interface{}, indicators map[string]interface{}, decision string, confidence float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	analysisLog := fmt.Sprintf(`
+[%s] [STRATEGY] ==================== MARKET ANALYSIS ====================
+📊 Data Points: %d | Decision: %s | Confidence: %.2f%%
+🔍 Indicator Results:`, timestamp, len(klines), decision, confidence*100)
+
+	for name, result := range indicators {
+		analysisLog += fmt.Sprintf(`
+  • %s: %v`, name, result)
+	}
+
+	analysisLog += "\n============================================================="
+	
+	l.logger.Println(analysisLog)
+}
+
+// LogDCASpacingDetails logs detailed DCA spacing calculations
+func (l *Logger) LogDCASpacingDetails(level int, currentPrice, lastEntryPrice, threshold float64, strategy string, context map[string]interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	spacingLog := fmt.Sprintf(`
+[%s] [DCA] ==================== DCA SPACING CALCULATION ====================
+🔄 DCA Level: %d | Strategy: %s
+💰 Current Price: $%.4f | Last Entry: $%.4f
+📏 Required Threshold: %.4f%% (%.6f)
+📊 Price Drop: %.4f%%`, 
+		timestamp, level, strategy, currentPrice, lastEntryPrice, threshold*100, threshold, 
+		((lastEntryPrice-currentPrice)/lastEntryPrice)*100)
+
+	if len(context) > 0 {
+		spacingLog += "\n🔍 Context Details:"
+		for key, value := range context {
+			spacingLog += fmt.Sprintf(`
+  • %s: %v`, key, value)
+		}
+	}
+
+	spacingLog += "\n============================================================="
+	
+	l.logger.Println(spacingLog)
+}
+
+// LogOrderPlacementDetails logs detailed order placement information
+func (l *Logger) LogOrderPlacementDetails(orderType, side, symbol string, quantity, price, value float64, constraints map[string]interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	orderLog := fmt.Sprintf(`
+[%s] [EXCHANGE] ==================== ORDER PLACEMENT ====================
+📋 Type: %s | Side: %s | Symbol: %s
+📦 Quantity: %.6f | Price: $%.4f | Value: $%.2f
+🔧 Constraints:`, 
+		timestamp, orderType, side, symbol, quantity, price, value)
+
+	for key, value := range constraints {
+		orderLog += fmt.Sprintf(`
+  • %s: %v`, key, value)
+	}
+
+	orderLog += "\n============================================================="
+	
+	l.logger.Println(orderLog)
+}
+
+// LogTPOrderDetails logs detailed take profit order information
+func (l *Logger) LogTPOrderDetails(level int, quantity, price, percent float64, orderID string, status string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	tpLog := fmt.Sprintf(`
+[%s] [TP] ==================== TP ORDER %s ====================
+🎯 Level: %d | Order ID: %s
+📦 Quantity: %.6f | Price: $%.4f | Percent: %.2f%%
+📊 Status: %s
+=============================================================`, 
+		timestamp, status, level, orderID, quantity, price, percent*100, status)
+	
+	l.logger.Println(tpLog)
+}
+
+// LogErrorWithContext logs detailed error information with context
+func (l *Logger) LogErrorWithContext(context string, err error, additionalInfo map[string]interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	errorLog := fmt.Sprintf(`
+[%s] [ERROR] ==================== ERROR DETAILS ====================
+🚨 Context: %s
+❌ Error: %v`, timestamp, context, err)
+
+	if len(additionalInfo) > 0 {
+		errorLog += "\n🔍 Additional Info:"
+		for key, value := range additionalInfo {
+			errorLog += fmt.Sprintf(`
+  • %s: %v`, key, value)
+		}
+	}
+
+	errorLog += "\n============================================================="
+	
+	l.logger.Println(errorLog)
+}
+
+// LogPerformanceMetrics logs performance and timing information
+func (l *Logger) LogPerformanceMetrics(operation string, duration time.Duration, details map[string]interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	perfLog := fmt.Sprintf(`
+[%s] [DEBUG] ==================== PERFORMANCE METRICS ====================
+⚡ Operation: %s | Duration: %v`, timestamp, operation, duration)
+
+	if len(details) > 0 {
+		perfLog += "\n📊 Details:"
+		for key, value := range details {
+			perfLog += fmt.Sprintf(`
+  • %s: %v`, key, value)
+		}
+	}
+
+	perfLog += "\n============================================================="
+	
+	l.logger.Println(perfLog)
+}
+
+// LogStateChange logs important state changes
+func (l *Logger) LogStateChange(component string, oldState, newState interface{}, reason string) {
+	if !l.debugMode {
+		return
+	}
+	
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	
+	stateLog := fmt.Sprintf(`
+[%s] [DEBUG] ==================== STATE CHANGE ====================
+🔄 Component: %s
+📤 Old State: %v
+📥 New State: %v
+💭 Reason: %s
+=============================================================`, 
+		timestamp, component, oldState, newState, reason)
+	
+	l.logger.Println(stateLog)
+}
+
+// SetDebugMode enables or disables debug logging
+func (l *Logger) SetDebugMode(enabled bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugMode = enabled
+}
+
+// IsDebugMode returns whether debug mode is enabled
+func (l *Logger) IsDebugMode() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.debugMode
+}
+
+// LogDebugOnly logs only when debug mode is enabled
+func (l *Logger) LogDebugOnly(format string, args ...interface{}) {
+	if l.debugMode {
+		l.Debug(format, args...)
+	}
 }
 
 // Close closes the log file
