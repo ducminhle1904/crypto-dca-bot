@@ -1,40 +1,49 @@
 {
   "strategy": {
-    "symbol": "BTCUSDT",
+    "symbol": "HYPEUSDT",
     "category": "linear",
     "base_amount": 40.0,
     "max_multiplier": 2.0,
     "leverage": 10.0,
-    "allocation_percentage": 0.1,
+    "allocation_percentage": 0.5,
     "max_position_size": 400.0,
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.02,
+    "tp_percent": 0.035,
     "use_tp_levels": true,
     "auto_tp_orders": true,
+    "tp_levels": 5,
     "tp_quantity": 0.2,
     "cycle": true,
-    "indicators": ["hull_ma", "stochastic_rsi", "keltner"],
+    "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "dca_spacing": {
-      "strategy": "fixed",
+      "strategy": "volatility_adaptive",
       "parameters": {
-        "base_threshold": 0.02,
-        "threshold_multiplier": 1.1,
-        "max_threshold": 0.08,
-        "min_threshold": 0.005
+        "atr_period": 10,
+        "base_threshold": 0.005,
+        "level_multiplier": 1.05,
+        "max_threshold": 0.05,
+        "min_threshold": 0.003,
+        "volatility_sensitivity": 2.5
       }
     },
     "hull_ma": {
-      "period": 20
+      "period": 12
     },
-    "stochastic_rsi": {
-      "period": 14,
-      "overbought": 80.0,
-      "oversold": 20.0
+    "mfi": {
+      "period": 12,
+      "oversold": 30.0,
+      "overbought": 75.0
     },
     "keltner_channels": {
-      "period": 20,
-      "multiplier": 2.0
+      "period": 50,
+      "multiplier": 1.5
+    },
+    "wavetrend": {
+      "n1": 8,
+      "n2": 18,
+      "overbought": 70.0,
+      "oversold": -50.0
     }
   },
   "exchange": {
@@ -47,17 +56,17 @@
     }
   },
   "portfolio": {
-    "total_balance": 500.0,
+    "total_balance": 1000.0,
     "allocation_strategy": "equal_weight",
-    "shared_state_file": "portfolio_state_test.json",
+    "shared_state_file": "portfolio_aave_hype_state.json",
     "max_total_exposure": 3.0,
     "max_drawdown_percent": 25.0,
-    "rebalance_frequency": "1h",
-    "risk_limit_per_bot": 0.2,
+    "rebalance_frequency": "4h",
+    "risk_limit_per_bot": 0.25,
     "emergency_stop_enabled": true
   },
   "risk": {
-    "initial_balance": 500.0,
+    "initial_balance": 1000.0,
     "commission": 0.0005
   },
   "notifications": {

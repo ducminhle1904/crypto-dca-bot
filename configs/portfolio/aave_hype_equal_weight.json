@@ -1,0 +1,40 @@
+{
+  "description": "Two-bot portfolio: AAVE (50%) + HYPE (50%) with equal weight strategy and 10x leverage",
+  "bots": [
+    {
+      "bot_id": "aave_bot",
+      "config_file": "configs/portfolio/individual/aave_10x.json",
+      "enabled": true
+    },
+    {
+      "bot_id": "hype_bot",
+      "config_file": "configs/portfolio/individual/hype_10x.json",
+      "enabled": true
+    }
+  ],
+  "portfolio": {
+    "total_balance": 1000.0,
+    "allocation_strategy": "equal_weight",
+    "shared_state_file": "portfolio_aave_hype_state.json",
+    "max_total_exposure": 3.0,
+    "max_drawdown_percent": 25.0,
+    "rebalance_frequency": "4h",
+    "risk_limit_per_bot": 0.25,
+    "emergency_stop_enabled": true,
+    "profit_sharing": {
+      "enabled": true,
+      "method": "equal_weight",
+      "rebalance_threshold": 0.05
+    }
+  },
+  "monitoring": {
+    "heartbeat_interval": "60s",
+    "sync_interval": "60s",
+    "health_check_interval": "60s"
+  },
+  "alerts": {
+    "portfolio_drawdown_threshold": 0.2,
+    "individual_bot_loss_threshold": 0.15,
+    "correlation_spike_threshold": 0.75
+  }
+}

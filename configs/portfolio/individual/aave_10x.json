@@ -1,0 +1,75 @@
+{
+  "strategy": {
+    "symbol": "AAVEUSDT",
+    "category": "linear",
+    "base_amount": 40.0,
+    "max_multiplier": 2.5,
+    "leverage": 10.0,
+    "allocation_percentage": 0.5,
+    "max_position_size": 500.0,
+    "interval": "5m",
+    "window_size": 100,
+    "tp_percent": 0.07,
+    "use_tp_levels": true,
+    "auto_tp_orders": true,
+    "tp_levels": 5,
+    "tp_quantity": 0.2,
+    "cycle": true,
+    "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
+    "dca_spacing": {
+      "strategy": "volatility_adaptive",
+      "parameters": {
+        "atr_period": 21,
+        "base_threshold": 0.008,
+        "level_multiplier": 1.05,
+        "max_threshold": 0.05,
+        "min_threshold": 0.003,
+        "volatility_sensitivity": 1.2
+      }
+    },
+    "hull_ma": {
+      "period": 12
+    },
+    "mfi": {
+      "period": 16,
+      "oversold": 30.0,
+      "overbought": 75.0
+    },
+    "keltner_channels": {
+      "period": 30,
+      "multiplier": 1.5
+    },
+    "wavetrend": {
+      "n1": 20,
+      "n2": 28,
+      "overbought": 70.0,
+      "oversold": -70.0
+    }
+  },
+  "exchange": {
+    "name": "bybit",
+    "bybit": {
+      "api_key": "${BYBIT_API_KEY}",
+      "api_secret": "${BYBIT_API_SECRET}",
+      "testnet": false,
+      "demo": true
+    }
+  },
+  "portfolio": {
+    "total_balance": 1000.0,
+    "allocation_strategy": "equal_weight",
+    "shared_state_file": "portfolio_aave_hype_state.json",
+    "max_total_exposure": 3.0,
+    "max_drawdown_percent": 25.0,
+    "rebalance_frequency": "4h",
+    "risk_limit_per_bot": 0.25,
+    "emergency_stop_enabled": true
+  },
+  "risk": {
+    "initial_balance": 1000.0,
+    "commission": 0.0005
+  },
+  "notifications": {
+    "enabled": false
+  }
+}

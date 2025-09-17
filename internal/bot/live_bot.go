@@ -49,6 +49,7 @@ type LiveBot struct {
 	// Portfolio management (new)
 	portfolioManager portfolio.PortfolioManager
 	leverageCalc     portfolio.LeverageCalculator
+	syncManager      *portfolio.SyncManager
 	botID            string
 	
 	// Trading parameters extracted from config
@@ -154,6 +155,15 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		stateManager := storage.NewFileStorage(stateFile)
 		bot.portfolioManager = portfolio.NewPortfolioManager(portfolioConfig, stateManager)
 		
+		// Create sync manager for real-time coordination
+		// Extract allocation manager from portfolio manager (would need interface update)
+		// For now, create a basic sync manager
+		bot.syncManager = portfolio.NewSyncManager(botID, stateManager, nil) // Would pass allocation manager
+		
+		// Add default event handler to sync manager
+		eventHandler := portfolio.NewDefaultEventHandler(bot.syncManager)
+		bot.syncManager.AddEventHandler(eventHandler)
+		
 		// Register this bot with the portfolio manager
 		botConfig := portfolio.BotConfig{
 			Symbol:               symbol,
@@ -174,6 +184,12 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		if err := bot.portfolioManager.RegisterBot(botID, botConfig); err != nil {
 			fileLogger.Close()
 			return nil, fmt.Errorf("failed to register bot with portfolio manager: %w", err)
+		}
+		
+		// Start sync manager
+		if err := bot.syncManager.Start(); err != nil {
+			fileLogger.Close()
+			return nil, fmt.Errorf("failed to start sync manager: %w", err)
 		}
 		
 		fileLogger.Info("✅ Portfolio management enabled - Bot ID: %s", botID)
@@ -373,6 +389,28 @@ func (bot *LiveBot) Stop() {
 			fmt.Printf("⚠️ Error disconnecting: %v\n", err)
 			if bot.logger != nil {
 				bot.logger.Error("Error disconnecting from exchange: %v", err)
+			}
+		}
+		
+		// Stop sync manager if portfolio mode is enabled
+		if bot.syncManager != nil {
+			fmt.Printf("🔄 Stopping sync manager...\n")
+			if err := bot.syncManager.Stop(); err != nil {
+				fmt.Printf("⚠️ Error stopping sync manager: %v\n", err)
+				if bot.logger != nil {
+					bot.logger.Error("Error stopping sync manager: %v", err)
+				}
+			}
+		}
+		
+		// Close portfolio manager if enabled
+		if bot.portfolioManager != nil {
+			fmt.Printf("💼 Closing portfolio manager...\n")
+			if err := bot.portfolioManager.Close(); err != nil {
+				fmt.Printf("⚠️ Error closing portfolio manager: %v\n", err)
+				if bot.logger != nil {
+					bot.logger.Error("Error closing portfolio manager: %v", err)
+				}
 			}
 		}
 		
@@ -583,6 +621,22 @@ func (bot *LiveBot) syncExistingPosition() error {
 				// Show brief console message
 				fmt.Printf("🔄 Existing position synced: $%.2f @ $%.4f (see log for details)\n", positionValue, avgPrice)
 				
+				// Notify sync manager of position update if in portfolio mode
+				if bot.syncManager != nil {
+					leverage := bot.config.Strategy.Leverage
+					if err := bot.syncManager.UpdatePosition(positionValue, avgPrice, leverage); err != nil {
+						bot.logger.LogWarning("Sync manager", "Failed to update position: %v", err)
+					}
+				}
+				
+				// Update portfolio manager if enabled
+				if bot.portfolioManager != nil {
+					leverage := bot.config.Strategy.Leverage
+					if err := bot.portfolioManager.UpdatePosition(bot.botID, positionValue, avgPrice, leverage); err != nil {
+						bot.logger.LogWarning("Portfolio manager", "Failed to update position: %v", err)
+					}
+				}
+				
 				// Sync strategy state after position sync
 				bot.syncStrategyState()
 				
@@ -604,6 +658,239 @@ func (bot *LiveBot) syncExistingPosition() error {
 	bot.syncStrategyState()
 	
 	return nil
+}
+
+// ==================== ENHANCED VALIDATION METHODS ====================
+
+// validateTradeContext performs comprehensive pre-trade validation
+func (bot *LiveBot) validateTradeContext(expectedAmount float64) error {
+	ctx := context.Background()
+
+	// Get real-time exchange data for validation
+	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	if err != nil {
+		return fmt.Errorf("failed to get positions for validation: %w", err)
+	}
+
+	constraints, err := bot.exchange.GetTradingConstraints(ctx, bot.category, bot.symbol)
+	if err != nil {
+		return fmt.Errorf("failed to get trading constraints: %w", err)
+	}
+
+	balance, err := bot.exchange.GetTradableBalance(ctx, exchange.AccountTypeUnified, "USDT")
+	if err != nil {
+		return fmt.Errorf("failed to get real balance: %w", err)
+	}
+
+	// Find our position for validation
+	var exchangePosition *exchange.Position
+	for _, pos := range positions {
+		if pos.Symbol == bot.symbol {
+			exchangePosition = &pos
+			break
+		}
+	}
+
+	// Validate leverage consistency
+	if exchangePosition != nil {
+		exchangeLeverage, err := helperParseFloat(exchangePosition.Leverage)
+		if err == nil && exchangeLeverage > 0 {
+			configLeverage := bot.config.Strategy.Leverage
+			if math.Abs(exchangeLeverage - configLeverage) > 0.1 { // Allow 0.1 tolerance
+				return fmt.Errorf("leverage mismatch: config=%.1fx, exchange=%.1fx", 
+					configLeverage, exchangeLeverage)
+			}
+		}
+	}
+
+	// Validate position size accuracy
+	if exchangePosition != nil {
+		exchangeValue, err := helperParseFloat(exchangePosition.PositionValue)
+		if err == nil {
+			bot.positionMutex.RLock()
+			calculatedValue := bot.currentPosition
+			bot.positionMutex.RUnlock()
+			
+			// Allow 1% tolerance for position value differences
+			tolerance := math.Max(1.0, calculatedValue * 0.01)
+			if math.Abs(calculatedValue - exchangeValue) > tolerance {
+				bot.logger.LogWarning("Position sync", "Position value drift detected: bot=%.2f, exchange=%.2f, adjusting", 
+					calculatedValue, exchangeValue)
+				
+				// Auto-correct bot state to match exchange
+				bot.positionMutex.Lock()
+				bot.currentPosition = exchangeValue
+				if avgPrice, err := helperParseFloat(exchangePosition.AvgPrice); err == nil {
+					bot.averagePrice = avgPrice
+				}
+				bot.positionMutex.Unlock()
+			}
+		}
+	}
+
+	// Validate available margin for the trade
+	configLeverage := bot.config.Strategy.Leverage
+	requiredMargin := bot.leverageCalc.CalculateRequiredMargin(expectedAmount, configLeverage)
+	
+	// Calculate already used margin
+	var usedMargin float64
+	if exchangePosition != nil {
+		if posIM, err := helperParseFloat(exchangePosition.PositionIM); err == nil {
+			usedMargin = posIM
+		}
+	}
+	
+	availableMargin := balance - usedMargin
+	
+	// For portfolio mode, also check allocated balance
+	if bot.portfolioManager != nil {
+		portfolioAvailable, err := bot.portfolioManager.GetAvailableBalance(bot.botID)
+		if err == nil {
+			// Use the more restrictive limit
+			if portfolioAvailable < availableMargin {
+				availableMargin = portfolioAvailable
+			}
+		}
+	}
+	
+	if requiredMargin > availableMargin {
+		return fmt.Errorf("insufficient margin: required=%.2f, available=%.2f", 
+			requiredMargin, availableMargin)
+	}
+
+	// Validate against exchange constraints
+	quantity := expectedAmount / bot.config.Strategy.Leverage // Approximate quantity for validation
+	if quantity < constraints.MinOrderQty {
+		return fmt.Errorf("order quantity %.6f below minimum %.6f", quantity, constraints.MinOrderQty)
+	}
+	
+	if expectedAmount < constraints.MinOrderValue {
+		return fmt.Errorf("order value %.2f below minimum %.2f", expectedAmount, constraints.MinOrderValue)
+	}
+
+	bot.logger.Info("✅ Pre-trade validation passed: leverage=%.1fx, margin=%.2f/%.2f, constraints OK", 
+		configLeverage, requiredMargin, availableMargin)
+
+	return nil
+}
+
+// validateTradeExecution performs post-trade validation
+func (bot *LiveBot) validateTradeExecution(expectedAmount float64, order *exchange.Order) error {
+	if order == nil {
+		return fmt.Errorf("order is nil")
+	}
+
+	actualValue, err := helperParseFloat(order.CumExecValue)
+	if err != nil {
+		bot.logger.LogWarning("Trade validation", "Could not parse executed value: %v", err)
+		return nil // Don't fail on parsing errors
+	}
+
+	actualPrice, err := helperParseFloat(order.AvgPrice)
+	if err != nil {
+		bot.logger.LogWarning("Trade validation", "Could not parse avg price: %v", err)
+		return nil
+	}
+
+	// Check execution value variance (within 2% tolerance)
+	if actualValue > 0 && expectedAmount > 0 {
+		variance := math.Abs(actualValue - expectedAmount) / expectedAmount
+		if variance > 0.02 { // 2% tolerance
+			bot.logger.LogWarning("Trade execution", "Trade execution variance: expected=%.2f, actual=%.2f (%.1f%% difference)", 
+				expectedAmount, actualValue, variance*100)
+		}
+	}
+
+	// Check slippage (if we have reference price)
+	bot.positionMutex.RLock()
+	lastKnownPrice := bot.averagePrice // Use average price as reference
+	bot.positionMutex.RUnlock()
+	
+	if lastKnownPrice > 0 && actualPrice > 0 {
+		slippage := math.Abs(actualPrice - lastKnownPrice) / lastKnownPrice
+		if slippage > 0.005 { // 0.5% slippage warning
+			bot.logger.LogWarning("Trade slippage", "High slippage detected: expected~%.2f, actual=%.2f (%.2f%% slippage)", 
+				lastKnownPrice, actualPrice, slippage*100)
+		}
+	}
+
+	// Log successful execution details
+	bot.logger.Info("💯 Trade execution validated: value=%.2f, price=%.2f, order=%s", 
+		actualValue, actualPrice, order.OrderID)
+
+	return nil
+}
+
+// validatePortfolioSync ensures portfolio state matches exchange reality
+func (bot *LiveBot) validatePortfolioSync() error {
+	if bot.portfolioManager == nil {
+		return nil // Single-bot mode, skip portfolio validation
+	}
+
+	ctx := context.Background()
+	
+	// Get real exchange position
+	positions, err := bot.exchange.GetPositions(ctx, bot.category, bot.symbol)
+	if err != nil {
+		return fmt.Errorf("failed to get positions for portfolio validation: %w", err)
+	}
+
+	// Find our position
+	var exchangePosition *exchange.Position
+	for _, pos := range positions {
+		if pos.Symbol == bot.symbol {
+			exchangePosition = &pos
+			break
+		}
+	}
+
+	if exchangePosition != nil {
+		// Extract exchange data
+		exchangeValue, _ := helperParseFloat(exchangePosition.PositionValue)
+		exchangeAvgPrice, _ := helperParseFloat(exchangePosition.AvgPrice)
+		exchangeLeverage, _ := helperParseFloat(exchangePosition.Leverage)
+		exchangeMarginUsed, _ := helperParseFloat(exchangePosition.PositionIM)
+
+		// Update portfolio with accurate exchange data
+		if exchangeValue > 0 && exchangeAvgPrice > 0 && exchangeLeverage > 0 {
+			err := bot.portfolioManager.UpdatePosition(bot.botID, 
+				exchangeValue, exchangeAvgPrice, exchangeLeverage)
+			if err != nil {
+				return fmt.Errorf("portfolio update failed: %w", err)
+			}
+		}
+
+		// Validate portfolio allocation consistency
+		allocation, err := bot.portfolioManager.GetAvailableBalance(bot.botID)
+		if err != nil {
+			return fmt.Errorf("failed to get portfolio allocation: %w", err)
+		}
+
+		if exchangeMarginUsed > allocation {
+			bot.logger.LogWarning("Portfolio allocation", "Portfolio over-allocated: margin_used=%.2f > allocated=%.2f", 
+				exchangeMarginUsed, allocation)
+			// Don't return error, just warn - this might be temporary
+		}
+
+		bot.logger.Info("💼 Portfolio validation passed: position=%.2f, margin=%.2f/%.2f", 
+			exchangeValue, exchangeMarginUsed, allocation)
+	}
+
+	return nil
+}
+
+// helperParseFloat helper function for parsing exchange string values  
+func helperParseFloat(value string) (float64, error) {
+	if value == "" || value == "0" {
+		return 0, nil
+	}
+	
+	result, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse float value '%s': %w", value, err)
+	}
+	
+	return result, nil
 }
 
 // tradingLoop runs the main trading logic
@@ -683,7 +970,7 @@ func (bot *LiveBot) checkAndTrade() {
 	}
 
 	// Sync position data
-	if err := bot.syncPositionData(); err != nil {
+	if err := bot.syncExistingPosition(); err != nil {
 		bot.logger.LogWarning("Could not sync position data", "%v", err)
 		// Continue despite position sync failure
 	}
@@ -785,6 +1072,14 @@ func (bot *LiveBot) checkAndTrade() {
 	// Execute trading action (logging moved to after validation checks)
 	if action != "HOLD" {
 		bot.executeTrade(decision, action, currentPrice)
+	}
+
+	// ENHANCED VALIDATION: Periodic portfolio state validation
+	// Run every 10th cycle to avoid performance impact
+	if bot.holdLogCounter%10 == 0 {
+		if err := bot.validatePortfolioSync(); err != nil {
+			bot.logger.LogWarning("Periodic portfolio validation", "Portfolio state validation failed: %v", err)
+		}
 	}
 }
 
@@ -1058,6 +1353,18 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	bot.logger.Info("💡 Margin Check: Position $%.2f @ %.1fx leverage = $%.2f margin required (Available: $%.2f)", 
 		amount, leverage, requiredMargin, availableBalance)
 
+	// ENHANCED VALIDATION: Comprehensive pre-trade validation
+	if err := bot.validateTradeContext(amount); err != nil {
+		bot.logger.LogWarning("Enhanced validation failed", "Trade blocked: %v", err)
+		return
+	}
+
+	// Portfolio state validation for multi-bot coordination
+	if err := bot.validatePortfolioSync(); err != nil {
+		bot.logger.LogWarning("Portfolio validation failed", "Trade may proceed but with warnings: %v", err)
+		// Don't return - just warn, as this might be temporary
+	}
+
 	// Place order with timeout and retry
 	orderParams := exchange.OrderParams{
 		Category:  bot.category,
@@ -1110,6 +1417,12 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 
 	// Log order placement result (execution details will be synced from exchange)
 	bot.logger.Info("📤 Order placed successfully - ID: %s, syncing actual execution from exchange...", order.OrderID)
+
+	// ENHANCED VALIDATION: Post-trade execution validation
+	if err := bot.validateTradeExecution(amount, order); err != nil {
+		bot.logger.LogWarning("Post-trade validation", "Execution validation failed: %v", err)
+		// Don't return - trade already executed, just log for monitoring
+	}
 
 	// Sync with exchange data first to get actual executed values
 	bot.syncAfterTrade(order, "BUY")
@@ -1627,6 +1940,22 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 		
 		bot.logger.LogTradeExecution(tradeType, order.OrderID, executedQty, executedPrice, executedValue, currentDCALevel, currentPosition, avgPrice)
 		
+		// Notify sync manager of position update if in portfolio mode
+		if bot.syncManager != nil {
+			leverage := bot.config.Strategy.Leverage
+			if err := bot.syncManager.UpdatePosition(currentPosition, avgPrice, leverage); err != nil {
+				bot.logger.LogWarning("Sync manager", "Failed to update position after %s: %v", tradeType, err)
+			}
+		}
+		
+		// Update portfolio manager if enabled
+		if bot.portfolioManager != nil {
+			leverage := bot.config.Strategy.Leverage
+			if err := bot.portfolioManager.UpdatePosition(bot.botID, currentPosition, avgPrice, leverage); err != nil {
+				bot.logger.LogWarning("Portfolio manager", "Failed to update position after %s: %v", tradeType, err)
+			}
+		}
+		
 		// Update multi-level TP orders for DCA trades (level >= 2) where average price changes
 		// Note: We do this in syncAfterTrade to ensure it happens after position sync
 		// Level 1 TP orders are placed by executeBuy, levels 2+ need updates due to new average price
@@ -1671,8 +2000,35 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 	if avgPrice > 0 && currentPrice > 0 {
 		profitPercent := (currentPrice - avgPrice) / avgPrice * 100
 		
+		// Calculate profit in dollar terms before position reset
+		bot.positionMutex.RLock()
+		positionValue := bot.currentPosition
+		totalInvested := bot.totalInvested
+		bot.positionMutex.RUnlock()
+		
+		// Simple profit calculation: current_value - invested_value
+		profitAmount := 0.0
+		if totalInvested > 0 {
+			profitAmount = positionValue * (currentPrice / avgPrice) - totalInvested
+		}
+		
 		// Log cycle completion
 		bot.logger.LogCycleCompletion(currentPrice, avgPrice, profitPercent)
+		
+		// Notify sync manager of profit if in portfolio mode
+		if bot.syncManager != nil && profitAmount != 0 {
+			// Enable profit sharing for better portfolio coordination
+			if err := bot.syncManager.RecordProfit(profitAmount, true); err != nil {
+				bot.logger.LogWarning("Sync manager", "Failed to record profit after SELL: %v", err)
+			}
+		}
+		
+		// Record profit with portfolio manager if enabled
+		if bot.portfolioManager != nil && profitAmount != 0 {
+			if err := bot.portfolioManager.RecordProfit(bot.botID, profitAmount); err != nil {
+				bot.logger.LogWarning("Portfolio manager", "Failed to record profit after SELL: %v", err)
+			}
+		}
 	} else {
 		bot.logger.LogWarning("Cycle Completion", "Cannot calculate profit percentage: avgPrice=%.4f, currentPrice=%.4f", avgPrice, currentPrice)
 	}
