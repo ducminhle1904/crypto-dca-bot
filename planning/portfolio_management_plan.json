@@ -1,0 +1,431 @@
+{
+  "portfolio_management_plan": {
+    "title": "Multi-Bot Portfolio Management Implementation Plan",
+    "version": "1.0",
+    "created_date": "2025-09-16",
+    "status": "planned",
+    "priority": "high",
+    "estimated_duration": "5-7 days",
+
+    "current_issues": [
+      "Each bot treats position value as required balance (ignores leverage)",
+      "No coordination between multiple bot instances",
+      "Isolated balance tracking leads to over-leveraging risk",
+      "Profits trapped in individual bots (no redistribution)",
+      "No portfolio-level risk management",
+      "Balance validation doesn't account for leverage ratio",
+      "Missing real-time sync between concurrent bot instances"
+    ],
+
+    "goals": [
+      "Implement proper leverage-aware margin calculations",
+      "Create centralized portfolio management system",
+      "Enable safe multi-bot operation with shared balance pool",
+      "Add dynamic profit redistribution across strategies",
+      "Implement portfolio-level risk controls",
+      "Support real-time balance synchronization",
+      "Maintain backward compatibility with single-bot operation"
+    ],
+
+    "architecture_overview": {
+      "core_components": [
+        "PortfolioManager: Centralized coordination and allocation",
+        "LeverageCalculator: Proper margin requirement calculations",
+        "StateManager: Shared state persistence (file/Redis)",
+        "AllocationManager: Balance distribution and rebalancing",
+        "RiskManager: Portfolio-level risk controls",
+        "SyncManager: Real-time coordination between bots"
+      ],
+      "design_patterns": [
+        "Factory Pattern: Portfolio manager creation",
+        "Strategy Pattern: Different allocation strategies",
+        "Observer Pattern: State change notifications",
+        "Singleton Pattern: Shared state management"
+      ]
+    },
+
+    "target_structure": {
+      "internal/portfolio": {
+        "description": "Portfolio management core components",
+        "files": [
+          "manager.go",
+          "interfaces.go",
+          "allocation.go",
+          "state.go",
+          "risk.go",
+          "sync.go",
+          "leverage.go"
+        ],
+        "interfaces": [
+          "PortfolioManager",
+          "AllocationStrategy",
+          "StateManager",
+          "RiskManager",
+          "SyncManager"
+        ],
+        "responsibilities": [
+          "Centralized balance allocation and tracking",
+          "Cross-bot profit redistribution",
+          "Portfolio-level risk management",
+          "Real-time state synchronization",
+          "Leverage-aware margin calculations"
+        ]
+      },
+
+      "internal/portfolio/storage": {
+        "description": "Portfolio state persistence",
+        "files": [
+          "file_storage.go",
+          "redis_storage.go",
+          "memory_storage.go",
+          "factory.go"
+        ],
+        "interfaces": ["StorageProvider"],
+        "responsibilities": [
+          "File-based portfolio state persistence",
+          "Redis-based high-performance storage",
+          "In-memory storage for testing",
+          "Storage provider factory"
+        ]
+      },
+
+      "internal/portfolio/strategies": {
+        "description": "Portfolio allocation strategies",
+        "files": [
+          "equal_weight.go",
+          "performance_based.go",
+          "risk_parity.go",
+          "custom.go"
+        ],
+        "interfaces": ["AllocationStrategy"],
+        "responsibilities": [
+          "Equal weight allocation across all bots",
+          "Performance-based dynamic allocation",
+          "Risk-adjusted allocation strategies",
+          "Custom user-defined allocations"
+        ]
+      },
+
+      "configs/portfolio": {
+        "description": "Portfolio configuration templates",
+        "files": [
+          "example_2bot.json",
+          "example_5bot.json",
+          "high_leverage.json",
+          "conservative.json"
+        ],
+        "responsibilities": [
+          "Multi-bot configuration examples",
+          "Different risk profile templates",
+          "Leverage and allocation presets"
+        ]
+      }
+    },
+
+    "implementation_phases": {
+      "phase_1": {
+        "name": "Core Infrastructure & Leverage Fix",
+        "duration": "1-2 days",
+        "priority": "critical",
+        "description": "Fix immediate leverage calculation issues and create basic portfolio infrastructure",
+
+        "tasks": [
+          {
+            "id": "P1T1",
+            "name": "Create portfolio package structure",
+            "files": [
+              "internal/portfolio/interfaces.go",
+              "internal/portfolio/manager.go"
+            ],
+            "description": "Create basic portfolio management interfaces and core manager",
+            "effort": "2h"
+          },
+          {
+            "id": "P1T2",
+            "name": "Implement leverage calculator",
+            "files": ["internal/portfolio/leverage.go"],
+            "description": "Create proper margin calculation functions accounting for leverage",
+            "effort": "3h"
+          },
+          {
+            "id": "P1T3",
+            "name": "Fix balance validation in live bot",
+            "files": ["internal/bot/live_bot.go"],
+            "description": "Update executeBuy() to use margin requirements instead of position value",
+            "effort": "2h"
+          },
+          {
+            "id": "P1T4",
+            "name": "Add leverage configuration",
+            "files": ["internal/config/live_bot_config.go"],
+            "description": "Add leverage and portfolio settings to bot configuration",
+            "effort": "1h"
+          },
+          {
+            "id": "P1T5",
+            "name": "Create file-based state manager",
+            "files": ["internal/portfolio/storage/file_storage.go"],
+            "description": "Basic file-based portfolio state persistence",
+            "effort": "3h"
+          }
+        ],
+
+        "validation": [
+          "Single bot works with leverage-aware calculations",
+          "Portfolio state can be saved/loaded from file",
+          "Configuration validates properly with new fields"
+        ]
+      },
+
+      "phase_2": {
+        "name": "Multi-Bot Coordination",
+        "duration": "2-3 days",
+        "priority": "high",
+        "description": "Enable safe multi-bot operation with shared balance pool",
+
+        "tasks": [
+          {
+            "id": "P2T1",
+            "name": "Implement allocation manager",
+            "files": ["internal/portfolio/allocation.go"],
+            "description": "Balance allocation and tracking across multiple bots",
+            "effort": "4h"
+          },
+          {
+            "id": "P2T2",
+            "name": "Create sync manager",
+            "files": ["internal/portfolio/sync.go"],
+            "description": "Real-time coordination between bot instances",
+            "effort": "5h"
+          },
+          {
+            "id": "P2T3",
+            "name": "Update live bot integration",
+            "files": ["internal/bot/live_bot.go"],
+            "description": "Integrate portfolio manager into live bot workflow",
+            "effort": "4h"
+          },
+          {
+            "id": "P2T4",
+            "name": "Create portfolio configuration templates",
+            "files": [
+              "configs/portfolio/example_2bot.json",
+              "configs/portfolio/example_5bot.json"
+            ],
+            "description": "Working multi-bot configuration examples",
+            "effort": "2h"
+          },
+          {
+            "id": "P2T5",
+            "name": "Add portfolio CLI commands",
+            "files": ["cmd/live-bot-dca/main.go"],
+            "description": "CLI flags for portfolio mode and bot identification",
+            "effort": "2h"
+          }
+        ],
+
+        "validation": [
+          "Two bots can run simultaneously without conflicts",
+          "Balance allocation respected across instances",
+          "State synchronization works correctly",
+          "Proper error handling for concurrent access"
+        ]
+      },
+
+      "phase_3": {
+        "name": "Advanced Features",
+        "duration": "2 days",
+        "priority": "medium",
+        "description": "Profit redistribution, risk management, and optimization",
+
+        "tasks": [
+          {
+            "id": "P3T1",
+            "name": "Implement profit redistribution",
+            "files": ["internal/portfolio/allocation.go"],
+            "description": "Dynamic profit sharing across strategies",
+            "effort": "4h"
+          },
+          {
+            "id": "P3T2",
+            "name": "Create portfolio risk manager",
+            "files": ["internal/portfolio/risk.go"],
+            "description": "Portfolio-level risk controls and limits",
+            "effort": "3h"
+          },
+          {
+            "id": "P3T3",
+            "name": "Implement allocation strategies",
+            "files": [
+              "internal/portfolio/strategies/equal_weight.go",
+              "internal/portfolio/strategies/performance_based.go"
+            ],
+            "description": "Multiple allocation strategy implementations",
+            "effort": "4h"
+          },
+          {
+            "id": "P3T4",
+            "name": "Add Redis storage option",
+            "files": ["internal/portfolio/storage/redis_storage.go"],
+            "description": "High-performance Redis-based state management",
+            "effort": "3h"
+          },
+          {
+            "id": "P3T5",
+            "name": "Create portfolio monitoring dashboard",
+            "files": ["cmd/portfolio-monitor/main.go"],
+            "description": "Real-time portfolio status monitoring tool",
+            "effort": "5h"
+          }
+        ],
+
+        "validation": [
+          "Profit redistribution works correctly",
+          "Risk limits prevent over-leveraging",
+          "Multiple allocation strategies function",
+          "Redis storage performs adequately"
+        ]
+      }
+    },
+
+    "detailed_code_changes": {
+      "critical_files": {
+        "internal/bot/live_bot.go": {
+          "changes": [
+            {
+              "function": "executeBuy",
+              "line_range": "971-975",
+              "current": "if amount > bot.balance { return }",
+              "new": "if bot.portfolio.GetRequiredMargin(amount) > bot.portfolio.GetAvailableMargin(bot.id) { return }",
+              "reason": "Fix leverage calculation in balance validation"
+            },
+            {
+              "function": "NewLiveBot",
+              "line_range": "75-124",
+              "addition": "Initialize portfolio manager and register bot instance",
+              "reason": "Integrate portfolio management into bot lifecycle"
+            },
+            {
+              "function": "syncAfterTrade",
+              "line_range": "1484-1639",
+              "addition": "Update portfolio state with trade results and P&L",
+              "reason": "Keep portfolio state synchronized with trading activity"
+            }
+          ]
+        },
+
+        "internal/config/live_bot_config.go": {
+          "changes": [
+            {
+              "struct": "StrategyConfig",
+              "line_range": "28-80",
+              "additions": [
+                "Leverage float64 `json:\"leverage\"` // Trading leverage (e.g., 10.0)",
+                "AllocationPercentage float64 `json:\"allocation_percentage\"` // % of portfolio",
+                "MaxPositionSize float64 `json:\"max_position_size\"` // Max notional position"
+              ],
+              "reason": "Add leverage and portfolio allocation settings"
+            },
+            {
+              "struct": "LiveBotConfig",
+              "line_range": "13-26",
+              "addition": "Portfolio *PortfolioConfig `json:\"portfolio,omitempty\"`",
+              "reason": "Add portfolio configuration section"
+            }
+          ]
+        }
+      }
+    },
+
+    "configuration_examples": {
+      "single_bot_legacy": {
+        "file": "configs/bybit/dca/btc_5m_legacy.json",
+        "description": "Backward compatible single bot configuration",
+        "key_fields": {
+          "strategy.leverage": 10.0,
+          "risk.initial_balance": 500
+        }
+      },
+
+      "multi_bot_portfolio": {
+        "file": "configs/portfolio/example_2bot.json",
+        "description": "Two-bot portfolio configuration",
+        "key_fields": {
+          "portfolio.total_balance": 500.0,
+          "portfolio.allocation_strategy": "equal_weight",
+          "portfolio.shared_state_file": "portfolio_state.json",
+          "strategy.allocation_percentage": 0.1,
+          "strategy.leverage": 10.0
+        }
+      }
+    },
+
+    "testing_strategy": {
+      "unit_tests": [
+        "Leverage calculation accuracy",
+        "Portfolio allocation logic",
+        "State synchronization",
+        "Risk limit enforcement"
+      ],
+
+      "integration_tests": [
+        "Single bot with portfolio manager",
+        "Two bot coordination",
+        "Profit redistribution flow",
+        "Error recovery scenarios"
+      ],
+
+      "end_to_end_tests": [
+        "Demo trading with multiple bots",
+        "Concurrent order placement",
+        "State persistence across restarts",
+        "Portfolio rebalancing"
+      ]
+    },
+
+    "deployment_considerations": {
+      "backward_compatibility": "Legacy single-bot configs continue working",
+      "migration_path": "Automatic config migration from old format",
+      "rollback_plan": "Feature flags to disable portfolio mode",
+      "monitoring": "Portfolio health metrics and alerts",
+      "documentation": "Updated README with multi-bot examples"
+    },
+
+    "risk_mitigation": {
+      "development_risks": [
+        {
+          "risk": "Breaking existing single-bot functionality",
+          "mitigation": "Comprehensive regression testing and feature flags"
+        },
+        {
+          "risk": "Race conditions in multi-bot scenarios",
+          "mitigation": "Proper locking mechanisms and atomic operations"
+        },
+        {
+          "risk": "State corruption from concurrent access",
+          "mitigation": "File locking and transaction-like operations"
+        }
+      ],
+
+      "operational_risks": [
+        {
+          "risk": "Over-leveraging due to coordination failures",
+          "mitigation": "Conservative defaults and multiple validation layers"
+        },
+        {
+          "risk": "Performance degradation from sync overhead",
+          "mitigation": "Efficient storage backends and caching"
+        }
+      ]
+    },
+
+    "success_criteria": [
+      "Multiple bots can trade simultaneously without exceeding total balance",
+      "Leverage calculations are accurate (position_value / leverage = margin_used)",
+      "Profits are properly redistributed across portfolio",
+      "No race conditions or state corruption under normal operation",
+      "Performance impact < 10% compared to single bot operation",
+      "Zero breaking changes to existing single-bot configurations"
+    ]
+  }
+}

@@ -20,6 +20,8 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/logger"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/portfolio"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/portfolio/storage"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
@@ -43,6 +45,11 @@ type LiveBot struct {
 	strategy *strategy.EnhancedDCAStrategy
 	spacingStrategy spacing.DCASpacingStrategy
 	logger   *logger.Logger
+	
+	// Portfolio management (new)
+	portfolioManager portfolio.PortfolioManager
+	leverageCalc     portfolio.LeverageCalculator
+	botID            string
 	
 	// Trading parameters extracted from config
 	symbol   string
@@ -99,6 +106,9 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
+	// Generate unique bot ID
+	botID := fmt.Sprintf("%s_%s_%d", symbol, category, time.Now().Unix())
+	
 	bot := &LiveBot{
 		config:   config,
 		exchange: exchangeInstance,
@@ -112,12 +122,63 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		activeTPOrders: make(map[string]*TPOrderInfo),
 		filledTPOrders: make(map[string]*TPOrderInfo),
 		tpOrderMutex: sync.RWMutex{},
+		botID:    botID,
+		leverageCalc: portfolio.NewLeverageCalculator(),
 	}
 
 	// Initialize strategy
 	if err := bot.initializeStrategy(); err != nil {
 		fileLogger.Close()
 		return nil, fmt.Errorf("failed to initialize strategy: %w", err)
+	}
+	
+	// Initialize portfolio manager (optional - only if portfolio config exists)
+	if config.Portfolio != nil {
+		stateFile := config.Portfolio.SharedStateFile
+		if stateFile == "" {
+			stateFile = "portfolio_state.json"
+		}
+		
+		// Convert config type
+		portfolioConfig := &portfolio.PortfolioConfig{
+			TotalBalance:         config.Portfolio.TotalBalance,
+			AllocationStrategy:   config.Portfolio.AllocationStrategy,
+			SharedStateFile:      config.Portfolio.SharedStateFile,
+			MaxTotalExposure:     config.Portfolio.MaxTotalExposure,
+			MaxDrawdownPercent:   config.Portfolio.MaxDrawdownPercent,
+			RebalanceFrequency:   config.Portfolio.RebalanceFrequency,
+			RiskLimitPerBot:      config.Portfolio.RiskLimitPerBot,
+			EmergencyStopEnabled: config.Portfolio.EmergencyStopEnabled,
+		}
+		
+		stateManager := storage.NewFileStorage(stateFile)
+		bot.portfolioManager = portfolio.NewPortfolioManager(portfolioConfig, stateManager)
+		
+		// Register this bot with the portfolio manager
+		botConfig := portfolio.BotConfig{
+			Symbol:               symbol,
+			Leverage:             config.Strategy.Leverage,
+			AllocationPercentage: config.Strategy.AllocationPercentage,
+			MaxPositionSize:      config.Strategy.MaxPositionSize,
+			Category:             category,
+		}
+		
+		// Initialize portfolio manager
+		ctx := context.Background()
+		if err := bot.portfolioManager.Initialize(ctx); err != nil {
+			fileLogger.Close()
+			return nil, fmt.Errorf("failed to initialize portfolio manager: %w", err)
+		}
+		
+		// Register this bot
+		if err := bot.portfolioManager.RegisterBot(botID, botConfig); err != nil {
+			fileLogger.Close()
+			return nil, fmt.Errorf("failed to register bot with portfolio manager: %w", err)
+		}
+		
+		fileLogger.Info("✅ Portfolio management enabled - Bot ID: %s", botID)
+	} else {
+		fileLogger.Info("⚠️ Single-bot mode (no portfolio configuration)")
 	}
 
 	return bot, nil
@@ -968,11 +1029,34 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		return
 	}
 
-	// Check available balance for margin (don't assume 10x leverage)
-	if amount > bot.balance {
-		bot.logger.LogWarning("Insufficient balance", "Balance: $%.2f < Required: $%.2f", bot.balance, amount)
+	// CRITICAL FIX: Use leverage-aware margin calculation instead of full position value
+	leverage := bot.config.Strategy.Leverage
+	requiredMargin := bot.leverageCalc.CalculateRequiredMargin(amount, leverage)
+	
+	// Check available balance/margin
+	var availableBalance float64
+	if bot.portfolioManager != nil {
+		// Portfolio mode: check allocated balance
+		availableBalance, err = bot.portfolioManager.GetAvailableBalance(bot.botID)
+		if err != nil {
+			bot.logger.LogWarning("Portfolio balance check", "Failed to get available balance: %v", err)
+			availableBalance = bot.balance // Fallback to local balance
+		}
+	} else {
+		// Single-bot mode: use local balance
+		availableBalance = bot.balance
+	}
+	
+	if requiredMargin > availableBalance {
+		bot.logger.LogWarning("Insufficient margin", 
+			"Available: $%.2f < Required: $%.2f (Position: $%.2f @ %.1fx leverage)", 
+			availableBalance, requiredMargin, amount, leverage)
 		return
 	}
+	
+	// Log successful margin calculation for transparency
+	bot.logger.Info("💡 Margin Check: Position $%.2f @ %.1fx leverage = $%.2f margin required (Available: $%.2f)", 
+		amount, leverage, requiredMargin, availableBalance)
 
 	// Place order with timeout and retry
 	orderParams := exchange.OrderParams{

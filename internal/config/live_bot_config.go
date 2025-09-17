@@ -21,6 +21,9 @@ type LiveBotConfig struct {
 	// Risk management configuration
 	Risk RiskConfig `json:"risk"`
 	
+	// Portfolio management configuration (optional)
+	Portfolio *PortfolioConfig `json:"portfolio,omitempty"`
+	
 	// Notification configuration (optional)
 	Notifications *NotificationConfig `json:"notifications,omitempty"`
 }
@@ -32,6 +35,11 @@ type StrategyConfig struct {
 	Category                 string  `json:"category"`                   // Trading category (spot, linear, inverse)
 	BaseAmount               float64 `json:"base_amount"`               // Base DCA amount in USD
 	MaxMultiplier            float64 `json:"max_multiplier"`            // Maximum multiplier for DCA
+	
+	// Portfolio and leverage settings (new)
+	Leverage                 float64 `json:"leverage"`                  // Trading leverage (e.g., 10.0)
+	AllocationPercentage     float64 `json:"allocation_percentage"`     // % of portfolio allocated (e.g., 0.10 = 10%)
+	MaxPositionSize          float64 `json:"max_position_size"`         // Max notional position size in USD
 	// Legacy fields (deprecated - use dca_spacing instead)
 	PriceThreshold           float64 `json:"price_threshold,omitempty"`           // Price drop threshold to trigger DCA (deprecated)
 	PriceThresholdMultiplier float64 `json:"price_threshold_multiplier,omitempty"` // Multiplier for progressive DCA spacing (deprecated)
@@ -168,6 +176,18 @@ type NotificationConfig struct {
 	TelegramChat  string `json:"telegram_chat,omitempty"`
 }
 
+// PortfolioConfig holds portfolio management configuration
+type PortfolioConfig struct {
+	TotalBalance         float64 `json:"total_balance"`          // Total portfolio balance in USD
+	AllocationStrategy   string  `json:"allocation_strategy"`    // equal_weight, performance_based, custom
+	SharedStateFile      string  `json:"shared_state_file"`      // Path to shared portfolio state file
+	MaxTotalExposure     float64 `json:"max_total_exposure"`     // Max total exposure as % of balance (e.g., 3.0 = 300%)
+	MaxDrawdownPercent   float64 `json:"max_drawdown_percent"`   // Max allowed drawdown % (e.g., 25.0 = 25%)
+	RebalanceFrequency   string  `json:"rebalance_frequency"`    // 1h, 4h, 1d
+	RiskLimitPerBot      float64 `json:"risk_limit_per_bot"`     // Max risk per bot as % of allocation (e.g., 0.2 = 20%)
+	EmergencyStopEnabled bool    `json:"emergency_stop_enabled"` // Enable emergency stop on high drawdown
+}
+
 // LoadLiveBotConfig loads configuration from file
 func LoadLiveBotConfig(configFile string) (*LiveBotConfig, error) {
 	// If config file doesn't contain path separators, look in configs/ directory
@@ -210,6 +230,26 @@ func (c *LiveBotConfig) setDefaults() error {
 	}
 	if c.Strategy.MaxMultiplier == 0 {
 		c.Strategy.MaxMultiplier = 5.0
+	}
+	
+	// Portfolio and leverage defaults
+	if c.Strategy.Leverage == 0 {
+		// Auto-detect leverage based on category
+		switch c.Strategy.Category {
+		case "linear", "inverse":
+			c.Strategy.Leverage = 10.0 // Default 10x for futures
+		case "spot":
+			c.Strategy.Leverage = 1.0  // No leverage for spot
+		default:
+			c.Strategy.Leverage = 10.0 // Default to 10x
+		}
+	}
+	if c.Strategy.AllocationPercentage == 0 {
+		c.Strategy.AllocationPercentage = 0.10 // Default 10% allocation
+	}
+	if c.Strategy.MaxPositionSize == 0 {
+		// Default to 10x base amount for max position
+		c.Strategy.MaxPositionSize = c.Strategy.BaseAmount * 10
 	}
 	// Migration: Convert old-style spacing to new format
 	if c.Strategy.DCASpacing == nil {
@@ -386,6 +426,20 @@ func (c *LiveBotConfig) validate() error {
 	}
 	if c.Strategy.MaxMultiplier < 1.0 {
 		return fmt.Errorf("max multiplier must be at least 1.0")
+	}
+	
+	// Validate leverage and portfolio settings
+	if c.Strategy.Leverage <= 0 {
+		return fmt.Errorf("leverage must be greater than 0, got: %.2f", c.Strategy.Leverage)
+	}
+	if c.Strategy.Leverage > 125 {
+		return fmt.Errorf("leverage %.2f exceeds maximum allowed 125x", c.Strategy.Leverage)
+	}
+	if c.Strategy.AllocationPercentage <= 0 || c.Strategy.AllocationPercentage > 1.0 {
+		return fmt.Errorf("allocation percentage must be between 0.0 and 1.0, got: %.2f", c.Strategy.AllocationPercentage)
+	}
+	if c.Strategy.MaxPositionSize <= 0 {
+		return fmt.Errorf("max position size must be greater than 0, got: %.2f", c.Strategy.MaxPositionSize)
 	}
 	// Validate DCA spacing configuration
 	if c.Strategy.DCASpacing != nil {
