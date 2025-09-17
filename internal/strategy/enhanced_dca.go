@@ -7,6 +7,7 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/base"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
+	"github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
@@ -23,6 +24,9 @@ type EnhancedDCAStrategy struct {
 	// DCA spacing strategy
 	spacingStrategy  spacing.DCASpacingStrategy // Pluggable spacing strategy
 	atrCalculator    *base.ATR                  // ATR calculator for market context
+	
+	// Dynamic TP configuration
+	dynamicTPConfig  *config.DynamicTPConfig    // Dynamic TP configuration
 }
 
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
@@ -36,6 +40,7 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		dcaLevel:         0,   // Start at level 0
 		spacingStrategy:  nil, // Will be set by orchestrator
 		atrCalculator:    base.NewATR(14), // 14-period ATR for market context
+		dynamicTPConfig:  nil, // Will be set by orchestrator if dynamic TP is enabled
 	}
 }
 
@@ -48,6 +53,16 @@ func (s *EnhancedDCAStrategy) SetSpacingStrategy(spacingStrategy spacing.DCASpac
 // GetSpacingStrategy returns the current spacing strategy
 func (s *EnhancedDCAStrategy) GetSpacingStrategy() spacing.DCASpacingStrategy {
 	return s.spacingStrategy
+}
+
+// SetDynamicTPConfig sets the dynamic TP configuration
+func (s *EnhancedDCAStrategy) SetDynamicTPConfig(dynamicTPConfig *config.DynamicTPConfig) {
+	s.dynamicTPConfig = dynamicTPConfig
+}
+
+// GetDynamicTPConfig returns the current dynamic TP configuration
+func (s *EnhancedDCAStrategy) GetDynamicTPConfig() *config.DynamicTPConfig {
+	return s.dynamicTPConfig
 }
 
 // AddIndicator adds a technical indicator to the strategy
@@ -309,6 +324,193 @@ func (s *EnhancedDCAStrategy) SetLastEntryPrice(price float64) {
 	s.lastEntryPrice = price
 }
 
+// IsDynamicTPEnabled returns true if dynamic TP is configured and enabled
+func (s *EnhancedDCAStrategy) IsDynamicTPEnabled() bool {
+	return s.dynamicTPConfig != nil && 
+		   s.dynamicTPConfig.Strategy != "" && 
+		   s.dynamicTPConfig.Strategy != "fixed"
+}
 
+// GetDynamicTPPercent calculates dynamic TP percentage based on current market conditions
+func (s *EnhancedDCAStrategy) GetDynamicTPPercent(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
+	if !s.IsDynamicTPEnabled() {
+		return 0, nil // Return 0 if dynamic TP is not enabled
+	}
 
+	return s.calculateDynamicTP(currentCandle, data)
+}
 
+// calculateDynamicTP calculates the dynamic TP based on the configured strategy
+func (s *EnhancedDCAStrategy) calculateDynamicTP(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
+	if err := s.validateDynamicTPConfig(); err != nil {
+		return s.dynamicTPConfig.BaseTPPercent, err // Fallback to base TP
+	}
+
+	switch s.dynamicTPConfig.Strategy {
+	case "volatility_adaptive":
+		return s.calculateVolatilityBasedTP(currentCandle, data)
+	case "indicator_based":
+		return s.calculateIndicatorBasedTP(currentCandle, data)
+	default:
+		return s.dynamicTPConfig.BaseTPPercent, nil // Fixed fallback
+	}
+}
+
+// calculateVolatilityBasedTP calculates TP based on market volatility (ATR)
+func (s *EnhancedDCAStrategy) calculateVolatilityBasedTP(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
+	volatilityConfig := s.dynamicTPConfig.VolatilityConfig
+	if volatilityConfig == nil {
+		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("volatility config is nil")
+	}
+
+	// Calculate ATR using existing infrastructure
+	atrValue, err := s.atrCalculator.Calculate(data)
+	if err != nil {
+		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("ATR calculation failed: %w", err)
+	}
+
+	// Normalize ATR as percentage of current price
+	normalizedVolatility := atrValue / currentCandle.Close
+
+	// Formula: Higher volatility = Higher TP target
+	// TP = BaseTP * (1 + normalizedVolatility * multiplier)
+	dynamicTP := s.dynamicTPConfig.BaseTPPercent * (1 + normalizedVolatility*volatilityConfig.Multiplier)
+
+	// Apply bounds
+	if dynamicTP < volatilityConfig.MinTPPercent {
+		dynamicTP = volatilityConfig.MinTPPercent
+	}
+	if dynamicTP > volatilityConfig.MaxTPPercent {
+		dynamicTP = volatilityConfig.MaxTPPercent
+	}
+
+	return dynamicTP, nil
+}
+
+// calculateIndicatorBasedTP calculates TP based on indicator signal strength
+func (s *EnhancedDCAStrategy) calculateIndicatorBasedTP(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
+	indicatorConfig := s.dynamicTPConfig.IndicatorConfig
+	if indicatorConfig == nil {
+		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("indicator config is nil")
+	}
+
+	// Process all indicators to get current signals
+	results := s.indicatorManager.ProcessCandle(currentCandle, data)
+	
+	totalStrength := 0.0
+	totalWeight := 0.0
+
+	// Aggregate signal strength from all active indicators
+	for name, result := range results {
+		if result.Error != nil {
+			continue // Skip failed indicators
+		}
+
+		weight := indicatorConfig.Weights[name]
+		if weight > 0 {
+			// Create signal from result and convert to strength
+			signal := s.createSignalFromResult(result)
+			strength := s.convertSignalToTPStrength(signal)
+			totalStrength += strength * weight
+			totalWeight += weight
+		}
+	}
+
+	if totalWeight == 0 {
+		return s.dynamicTPConfig.BaseTPPercent, nil
+	}
+
+	avgStrength := totalStrength / totalWeight
+
+	// Formula: Stronger signals = Higher TP targets
+	// TP = BaseTP * (0.7 + avgStrength * strengthMultiplier)
+	// Range: 70% to 130% of base TP (when avgStrength is -1 to 1)
+	dynamicTP := s.dynamicTPConfig.BaseTPPercent * (0.7 + avgStrength*indicatorConfig.StrengthMultiplier)
+
+	// Apply bounds
+	if dynamicTP < indicatorConfig.MinTPPercent {
+		dynamicTP = indicatorConfig.MinTPPercent
+	}
+	if dynamicTP > indicatorConfig.MaxTPPercent {
+		dynamicTP = indicatorConfig.MaxTPPercent
+	}
+
+	return dynamicTP, nil
+}
+
+// createSignalFromResult creates a signal from indicator result
+func (s *EnhancedDCAStrategy) createSignalFromResult(result *indicators.IndicatorResult) indicators.Signal {
+	if result.ShouldBuy {
+		return indicators.Signal{
+			Type:     indicators.SignalBuy,
+			Strength: result.Strength,
+		}
+	} else if result.ShouldSell {
+		return indicators.Signal{
+			Type:     indicators.SignalSell,
+			Strength: result.Strength,
+		}
+	} else {
+		return indicators.Signal{
+			Type:     indicators.SignalHold,
+			Strength: result.Strength,
+		}
+	}
+}
+
+// convertSignalToTPStrength converts indicator signal to TP strength value (-1 to 1)
+func (s *EnhancedDCAStrategy) convertSignalToTPStrength(signal indicators.Signal) float64 {
+	switch signal.Type {
+	case indicators.SignalBuy:
+		// Buy signals get positive strength (0.2 to 1.0 based on signal strength)
+		return 0.2 + (signal.Strength * 0.8)
+	case indicators.SignalSell:
+		// Sell signals get negative strength (-0.2 to -1.0 based on signal strength)
+		return -(0.2 + (signal.Strength * 0.8))
+	case indicators.SignalHold:
+		return 0.0
+	default:
+		return 0.0
+	}
+}
+
+// validateDynamicTPConfig validates the dynamic TP configuration
+func (s *EnhancedDCAStrategy) validateDynamicTPConfig() error {
+	if s.dynamicTPConfig == nil {
+		return fmt.Errorf("dynamic TP config is nil")
+	}
+
+	if s.dynamicTPConfig.BaseTPPercent <= 0 {
+		return fmt.Errorf("base TP percent must be positive, got: %.4f", s.dynamicTPConfig.BaseTPPercent)
+	}
+
+	switch s.dynamicTPConfig.Strategy {
+	case "volatility_adaptive":
+		if s.dynamicTPConfig.VolatilityConfig == nil {
+			return fmt.Errorf("volatility config is required for volatility_adaptive strategy")
+		}
+		vc := s.dynamicTPConfig.VolatilityConfig
+		if vc.Multiplier < 0 || vc.Multiplier > 10 {
+			return fmt.Errorf("volatility multiplier must be between 0 and 10, got: %.2f", vc.Multiplier)
+		}
+		if vc.MinTPPercent >= vc.MaxTPPercent {
+			return fmt.Errorf("min TP percent (%.4f) must be less than max TP percent (%.4f)", 
+				vc.MinTPPercent, vc.MaxTPPercent)
+		}
+
+	case "indicator_based":
+		if s.dynamicTPConfig.IndicatorConfig == nil {
+			return fmt.Errorf("indicator config is required for indicator_based strategy")
+		}
+		ic := s.dynamicTPConfig.IndicatorConfig
+		if ic.StrengthMultiplier < 0 || ic.StrengthMultiplier > 2 {
+			return fmt.Errorf("strength multiplier must be between 0 and 2, got: %.2f", ic.StrengthMultiplier)
+		}
+		if ic.MinTPPercent >= ic.MaxTPPercent {
+			return fmt.Errorf("min TP percent (%.4f) must be less than max TP percent (%.4f)", 
+				ic.MinTPPercent, ic.MaxTPPercent)
+		}
+	}
+
+	return nil
+}

@@ -51,6 +51,9 @@ type StrategyConfig struct {
 	TPLevels     int   `json:"tp_levels"`      // Number of TP levels (default 5)
 	TPQuantity   float64 `json:"tp_quantity"`  // Quantity per TP level (default 0.20 = 20%)
 	
+	// Dynamic take profit configuration
+	DynamicTP    *DynamicTPConfig `json:"dynamic_tp,omitempty"` // Dynamic TP configuration
+	
 	// Order management settings
 	CancelOrphanedOrders bool `json:"cancel_orphaned_orders"` // Cancel existing orders on startup (default false)
 	
@@ -83,6 +86,30 @@ type StrategyConfig struct {
 type DCASpacingConfig struct {
 	Strategy   string                 `json:"strategy"`   // Strategy name (e.g., "fixed", "volatility_adaptive")
 	Parameters map[string]interface{} `json:"parameters"` // Strategy-specific parameters
+}
+
+// DynamicTPConfig holds dynamic take profit configuration
+type DynamicTPConfig struct {
+	Strategy         string                `json:"strategy"`           // TP strategy: "fixed", "volatility_adaptive", "indicator_based"
+	BaseTPPercent    float64               `json:"base_tp_percent"`    // Base TP percentage (e.g., 0.02)
+	VolatilityConfig *DynamicTPVolatilityConfig `json:"volatility_config,omitempty"` // Volatility-based TP config
+	IndicatorConfig  *DynamicTPIndicatorConfig  `json:"indicator_config,omitempty"`  // Indicator-based TP config
+}
+
+// DynamicTPVolatilityConfig holds volatility-adaptive TP configuration
+type DynamicTPVolatilityConfig struct {
+	Multiplier    float64 `json:"multiplier"`      // ATR sensitivity (e.g., 0.5)
+	MinTPPercent  float64 `json:"min_tp_percent"`  // Minimum TP (e.g., 0.01)
+	MaxTPPercent  float64 `json:"max_tp_percent"`  // Maximum TP (e.g., 0.05)
+	ATRPeriod     int     `json:"atr_period"`      // ATR calculation period (default: 14)
+}
+
+// DynamicTPIndicatorConfig holds indicator-based TP configuration
+type DynamicTPIndicatorConfig struct {
+	Weights            map[string]float64 `json:"weights"`             // Indicator weights
+	StrengthMultiplier float64            `json:"strength_multiplier"` // Signal strength sensitivity
+	MinTPPercent       float64            `json:"min_tp_percent"`      // Minimum TP
+	MaxTPPercent       float64            `json:"max_tp_percent"`      // Maximum TP
 }
 
 

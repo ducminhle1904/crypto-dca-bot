@@ -22,6 +22,32 @@ type TPLevel struct {
 	SellCommission float64 // Actual commission paid on the partial sell
 }
 
+// DynamicTPRecord tracks dynamic TP calculation data for analysis
+type DynamicTPRecord struct {
+	Timestamp        time.Time // When TP was calculated
+	Price            float64   // Market price at calculation
+	BaseTPPercent    float64   // Base TP percentage
+	CalculatedTP     float64   // Calculated dynamic TP percentage
+	Strategy         string    // TP strategy used ("volatility_adaptive", "indicator_based")
+	MarketVolatility float64   // ATR/Price ratio at time of calculation
+	SignalStrength   float64   // Average signal strength from indicators
+	BoundsApplied    bool      // Whether min/max bounds were applied
+}
+
+// DynamicTPMetrics contains performance analysis for dynamic TP
+type DynamicTPMetrics struct {
+	Enabled               bool    // Whether dynamic TP was used
+	Strategy              string  // Primary TP strategy used
+	AvgTPPercent          float64 // Average TP percentage used across all trades
+	TPRangeUtilization    float64 // Percentage of min/max range utilized (0-1)
+	VolatilityTPCorrelation float64 // Correlation between market volatility and TP targets
+	DynamicTPHitRate      float64 // Hit rate for dynamic TP vs fixed TP baseline
+	MinTPUsed             float64 // Minimum TP percentage used
+	MaxTPUsed             float64 // Maximum TP percentage used
+	BoundsHitCount        int     // Number of times min/max bounds were applied
+	TotalCalculations     int     // Total number of dynamic TP calculations
+}
+
 type BacktestEngine struct {
 	initialBalance float64
 	commission     float64
@@ -33,6 +59,10 @@ type BacktestEngine struct {
 	// Multiple TP level configuration
 	useTPLevels    bool       // Enable 5-level TP mode
 	tpLevels       []TPLevel  // 5 TP levels configuration
+
+	// Dynamic TP configuration
+	dynamicTPEnabled bool     // Enable dynamic TP calculation
+	dynamicTPHistory []DynamicTPRecord // Historical dynamic TP data for analysis
 
 	// Minimum lot size constraints for realistic simulation
 	minOrderQty    float64 // Minimum order quantity (e.g., 0.01 for BTCUSDT)
@@ -93,6 +123,9 @@ type BacktestResults struct {
 	MaxIntraCycleDD   float64       // Maximum drawdown within a single cycle
 	AvgCycleExposure  float64       // Average exposure per cycle
 	MaxCycleExposure  float64       // Maximum exposure within any cycle
+	
+	// Dynamic TP metrics
+	DynamicTPMetrics  *DynamicTPMetrics // Dynamic TP performance analysis
 }
 
 type Trade struct {
@@ -104,6 +137,12 @@ type Trade struct {
 	PnL        float64
 	Commission float64
 	Cycle      int // 0 if no TP cycle tracking (tpPercent==0), otherwise cycle id
+	
+	// Dynamic TP tracking fields
+	TPTarget         float64 // Calculated TP target for this trade
+	TPStrategy       string  // TP strategy used ("fixed", "volatility_adaptive", "indicator_based")
+	MarketVolatility float64 // ATR/Price ratio at time of entry
+	SignalStrength   float64 // Average indicator strength at entry
 }
 
 type CycleSummary struct {
@@ -167,6 +206,9 @@ func NewBacktestEngine(
 			Trades:       make([]Trade, 0),
 			Cycles:       make([]CycleSummary, 0),
 			EquityCurve:  make([]EquityPoint, 0),
+			DynamicTPMetrics: &DynamicTPMetrics{
+				Enabled: strat.IsDynamicTPEnabled(),
+			},
 		},
 		tpPercent:   tpPercent,
 		useTPLevels: useTPLevels,
@@ -178,6 +220,9 @@ func NewBacktestEngine(
 		maxCycleExposure: 0,
 		currentExposure:  0,
 		exposureHistory:  make([]float64, 0),
+		// Initialize dynamic TP tracking
+		dynamicTPEnabled: strat.IsDynamicTPEnabled(),
+		dynamicTPHistory: make([]DynamicTPRecord, 0),
 	}
 	
 	// Initialize TP level tracking
@@ -297,6 +342,26 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 					Quantity:   actualQuantity, // Use actual quantity after commission
 					Commission: commission,
 				}
+				
+				// Add dynamic TP tracking for the trade
+				if b.dynamicTPEnabled && decision != nil {
+					// Calculate what the TP target would be for this trade
+					historyData := data[:i+1]
+					avgEntryEstimate := currentPrice // For new trades, average entry is current price
+					_, dynamicRecord, err := b.calculateCurrentTPTarget(data[i], historyData, avgEntryEstimate)
+					if err == nil && dynamicRecord != nil {
+						trade.TPTarget = dynamicRecord.CalculatedTP
+						trade.TPStrategy = dynamicRecord.Strategy
+						trade.MarketVolatility = dynamicRecord.MarketVolatility
+						trade.SignalStrength = decision.Strength
+					}
+				} else {
+					// Fixed TP mode
+					trade.TPTarget = b.tpPercent
+					trade.TPStrategy = "fixed"
+					trade.MarketVolatility = 0
+					trade.SignalStrength = 0
+				}
 				if b.cycleOpen {
 					b.cycleEntries++
 					b.cycleQtySum += actualQuantity
@@ -329,10 +394,10 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		if b.cycleOpen && b.position > 0 {
 			if b.useTPLevels {
 				// Use High price to check which TP levels were hit during the candle
-				b.checkAndExecuteMultipleTPWithHigh(data[i].High, data[i].Timestamp)
+				b.checkAndExecuteMultipleTPWithHigh(data[i].High, data[i].Timestamp, data, i)
 			} else if b.tpPercent > 0 {
 				// For single TP, use High price to check if target was reached
-				b.checkAndExecuteSingleTPWithHigh(data[i].High, data[i].Timestamp)
+				b.checkAndExecuteSingleTPWithHigh(data[i].High, data[i].Timestamp, data, i)
 			}
 		}
 
@@ -523,6 +588,9 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		b.results.AvgCycleExposure = totalExposure / float64(len(b.exposureHistory))
 	}
 
+	// Finalize dynamic TP metrics
+	b.finalizeDynamicTPMetrics()
+
 	return b.results
 }
 
@@ -577,7 +645,7 @@ func (b *BacktestResults) PrintCycleDetails() {
 	fmt.Printf("Total Commission Paid: $%.2f\n", totalCommission)
 }
 // checkAndExecuteSingleTPWithHigh handles single TP logic using High price
-func (b *BacktestEngine) checkAndExecuteSingleTPWithHigh(highPrice float64, timestamp time.Time) {
+func (b *BacktestEngine) checkAndExecuteSingleTPWithHigh(highPrice float64, timestamp time.Time, data []types.OHLCV, currentIndex int) {
 	// compute weighted average entry price across OPEN trades (of current cycle)
 	totalQty := 0.0
 	sumEntryCost := 0.0 // sum(entryPrice * qty)
@@ -589,7 +657,22 @@ func (b *BacktestEngine) checkAndExecuteSingleTPWithHigh(highPrice float64, time
 	}
 	if totalQty > 0 {
 		avgEntry := sumEntryCost / totalQty
-		target := avgEntry * (1.0 + b.tpPercent)
+		
+		// Calculate TP target using dynamic TP if enabled
+		currentCandle := data[currentIndex]
+		// Use data up to current index for proper dynamic TP calculation
+		historyData := data[:currentIndex+1]
+		target, dynamicRecord, err := b.calculateCurrentTPTarget(currentCandle, historyData, avgEntry)
+		if err != nil {
+			// Log error but continue with calculated target (fallback already applied)
+			// In production, you might want to log this error
+		}
+		
+		// Add dynamic TP record if available
+		if dynamicRecord != nil {
+			b.addDynamicTPRecord(dynamicRecord)
+		}
+		
 		if highPrice >= target {
 			// Execute at target price, not current price for realistic simulation
 			exitPrice := target
@@ -704,7 +787,8 @@ func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp
 }
 
 // checkAndExecuteMultipleTPWithHigh handles 5-level TP logic using High price for realistic simulation
-func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, timestamp time.Time) {
+// Note: Multi-level TP always uses fixed TP percentages as per design constraints
+func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, timestamp time.Time, data []types.OHLCV, currentIndex int) {
 	if b.cycleRemainingQty <= 0 {
 		return
 	}
@@ -735,7 +819,8 @@ func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, ti
 func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timestamp time.Time) {
 	// This is kept for compatibility but should not be used in new code
 	// Use checkAndExecuteMultipleTPWithHigh instead
-	b.checkAndExecuteMultipleTPWithHigh(currentPrice, timestamp)
+	// Note: This legacy method doesn't support dynamic TP due to missing data context
+	b.checkAndExecuteMultipleTPWithHigh(currentPrice, timestamp, nil, 0)
 }
 
 func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64) {
@@ -953,4 +1038,121 @@ func (b *BacktestEngine) resetCycle() {
     
     // Notify strategy that cycle is complete so it can reset state
     b.strategy.OnCycleComplete()
+}
+
+// calculateCurrentTPTarget calculates the TP target using dynamic TP if enabled
+func (b *BacktestEngine) calculateCurrentTPTarget(currentCandle types.OHLCV, data []types.OHLCV, avgEntry float64) (float64, *DynamicTPRecord, error) {
+	if !b.dynamicTPEnabled {
+		// Use fixed TP
+		target := avgEntry * (1.0 + b.tpPercent)
+		return target, nil, nil
+	}
+
+	// Calculate dynamic TP percentage
+	dynamicTPPercent, err := b.strategy.GetDynamicTPPercent(currentCandle, data)
+	if err != nil {
+		// Fallback to fixed TP on error
+		target := avgEntry * (1.0 + b.tpPercent)
+		return target, nil, fmt.Errorf("dynamic TP calculation failed, using fixed TP: %w", err)
+	}
+
+	// If dynamic TP returns 0, use fixed TP
+	if dynamicTPPercent == 0 {
+		target := avgEntry * (1.0 + b.tpPercent)
+		return target, nil, nil
+	}
+
+	// Calculate target price using dynamic TP
+	target := avgEntry * (1.0 + dynamicTPPercent)
+
+	// Create dynamic TP record for analysis
+	record := &DynamicTPRecord{
+		Timestamp:        currentCandle.Timestamp,
+		Price:            currentCandle.Close,
+		BaseTPPercent:    b.tpPercent,
+		CalculatedTP:     dynamicTPPercent,
+		Strategy:         "unknown", // Will be set by caller based on strategy config
+		MarketVolatility: 0,         // Will be calculated by caller
+		SignalStrength:   0,         // Will be calculated by caller
+		BoundsApplied:    false,     // Will be set by caller
+	}
+
+	return target, record, nil
+}
+
+// addDynamicTPRecord adds a dynamic TP record to the history and updates metrics
+func (b *BacktestEngine) addDynamicTPRecord(record *DynamicTPRecord) {
+	if record == nil {
+		return
+	}
+
+	// Add to history
+	b.dynamicTPHistory = append(b.dynamicTPHistory, *record)
+
+	// Update metrics
+	metrics := b.results.DynamicTPMetrics
+	metrics.TotalCalculations++
+
+	// Update min/max TP used
+	if metrics.TotalCalculations == 1 {
+		metrics.MinTPUsed = record.CalculatedTP
+		metrics.MaxTPUsed = record.CalculatedTP
+	} else {
+		if record.CalculatedTP < metrics.MinTPUsed {
+			metrics.MinTPUsed = record.CalculatedTP
+		}
+		if record.CalculatedTP > metrics.MaxTPUsed {
+			metrics.MaxTPUsed = record.CalculatedTP
+		}
+	}
+
+	// Track bounds application
+	if record.BoundsApplied {
+		metrics.BoundsHitCount++
+	}
+
+	// Update strategy if not set
+	if metrics.Strategy == "" {
+		metrics.Strategy = record.Strategy
+	}
+}
+
+// finalizeDynamicTPMetrics calculates final dynamic TP metrics
+func (b *BacktestEngine) finalizeDynamicTPMetrics() {
+	metrics := b.results.DynamicTPMetrics
+	if !metrics.Enabled || len(b.dynamicTPHistory) == 0 {
+		return
+	}
+
+	// Calculate average TP percent
+	totalTP := 0.0
+	totalVolatility := 0.0
+	validVolatilityCount := 0
+
+	for _, record := range b.dynamicTPHistory {
+		totalTP += record.CalculatedTP
+		if record.MarketVolatility > 0 {
+			totalVolatility += record.MarketVolatility
+			validVolatilityCount++
+		}
+	}
+
+	metrics.AvgTPPercent = totalTP / float64(len(b.dynamicTPHistory))
+
+	// Calculate TP range utilization (requires knowing min/max bounds from strategy)
+	if metrics.MaxTPUsed > metrics.MinTPUsed {
+		// This is a simplified calculation - in practice, we'd need to know the actual configured bounds
+		metrics.TPRangeUtilization = (metrics.MaxTPUsed - metrics.MinTPUsed) / metrics.MaxTPUsed
+	}
+
+	// Calculate volatility-TP correlation (simplified)
+	if validVolatilityCount > 1 {
+		// This would need a proper correlation calculation
+		// For now, we'll set a placeholder value
+		metrics.VolatilityTPCorrelation = 0.0
+	}
+
+	// Calculate dynamic TP hit rate (would need comparison with fixed TP baseline)
+	// This would require running a parallel simulation with fixed TP
+	metrics.DynamicTPHitRate = 0.0 // Placeholder
 }

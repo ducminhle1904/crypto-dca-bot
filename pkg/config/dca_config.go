@@ -108,6 +108,9 @@ type DCAConfig struct {
 	UseTPLevels    bool    `json:"use_tp_levels"`   // Enable 5-level TP mode
 	Cycle          bool    `json:"cycle"`
 	
+	// Dynamic take profit configuration
+	DynamicTP      *DynamicTPConfig `json:"dynamic_tp,omitempty"` // Dynamic TP configuration
+	
 	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
@@ -316,6 +319,30 @@ type DCASpacingConfig struct {
 	Parameters map[string]interface{} `json:"parameters"` // Strategy-specific parameters
 }
 
+// DynamicTPConfig holds dynamic take profit configuration
+type DynamicTPConfig struct {
+	Strategy         string                `json:"strategy"`           // TP strategy: "fixed", "volatility_adaptive", "indicator_based"
+	BaseTPPercent    float64               `json:"base_tp_percent"`    // Base TP percentage (e.g., 0.02)
+	VolatilityConfig *DynamicTPVolatilityConfig `json:"volatility_config,omitempty"` // Volatility-based TP config
+	IndicatorConfig  *DynamicTPIndicatorConfig  `json:"indicator_config,omitempty"`  // Indicator-based TP config
+}
+
+// DynamicTPVolatilityConfig holds volatility-adaptive TP configuration
+type DynamicTPVolatilityConfig struct {
+	Multiplier    float64 `json:"multiplier"`      // ATR sensitivity (e.g., 0.5)
+	MinTPPercent  float64 `json:"min_tp_percent"`  // Minimum TP (e.g., 0.01)
+	MaxTPPercent  float64 `json:"max_tp_percent"`  // Maximum TP (e.g., 0.05)
+	ATRPeriod     int     `json:"atr_period"`      // ATR calculation period (default: 14)
+}
+
+// DynamicTPIndicatorConfig holds indicator-based TP configuration
+type DynamicTPIndicatorConfig struct {
+	Weights            map[string]float64 `json:"weights"`             // Indicator weights
+	StrengthMultiplier float64            `json:"strength_multiplier"` // Signal strength sensitivity
+	MinTPPercent       float64            `json:"min_tp_percent"`      // Minimum TP
+	MaxTPPercent       float64            `json:"max_tp_percent"`      // Maximum TP
+}
+
 // GetDCASpacingConfig returns the spacing configuration, or nil for legacy fixed spacing
 func (c *DCAConfig) GetDCASpacingConfig() *DCASpacingConfig {
 	return c.DCASpacing
@@ -329,4 +356,24 @@ func (c *DCAConfig) SetDCASpacingConfig(spacingConfig *DCASpacingConfig) {
 // HasSpacingStrategy returns true if a spacing strategy is configured
 func (c *DCAConfig) HasSpacingStrategy() bool {
 	return c.DCASpacing != nil && c.DCASpacing.Strategy != ""
+}
+
+// GetDynamicTPConfig returns the dynamic TP configuration, or nil for fixed TP
+func (c *DCAConfig) GetDynamicTPConfig() *DynamicTPConfig {
+	return c.DynamicTP
+}
+
+// SetDynamicTPConfig sets the dynamic TP configuration
+func (c *DCAConfig) SetDynamicTPConfig(dynamicTPConfig *DynamicTPConfig) {
+	c.DynamicTP = dynamicTPConfig
+}
+
+// HasDynamicTP returns true if dynamic TP is configured and enabled
+func (c *DCAConfig) HasDynamicTP() bool {
+	return c.DynamicTP != nil && c.DynamicTP.Strategy != "" && c.DynamicTP.Strategy != "fixed"
+}
+
+// IsDynamicTPEnabled returns true if dynamic TP is configured and enabled
+func (c *DCAConfig) IsDynamicTPEnabled() bool {
+	return c.HasDynamicTP()
 }
