@@ -26,6 +26,7 @@ type StrategyConfig struct {
 	TPPercent        float64                    `json:"tp_percent"`
 	UseTPLevels      bool                       `json:"use_tp_levels"`
 	Cycle            bool                       `json:"cycle"`
+	DynamicTP        *config.DynamicTPConfig   `json:"dynamic_tp,omitempty"`
 	Indicators       []string                   `json:"indicators"`
 	RSI            *RSIConfig                 `json:"rsi,omitempty"`
 	MACD           *MACDConfig                `json:"macd,omitempty"`

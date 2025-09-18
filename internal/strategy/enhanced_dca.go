@@ -11,22 +11,29 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
 )
 
-// EnhancedDCAStrategy implements a Dollar Cost Averaging strategy with multiple technical indicators
+// EnhancedDCAStrategy implements an advanced Dollar Cost Averaging strategy with:
+// - Multi-indicator technical analysis (RSI, MACD, Bollinger Bands, EMA, Hull MA, MFI, WaveTrend, Keltner)
+// - Dynamic DCA spacing based on market volatility or fixed thresholds
+// - Dynamic take profit targeting based on market conditions
+// - Intelligent position sizing with configurable risk management
 type EnhancedDCAStrategy struct {
+	// Core indicator management and analysis
 	indicatorManager *indicators.IndicatorManager
-	baseAmount       float64
-	maxMultiplier    float64
-	minConfidence    float64
-	lastTradeTime    time.Time
-	lastEntryPrice   float64  // Track last entry price for threshold calculation
-	dcaLevel         int      // Current DCA level (0 = first entry, 1+ = subsequent entries)
 	
-	// DCA spacing strategy
-	spacingStrategy  spacing.DCASpacingStrategy // Pluggable spacing strategy
-	atrCalculator    *base.ATR                  // ATR calculator for market context
+	// Trading parameters
+	baseAmount       float64   // Base investment amount per DCA entry
+	maxMultiplier    float64   // Maximum position size multiplier
+	minConfidence    float64   // Minimum confidence threshold for trade execution
 	
-	// Dynamic TP configuration
-	dynamicTPConfig  *config.DynamicTPConfig    // Dynamic TP configuration
+	// State tracking
+	lastTradeTime    time.Time // Last trade execution timestamp
+	lastEntryPrice   float64   // Previous entry price for DCA spacing calculations
+	dcaLevel         int       // Current DCA level (0=first entry, 1+=subsequent)
+	
+	// Strategic components
+	spacingStrategy  spacing.DCASpacingStrategy // Configurable DCA entry spacing logic
+	atrCalculator    *base.ATR                  // Average True Range for volatility analysis
+	dynamicTPConfig  *config.DynamicTPConfig    // Dynamic take profit configuration
 }
 
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
@@ -39,15 +46,16 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		lastEntryPrice:   0.0, // No previous entry
 		dcaLevel:         0,   // Start at level 0
 		spacingStrategy:  nil, // Will be set by orchestrator
-		atrCalculator:    base.NewATR(14), // 14-period ATR for market context
+		atrCalculator:    base.NewATR(14), // Default 14-period ATR (will be updated after config)
 		dynamicTPConfig:  nil, // Will be set by orchestrator if dynamic TP is enabled
 	}
 }
 
 
-// SetSpacingStrategy sets the advanced spacing strategy (new feature)
+// SetSpacingStrategy sets the advanced spacing strategy and synchronizes ATR period
 func (s *EnhancedDCAStrategy) SetSpacingStrategy(spacingStrategy spacing.DCASpacingStrategy) {
 	s.spacingStrategy = spacingStrategy
+	s.synchronizeATRPeriod()
 }
 
 // GetSpacingStrategy returns the current spacing strategy
@@ -55,14 +63,39 @@ func (s *EnhancedDCAStrategy) GetSpacingStrategy() spacing.DCASpacingStrategy {
 	return s.spacingStrategy
 }
 
-// SetDynamicTPConfig sets the dynamic TP configuration
+// SetDynamicTPConfig sets the dynamic TP configuration and synchronizes ATR period
 func (s *EnhancedDCAStrategy) SetDynamicTPConfig(dynamicTPConfig *config.DynamicTPConfig) {
 	s.dynamicTPConfig = dynamicTPConfig
+	s.synchronizeATRPeriod()
 }
 
 // GetDynamicTPConfig returns the current dynamic TP configuration
 func (s *EnhancedDCAStrategy) GetDynamicTPConfig() *config.DynamicTPConfig {
 	return s.dynamicTPConfig
+}
+
+// synchronizeATRPeriod ensures both DCA spacing and dynamic TP use the same ATR period
+// Priority: DCA spacing atr_period > Dynamic TP ATRPeriod > Default 14
+func (s *EnhancedDCAStrategy) synchronizeATRPeriod() {
+	var targetATRPeriod int = 14 // Default fallback
+	
+	// Priority 1: Get ATR period from DCA spacing configuration
+	if s.spacingStrategy != nil {
+		params := s.spacingStrategy.GetParameters()
+		if atrPeriod, ok := params["atr_period"].(int); ok && atrPeriod > 0 {
+			targetATRPeriod = atrPeriod
+		}
+	}
+	
+	// Priority 2: If no DCA spacing ATR period, use Dynamic TP ATR period
+	if targetATRPeriod == 14 && s.dynamicTPConfig != nil && s.dynamicTPConfig.VolatilityConfig != nil {
+		if s.dynamicTPConfig.VolatilityConfig.ATRPeriod > 0 {
+			targetATRPeriod = s.dynamicTPConfig.VolatilityConfig.ATRPeriod
+		}
+	}
+	
+	// Update ATR calculator with synchronized period
+	s.atrCalculator = base.NewATR(targetATRPeriod)
 }
 
 // AddIndicator adds a technical indicator to the strategy
@@ -218,15 +251,36 @@ func (s *EnhancedDCAStrategy) calculateWithSpacingStrategy(currentCandle types.O
 
 
 func (s *EnhancedDCAStrategy) calculatePositionSize(strength, confidence float64) float64 {
-	// The base amount is multiplied by the confidence and strength of the signal
-	multiplier := 1.0 + (confidence * strength)
-
-	// limit it to the maximum multiplier
-	if multiplier > s.maxMultiplier {
-		multiplier = s.maxMultiplier
+	// Calculate signal-based multiplier (0.5x to 2.0x based on confidence and strength)
+	signalMultiplier := 0.5 + (confidence * strength * 1.5)
+	
+	// Calculate DCA level-based multiplier with LINEAR progression (not exponential)
+	// Level 0: 1.0x, Level 1: 1.2x, Level 2: 1.4x, Level 3: 1.7x, Level 4: 2.0x
+	dcaLevelMultiplier := 1.0
+	if s.dcaLevel > 0 {
+		// Linear progression: 1.0 + (level * 0.2) capped at reasonable levels
+		if s.dcaLevel <= 3 {
+			dcaLevelMultiplier = 1.0 + float64(s.dcaLevel)*0.2
+		} else {
+			// Slower growth for higher levels to prevent balance exhaustion
+			dcaLevelMultiplier = 1.6 + float64(s.dcaLevel-3)*0.1
+		}
+	}
+	
+	// Combine multipliers
+	combinedMultiplier := signalMultiplier * dcaLevelMultiplier
+	
+	// Apply maximum multiplier constraint
+	if combinedMultiplier > s.maxMultiplier {
+		combinedMultiplier = s.maxMultiplier
+	}
+	
+	// Ensure minimum reasonable size
+	if combinedMultiplier < 0.5 {
+		combinedMultiplier = 0.5
 	}
 
-	return s.baseAmount * multiplier
+	return s.baseAmount * combinedMultiplier
 }
 
 func (s *EnhancedDCAStrategy) GetName() string {
@@ -310,8 +364,8 @@ func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
 		s.spacingStrategy.Reset()
 	}
 	
-	// Reset ATR calculator
-	s.atrCalculator = base.NewATR(14)
+	// Reset ATR calculator with synchronized period
+	s.synchronizeATRPeriod()
 }
 
 // SetDCALevel sets the current DCA level (for live bot state synchronization)
@@ -356,27 +410,29 @@ func (s *EnhancedDCAStrategy) calculateDynamicTP(currentCandle types.OHLCV, data
 	}
 }
 
-// calculateVolatilityBasedTP calculates TP based on market volatility (ATR)
+// calculateVolatilityBasedTP calculates dynamic take profit percentage based on market volatility (ATR).
+// Higher market volatility results in higher TP targets to capture larger price movements.
+// Formula: TP = BaseTP × (1 + normalizedVolatility × multiplier)
+// Where normalizedVolatility = ATR / currentPrice
 func (s *EnhancedDCAStrategy) calculateVolatilityBasedTP(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
 	volatilityConfig := s.dynamicTPConfig.VolatilityConfig
 	if volatilityConfig == nil {
 		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("volatility config is nil")
 	}
 
-	// Calculate ATR using existing infrastructure
+	// Calculate Average True Range for volatility measurement
 	atrValue, err := s.atrCalculator.Calculate(data)
 	if err != nil {
 		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("ATR calculation failed: %w", err)
 	}
 
-	// Normalize ATR as percentage of current price
+	// Express ATR as percentage of current price for normalization
 	normalizedVolatility := atrValue / currentCandle.Close
 
-	// Formula: Higher volatility = Higher TP target
-	// TP = BaseTP * (1 + normalizedVolatility * multiplier)
+	// Apply volatility-based adjustment to base TP percentage
 	dynamicTP := s.dynamicTPConfig.BaseTPPercent * (1 + normalizedVolatility*volatilityConfig.Multiplier)
 
-	// Apply bounds
+	// Enforce minimum and maximum bounds to prevent extreme values
 	if dynamicTP < volatilityConfig.MinTPPercent {
 		dynamicTP = volatilityConfig.MinTPPercent
 	}
@@ -387,28 +443,30 @@ func (s *EnhancedDCAStrategy) calculateVolatilityBasedTP(currentCandle types.OHL
 	return dynamicTP, nil
 }
 
-// calculateIndicatorBasedTP calculates TP based on indicator signal strength
+// calculateIndicatorBasedTP calculates dynamic take profit percentage based on technical indicator signals.
+// Stronger bullish signals result in higher TP targets to maximize profit potential.
+// Formula: TP = BaseTP × (0.7 + avgStrength × strengthMultiplier)
+// Signal strength ranges from -1 (bearish) to +1 (bullish)
 func (s *EnhancedDCAStrategy) calculateIndicatorBasedTP(currentCandle types.OHLCV, data []types.OHLCV) (float64, error) {
 	indicatorConfig := s.dynamicTPConfig.IndicatorConfig
 	if indicatorConfig == nil {
 		return s.dynamicTPConfig.BaseTPPercent, fmt.Errorf("indicator config is nil")
 	}
 
-	// Process all indicators to get current signals
+	// Evaluate all configured technical indicators
 	results := s.indicatorManager.ProcessCandle(currentCandle, data)
 	
 	totalStrength := 0.0
 	totalWeight := 0.0
 
-	// Aggregate signal strength from all active indicators
+	// Calculate weighted average signal strength across all indicators
 	for name, result := range results {
 		if result.Error != nil {
-			continue // Skip failed indicators
+			continue // Skip indicators that failed to calculate
 		}
 
 		weight := indicatorConfig.Weights[name]
 		if weight > 0 {
-			// Create signal from result and convert to strength
 			signal := s.createSignalFromResult(result)
 			strength := s.convertSignalToTPStrength(signal)
 			totalStrength += strength * weight
@@ -416,18 +474,18 @@ func (s *EnhancedDCAStrategy) calculateIndicatorBasedTP(currentCandle types.OHLC
 		}
 	}
 
+	// Fallback to base TP if no indicators are available
 	if totalWeight == 0 {
 		return s.dynamicTPConfig.BaseTPPercent, nil
 	}
 
 	avgStrength := totalStrength / totalWeight
 
-	// Formula: Stronger signals = Higher TP targets
-	// TP = BaseTP * (0.7 + avgStrength * strengthMultiplier)
-	// Range: 70% to 130% of base TP (when avgStrength is -1 to 1)
+	// Apply signal strength adjustment to base TP percentage
+	// Stronger signals increase TP targets to capture larger moves
 	dynamicTP := s.dynamicTPConfig.BaseTPPercent * (0.7 + avgStrength*indicatorConfig.StrengthMultiplier)
 
-	// Apply bounds
+	// Enforce configured bounds to prevent extreme values
 	if dynamicTP < indicatorConfig.MinTPPercent {
 		dynamicTP = indicatorConfig.MinTPPercent
 	}

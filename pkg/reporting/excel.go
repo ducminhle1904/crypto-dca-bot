@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/backtest"
 	"github.com/xuri/excelize/v2"
@@ -356,18 +357,63 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 			}
 		}
 		
-		isEntry := !t.EntryTime.Equal(t.ExitTime)
+		// Trade type classification:
+		// - Multi-TP synthetic exit: EntryTime == ExitTime (both are TP hit time)
+		// - Single TP completed: EntryTime != ExitTime && ExitTime != zero
+		// - Open entry trade: ExitTime == zero
 		
-		// Set cycle start price from first entry
-		if isEntry && cycleMap[t.Cycle].StartPrice == 0 {
+		isMultiTPSyntheticExit := t.EntryTime.Equal(t.ExitTime) && !t.ExitTime.IsZero()
+		isSingleTPCompleted := !t.EntryTime.Equal(t.ExitTime) && !t.ExitTime.IsZero()
+		isOpenEntry := t.ExitTime.IsZero()
+		
+		// Set cycle start price from first entry (open trades or completed trades use EntryPrice)
+		if (isOpenEntry || isSingleTPCompleted) && cycleMap[t.Cycle].StartPrice == 0 {
 			cycleMap[t.Cycle].StartPrice = t.EntryPrice
 		}
 		
-		// Add trade to cycle
-		cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
-			Trade:   t,
-			IsEntry: isEntry,
-		})
+		// For single TP completed trades, add both entry and exit rows
+		if isSingleTPCompleted {
+			// Add entry version (for display purposes)
+			cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
+				Trade:   backtest.Trade{
+					EntryTime:        t.EntryTime,
+					ExitTime:         time.Time{}, // Zero time to mark as entry
+					EntryPrice:       t.EntryPrice,
+					ExitPrice:        0,
+					Quantity:         t.Quantity,
+					PnL:              0,
+					Commission:       t.Commission,
+					Cycle:           t.Cycle,
+					TPTarget:        t.TPTarget,
+					TPStrategy:      t.TPStrategy,
+					MarketVolatility: t.MarketVolatility,
+					SignalStrength:   t.SignalStrength,
+				},
+				IsEntry: true,
+			})
+			
+			// Add exit version
+			cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
+				Trade:   t,
+				IsEntry: false,
+			})
+		} else {
+			// Add trade as-is: open entries, multi-TP synthetic exits
+			var isEntry bool
+			if isOpenEntry {
+				isEntry = true
+			} else if isMultiTPSyntheticExit {
+				isEntry = false
+			} else {
+				// Fallback (shouldn't happen)
+				isEntry = t.ExitTime.IsZero()
+			}
+			
+			cycleMap[t.Cycle].ChronologicalTrades = append(cycleMap[t.Cycle].ChronologicalTrades, EnhancedTradeData{
+				Trade:   t,
+				IsEntry: isEntry,
+			})
+		}
 	}
 	
 	// Calculate running balance by processing cycles in order
@@ -421,7 +467,21 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 				// DCA entry - spend money
 				balanceChange := -(trade.Trade.EntryPrice*trade.Trade.Quantity + trade.Trade.Commission)
 				trade.BalanceChange = balanceChange
-				trade.Description = fmt.Sprintf("DCA Entry #%d", trade.Sequence)
+				
+				// Enhanced entry description with dynamic TP info if available
+				baseDescription := fmt.Sprintf("DCA Entry #%d", trade.Sequence)
+				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" {
+					dynamicInfo := fmt.Sprintf(" | %s TP: %.2f%%", trade.Trade.TPStrategy, trade.Trade.TPTarget*100)
+					if trade.Trade.MarketVolatility > 0 {
+						dynamicInfo += fmt.Sprintf(" | Vol: %.1f%%", trade.Trade.MarketVolatility*100)
+					}
+					if trade.Trade.SignalStrength > 0 {
+						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
+					}
+					trade.Description = baseDescription + dynamicInfo
+				} else {
+					trade.Description = baseDescription
+				}
 			} else {
 				// TP exit - receive money  
 				balanceChange := (trade.Trade.ExitPrice*trade.Trade.Quantity - trade.Trade.Commission)
@@ -438,16 +498,32 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 				// Calculate what percentage of position this exit represents
 				exitPercentage := (trade.Trade.Quantity / totalCycleQty) * 100
 				
+				// Build base description
+				baseDescription := ""
 				if exitPercentage >= 90 {
-					trade.Description = "TP Complete (100%)"
+					baseDescription = "TP Complete (100%)"
 				} else if exitPercentage >= 70 {
-					trade.Description = "TP Levels 1-4 (80%)"
+					baseDescription = "TP Levels 1-4 (80%)"
 				} else if exitPercentage >= 50 {
-					trade.Description = "TP Levels 1-3 (60%)"
+					baseDescription = "TP Levels 1-3 (60%)"
 				} else if exitPercentage >= 30 {
-					trade.Description = "TP Levels 1-2 (40%)"
+					baseDescription = "TP Levels 1-2 (40%)"
 				} else {
-					trade.Description = "TP Level 1 (20%)"
+					baseDescription = "TP Level 1 (20%)"
+				}
+				
+				// Add dynamic TP information if available
+				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" {
+					dynamicInfo := fmt.Sprintf(" | %s: %.2f%%", trade.Trade.TPStrategy, trade.Trade.TPTarget*100)
+					if trade.Trade.MarketVolatility > 0 {
+						dynamicInfo += fmt.Sprintf(" | Vol: %.1f%%", trade.Trade.MarketVolatility*100)
+					}
+					if trade.Trade.SignalStrength > 0 {
+						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
+					}
+					trade.Description = baseDescription + dynamicInfo
+				} else {
+					trade.Description = baseDescription
 				}
 			}
 			

@@ -31,6 +31,18 @@ type DCAFlags struct {
 	SpacingVolatilitySens    *float64 // Volatility sensitivity for adaptive spacing
 	SpacingATRPeriod         *int     // ATR period for adaptive spacing
 	
+	// Take profit parameters
+	TPPercent               *float64 // Base take profit percentage
+	UseTPLevels             *bool    // Enable multi-level TP system
+	
+	// Dynamic take profit parameters
+	DynamicTPStrategy       *string  // Dynamic TP strategy (fixed, volatility_adaptive, indicator_based)
+	TPVolatilityMult        *float64 // Volatility multiplier for dynamic TP
+	TPMinPercent            *float64 // Minimum TP percentage
+	TPMaxPercent            *float64 // Maximum TP percentage
+	TPStrengthMult          *float64 // Signal strength multiplier for indicator-based TP
+	TPIndicatorWeights      *string  // Comma-separated indicator:weight pairs for indicator-based TP
+	
 	// Indicator selection (flexible system)
 	Indicators       *string  // Comma-separated list of indicators
 	
@@ -95,6 +107,18 @@ func NewDCAFlags() *DCAFlags {
 		SpacingMultiplier:        flag.Float64("spacing-multiplier", 1.15, "Multiplier for fixed progressive spacing"),
 		SpacingVolatilitySens:    flag.Float64("spacing-sensitivity", 1.8, "Volatility sensitivity for adaptive spacing"),
 		SpacingATRPeriod:         flag.Int("spacing-atr-period", 14, "ATR period for adaptive spacing"),
+		
+		// Take profit parameters
+		TPPercent:               flag.Float64("tp-percent", 0.02, "Base take profit percentage (0.02 = 2%)"),
+		UseTPLevels:             flag.Bool("use-tp-levels", true, "Enable multi-level TP system (5 levels)"),
+		
+		// Dynamic take profit parameters
+		DynamicTPStrategy:       flag.String("dynamic-tp", "fixed", "Dynamic TP strategy (fixed, volatility_adaptive, indicator_based)"),
+		TPVolatilityMult:        flag.Float64("tp-volatility-mult", 0.5, "Volatility multiplier for dynamic TP (0.5 = half of ATR)"),
+		TPMinPercent:            flag.Float64("tp-min-percent", 0.01, "Minimum TP percentage (0.01 = 1%)"),
+		TPMaxPercent:            flag.Float64("tp-max-percent", 0.05, "Maximum TP percentage (0.05 = 5%)"),
+		TPStrengthMult:          flag.Float64("tp-strength-mult", 0.3, "Signal strength multiplier for indicator-based TP"),
+		TPIndicatorWeights:      flag.String("tp-indicator-weights", "", "Comma-separated indicator:weight pairs (e.g., rsi:0.3,macd:0.4)"),
 		
 		// Indicator selection (flexible system)
 		Indicators:       flag.String("indicators", "", "Comma-separated list of indicators (e.g., rsi,macd,supertrend)"),
@@ -189,6 +213,18 @@ func PrintDCAUsageExamples() {
 			"dca-backtest -symbol BTCUSDT -optimize -dca-spacing volatility_adaptive",
 			"Optimize with volatility-adaptive DCA spacing strategy",
 		},
+		{
+			"dca-backtest -symbol BTCUSDT -dynamic-tp volatility_adaptive -tp-volatility-mult 0.5",
+			"Use volatility-adaptive dynamic TP (0.5x ATR multiplier)",
+		},
+		{
+			"dca-backtest -symbol ETHUSDT -dynamic-tp indicator_based -tp-indicator-weights \"rsi:0.4,macd:0.3,bb:0.3\"",
+			"Use indicator-based dynamic TP with custom weights",
+		},
+		{
+			"dca-backtest -symbol ADAUSDT -dynamic-tp volatility_adaptive -tp-min-percent 0.005 -tp-max-percent 0.08",
+			"Dynamic TP with custom bounds (0.5% min, 8% max)",
+		},
 	}
 	
 	fmt.Printf("\n📚 USAGE EXAMPLES:\n")
@@ -224,6 +260,18 @@ func PrintDCAFlagGroups() {
   -spacing-multiplier MULT      Multiplier for fixed progressive spacing (default: 1.15)
   -spacing-sensitivity SENS     Volatility sensitivity for adaptive spacing (default: 1.8)
   -spacing-atr-period PERIOD    ATR period for adaptive spacing (default: 14)
+
+🎯 TAKE PROFIT FLAGS:
+  -tp-percent PCT               Base take profit percentage (default: 0.02)
+  -use-tp-levels                Enable multi-level TP system (default: true)
+
+🚀 DYNAMIC TAKE PROFIT FLAGS:
+  -dynamic-tp STRATEGY          Dynamic TP strategy: fixed, volatility_adaptive, indicator_based (default: fixed)
+  -tp-volatility-mult MULT      Volatility multiplier for dynamic TP (default: 0.5)
+  -tp-min-percent PCT           Minimum TP percentage (default: 0.01)
+  -tp-max-percent PCT           Maximum TP percentage (default: 0.05)
+  -tp-strength-mult MULT        Signal strength multiplier for indicator-based TP (default: 0.3)
+  -tp-indicator-weights PAIRS   Indicator weights for dynamic TP (e.g., rsi:0.3,macd:0.4)
 
 🧬 ANALYSIS FLAGS:
   -optimize             Run genetic algorithm optimization
@@ -324,49 +372,20 @@ func ResolveConfigPath(configFile string) string {
 
 // ResolveIndicators resolves which indicators to use from various input methods
 func ResolveIndicators(flags *DCAFlags) ([]string, error) {
+	// Check for conflicts first
+	hasIndividualFlags := *flags.UseRSI || *flags.UseMACD || *flags.UseBB || *flags.UseEMA ||
+		*flags.UseHullMA || *flags.UseSuperTrend || *flags.UseMFI || *flags.UseKeltner ||
+		*flags.UseWaveTrend || *flags.UseOBV || *flags.UseStochasticRSI
+	hasIndicatorsList := *flags.Indicators != ""
+	
+	if hasIndividualFlags && hasIndicatorsList {
+		return nil, fmt.Errorf("cannot use both individual indicator flags and -indicators list")
+	}
+	
 	var indicators []string
 	
-	// Priority 1: Individual indicator flags
-	if *flags.UseRSI {
-		indicators = append(indicators, "rsi")
-	}
-	if *flags.UseMACD {
-		indicators = append(indicators, "macd")
-	}
-	if *flags.UseBB {
-		indicators = append(indicators, "bb")
-	}
-	if *flags.UseEMA {
-		indicators = append(indicators, "ema")
-	}
-	if *flags.UseHullMA {
-		indicators = append(indicators, "hullma")
-	}
-	if *flags.UseSuperTrend {
-		indicators = append(indicators, "supertrend")
-	}
-	if *flags.UseMFI {
-		indicators = append(indicators, "mfi")
-	}
-	if *flags.UseKeltner {
-		indicators = append(indicators, "keltner")
-	}
-	if *flags.UseWaveTrend {
-		indicators = append(indicators, "wavetrend")
-	}
-	if *flags.UseOBV {
-		indicators = append(indicators, "obv")
-	}
-	if *flags.UseStochasticRSI {
-		indicators = append(indicators, "stochrsi")
-	}
-	
-	// Priority 2: Indicators list flag
+	// Priority 1: Indicators list flag
 	if *flags.Indicators != "" {
-		if len(indicators) > 0 {
-			return nil, fmt.Errorf("cannot use both individual indicator flags and -indicators list")
-		}
-		
 		listIndicators := strings.Split(*flags.Indicators, ",")
 		for _, ind := range listIndicators {
 			ind = strings.ToLower(strings.TrimSpace(ind))
@@ -380,12 +399,43 @@ func ResolveIndicators(flags *DCAFlags) ([]string, error) {
 			}
 			
 			indicators = append(indicators, ind)
-			
-			// No longer need to track combo type
+		}
+	} else {
+		// Priority 2: Individual indicator flags
+		if *flags.UseRSI {
+			indicators = append(indicators, "rsi")
+		}
+		if *flags.UseMACD {
+			indicators = append(indicators, "macd")
+		}
+		if *flags.UseBB {
+			indicators = append(indicators, "bb")
+		}
+		if *flags.UseEMA {
+			indicators = append(indicators, "ema")
+		}
+		if *flags.UseHullMA {
+			indicators = append(indicators, "hullma")
+		}
+		if *flags.UseSuperTrend {
+			indicators = append(indicators, "supertrend")
+		}
+		if *flags.UseMFI {
+			indicators = append(indicators, "mfi")
+		}
+		if *flags.UseKeltner {
+			indicators = append(indicators, "keltner")
+		}
+		if *flags.UseWaveTrend {
+			indicators = append(indicators, "wavetrend")
+		}
+		if *flags.UseOBV {
+			indicators = append(indicators, "obv")
+		}
+		if *flags.UseStochasticRSI {
+			indicators = append(indicators, "stochrsi")
 		}
 	}
-	
-	// No preset combos - indicators must be explicitly specified
 	
 	if len(indicators) == 0 {
 		return nil, fmt.Errorf("no indicators specified")
@@ -455,7 +505,7 @@ func GetIndicatorDescription(indicators []string) string {
 // contains checks if a slice contains a string
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
-		if strings.ToLower(s) == strings.ToLower(item) {
+		if strings.EqualFold(s, item) {
 			return true
 		}
 	}

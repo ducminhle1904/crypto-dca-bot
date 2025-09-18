@@ -360,6 +360,33 @@ func (bot *LiveBot) initializeStrategy() error {
 	bot.strategy.SetSpacingStrategy(spacingStrategy)
 	bot.logger.Info("✅ Using %s spacing strategy", spacingStrategy.GetName())
 
+	// Configure dynamic TP if enabled
+	if bot.config.Strategy.DynamicTP != nil {
+		bot.strategy.SetDynamicTPConfig(bot.config.Strategy.DynamicTP)
+		if bot.strategy.IsDynamicTPEnabled() {
+			bot.logger.Info("✅ Dynamic TP enabled: %s strategy", bot.config.Strategy.DynamicTP.Strategy)
+			bot.logger.LogDebugOnly("🔍 Dynamic TP Config: Strategy=%s, BaseTP=%.3f%%", 
+				bot.config.Strategy.DynamicTP.Strategy, bot.config.Strategy.DynamicTP.BaseTPPercent*100)
+			
+			// Log strategy-specific parameters
+			if bot.config.Strategy.DynamicTP.VolatilityConfig != nil {
+				vc := bot.config.Strategy.DynamicTP.VolatilityConfig
+				bot.logger.LogDebugOnly("🔍 Volatility Config: Multiplier=%.2f, MinTP=%.2f%%, MaxTP=%.2f%%, ATRPeriod=%d",
+					vc.Multiplier, vc.MinTPPercent*100, vc.MaxTPPercent*100, vc.ATRPeriod)
+			}
+			
+			if bot.config.Strategy.DynamicTP.IndicatorConfig != nil {
+				ic := bot.config.Strategy.DynamicTP.IndicatorConfig
+				bot.logger.LogDebugOnly("🔍 Indicator Config: StrengthMult=%.2f, MinTP=%.2f%%, MaxTP=%.2f%%, Weights=%v",
+					ic.StrengthMultiplier, ic.MinTPPercent*100, ic.MaxTPPercent*100, ic.Weights)
+			}
+		} else {
+			bot.logger.Info("🔧 Dynamic TP configured but not enabled (strategy: %s)", bot.config.Strategy.DynamicTP.Strategy)
+		}
+	} else {
+		bot.logger.Info("🔧 Using fixed TP strategy")
+	}
+
 	// Add indicators based on configuration
 	bot.logger.Info("🔧 Initializing %d indicators: %v", len(bot.config.Strategy.Indicators), bot.config.Strategy.Indicators)
 	for _, indName := range bot.config.Strategy.Indicators {
@@ -890,26 +917,23 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 		}
 	}
 
-	// Use strategy's calculated amount (confidence-based)
+	// Use strategy's calculated amount directly (strategy already handles DCA level scaling)
 	amount := decision.Amount
 	
-	// Get current DCA level safely for multiplier calculation
+	// Get current DCA level for logging only
 	bot.positionMutex.RLock()
-	currentDCALevelForSizing := bot.dcaLevel
+	currentDCALevelForLogging := bot.dcaLevel
 	bot.positionMutex.RUnlock()
 	
-	// Apply DCA level multiplier on top of strategy's calculation
-	if currentDCALevelForSizing > 0 {
-		multiplier := 1.0 + float64(currentDCALevelForSizing)*0.5 // Increase by 50% each level
-		if multiplier > bot.config.Strategy.MaxMultiplier {
-			multiplier = bot.config.Strategy.MaxMultiplier
-		}
-		amount *= multiplier
-	}
+	// REMOVED: Double multiplier application to prevent 3-6x position size inflation
+	// The strategy already calculates appropriate position sizes based on:
+	// - Signal confidence and strength
+	// - DCA level progression
+	// - Max multiplier constraints
 	
-	// Log advanced sizing info
-	bot.logger.Info("🧠 Advanced Position Sizing: Confidence: %.1f%%, Strength: %.1f%%, Strategy: $%.2f, DCA Level: %d, Final: $%.2f", 
-		decision.Confidence*100, decision.Strength*100, decision.Amount, currentDCALevelForSizing, amount)
+	// Log position sizing info
+	bot.logger.Info("🧠 Strategy Position Sizing: Confidence: %.1f%%, Strength: %.1f%%, DCA Level: %d, Amount: $%.2f", 
+		decision.Confidence*100, decision.Strength*100, currentDCALevelForLogging, amount)
 
 	// Get trading constraints
 	constraints, err := bot.exchange.GetTradingConstraints(ctx, bot.category, bot.symbol)
@@ -1002,7 +1026,7 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 			"quantity": quantity,
 			"price": price,
 			"value": amount,
-			"dca_level": currentDCALevelForSizing,
+			"dca_level": currentDCALevelForLogging,
 		}
 		
 		bot.logger.LogErrorWithContext("Order Placement", err, errorContext)
@@ -1214,12 +1238,69 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 			skippedLevels++
 			continue
 		}
-		levelPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+		
+		// Calculate level percentage using dynamic TP if enabled, otherwise use fixed TP
+		var levelPercent float64
+		if bot.strategy.IsDynamicTPEnabled() {
+			bot.logger.LogDebugOnly("🔍 Dynamic TP: Starting calculation for level %d", level)
+			
+			// Get recent klines for dynamic TP calculation
+			recentKlines, err := bot.getRecentKlines()
+			if err != nil {
+				bot.logger.LogWarning("Dynamic TP", "Failed to get recent klines for dynamic TP calculation: %v, falling back to fixed TP", err)
+				levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+				bot.logger.LogDebugOnly("🔍 Dynamic TP: Fallback to fixed TP Level %d: %.3f%%", level, levelPercent*100)
+			} else {
+				bot.logger.LogDebugOnly("🔍 Dynamic TP: Got %d klines for calculation", len(recentKlines))
+				
+				// Calculate dynamic TP percentage
+				currentCandle := types.OHLCV{Close: avgEntryPrice} // Use avg price as current price for TP calculation
+				if len(recentKlines) > 0 {
+					currentCandle = recentKlines[len(recentKlines)-1] // Use latest candle
+					bot.logger.LogDebugOnly("🔍 Dynamic TP: Using latest candle - Close: $%.2f", currentCandle.Close)
+				} else {
+					bot.logger.LogDebugOnly("🔍 Dynamic TP: Using avg entry price as current candle - Close: $%.2f", avgEntryPrice)
+				}
+				
+				dynamicTPPercent, err := bot.strategy.GetDynamicTPPercent(currentCandle, recentKlines)
+				if err != nil {
+					bot.logger.LogWarning("Dynamic TP", "Dynamic TP calculation failed: %v, falling back to fixed TP", err)
+					levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+					bot.logger.LogDebugOnly("🔍 Dynamic TP: Fallback to fixed TP Level %d: %.3f%%", level, levelPercent*100)
+				} else {
+					// Calculate fixed TP for comparison
+					fixedTPPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+					
+					// Scale the dynamic TP percentage by level
+					levelPercent = dynamicTPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+					
+					bot.logger.Info("🎯 Dynamic TP Level %d: %.3f%% (base dynamic: %.3f%%, fixed would be: %.3f%%)", 
+						level, levelPercent*100, dynamicTPPercent*100, fixedTPPercent*100)
+					bot.logger.LogDebugOnly("🔍 Dynamic TP: Level scaling - Level %d/%d = %.3fx multiplier", 
+						level, bot.config.Strategy.TPLevels, float64(level)/float64(bot.config.Strategy.TPLevels))
+				}
+			}
+		} else {
+			// Use fixed TP calculation
+			levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+			bot.logger.LogDebugOnly("🔍 Fixed TP Level %d: %.3f%% (base: %.3f%%)", 
+				level, levelPercent*100, bot.config.Strategy.TPPercent*100)
+		}
+		
 		tpPrice := avgEntryPrice * (1 + levelPercent)
+		
+		// Log the calculated TP price before rounding
+		bot.logger.LogDebugOnly("🔍 TP Level %d: Calculated price $%.4f (entry: $%.4f + %.3f%%)", 
+			level, tpPrice, avgEntryPrice, levelPercent*100)
 		
 		// Round price to exchange tick size
 		if constraints.MinPriceStep > 0 {
+			originalPrice := tpPrice
 			tpPrice = math.Round(tpPrice/constraints.MinPriceStep) * constraints.MinPriceStep
+			if originalPrice != tpPrice {
+				bot.logger.LogDebugOnly("🔍 TP Level %d: Price rounded from $%.4f to $%.4f (tick size: $%.4f)", 
+					level, originalPrice, tpPrice, constraints.MinPriceStep)
+			}
 		}
 		
 		// Validate order constraints (should already be satisfied by pre-calculation)
@@ -1275,8 +1356,12 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 		priceFloat, _ := parseFloat(formattedPrice)
 		bot.logger.LogTPOrderDetails(level, quantityFloat, priceFloat, levelPercent, tpOrder.OrderID, "PLACED")
 		
-		bot.logger.Info("✅ TP Level %d placed: %s %s at $%s (%.2f%%)", 
+		bot.logger.Info("✅ TP Level %d placed: %s %s at $%s (%.3f%%)", 
 			level, formattedQty, bot.symbol, formattedPrice, levelPercent*100)
+		
+		// Debug log order placement details
+		bot.logger.LogDebugOnly("🔍 TP Order Placed: ID=%s, Level=%d, Qty=%s, Price=$%s, Value=$%.2f", 
+			tpOrder.OrderID, level, formattedQty, formattedPrice, orderValue)
 		
 		// Track successful placement
 		successCount++
@@ -2420,8 +2505,53 @@ func (bot *LiveBot) placeFallbackTPOrder(quantity float64, avgEntryPrice float64
 		return fmt.Errorf("invalid TP levels configuration: %d", bot.config.Strategy.TPLevels)
 	}
 	
-	// Use level 5 TP percentage for fallback order (highest level)
-	levelPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+	// Calculate level percentage using dynamic TP if enabled, otherwise use fixed TP
+	var levelPercent float64
+	if bot.strategy.IsDynamicTPEnabled() {
+		bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Starting calculation for level %d", level)
+		
+		// Get recent klines for dynamic TP calculation
+		recentKlines, err := bot.getRecentKlines()
+		if err != nil {
+			bot.logger.LogWarning("Dynamic TP Fallback", "Failed to get recent klines for dynamic TP calculation: %v, falling back to fixed TP", err)
+			levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+			bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Using fixed TP Level %d: %.3f%%", level, levelPercent*100)
+		} else {
+			bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Got %d klines for calculation", len(recentKlines))
+			
+			// Calculate dynamic TP percentage
+			currentCandle := types.OHLCV{Close: avgEntryPrice} // Use avg price as current price for TP calculation
+			if len(recentKlines) > 0 {
+				currentCandle = recentKlines[len(recentKlines)-1] // Use latest candle
+				bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Using latest candle - Close: $%.2f", currentCandle.Close)
+			} else {
+				bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Using avg entry price as current candle - Close: $%.2f", avgEntryPrice)
+			}
+			
+			dynamicTPPercent, err := bot.strategy.GetDynamicTPPercent(currentCandle, recentKlines)
+			if err != nil {
+				bot.logger.LogWarning("Dynamic TP Fallback", "Dynamic TP calculation failed: %v, falling back to fixed TP", err)
+				levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+				bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Using fixed TP Level %d: %.3f%%", level, levelPercent*100)
+			} else {
+				// Calculate fixed TP for comparison
+				fixedTPPercent := bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+				
+				// Scale the dynamic TP percentage by level
+				levelPercent = dynamicTPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+				
+				bot.logger.Info("🎯 Dynamic TP Fallback Level %d: %.3f%% (base dynamic: %.3f%%, fixed would be: %.3f%%)", 
+					level, levelPercent*100, dynamicTPPercent*100, fixedTPPercent*100)
+				bot.logger.LogDebugOnly("🔍 Dynamic TP Fallback: Level scaling - Level %d/%d = %.3fx multiplier", 
+					level, bot.config.Strategy.TPLevels, float64(level)/float64(bot.config.Strategy.TPLevels))
+			}
+		}
+	} else {
+		// Use fixed TP calculation
+		levelPercent = bot.config.Strategy.TPPercent * float64(level) / float64(bot.config.Strategy.TPLevels)
+		bot.logger.LogDebugOnly("🔍 Fixed TP Fallback Level %d: %.3f%% (base: %.3f%%)", 
+			level, levelPercent*100, bot.config.Strategy.TPPercent*100)
+	}
 	tpPrice := avgEntryPrice * (1 + levelPercent)
 	
 	// Round price to exchange tick size

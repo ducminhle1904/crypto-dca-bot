@@ -22,7 +22,7 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	MFIOverbought:      []float64{70, 75, 80, 85},
 	KeltnerPeriods:     []int{15, 20, 25, 30, 40, 50},
 	KeltnerMultipliers: []float64{1.5, 1.8, 2.0, 2.2, 2.5, 3.0, 3.5},
-	WaveTrendN1:        []int{8, 10, 12, 15, 18, 20},
+	WaveTrendN1:        []int{8, 10, 12, 14, 16},
 	WaveTrendN2:        []int{18, 21, 24, 28, 32, 35},
 	WaveTrendOverbought: []float64{50, 60, 70, 80},
 	WaveTrendOversold:   []float64{-80, -70, -60, -50},
@@ -33,6 +33,12 @@ var DefaultOptimizationRanges = OptimizationRanges{
 	VolatilitySensitivity: []float64{1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0},
 	ATRPeriods:           []int{10, 12, 14, 16, 18, 21, 24, 28},
 	LevelMultipliers:     []float64{1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4},
+	
+	// Dynamic TP optimization ranges
+	TPVolatilityMultipliers: []float64{0.3, 0.5, 0.7, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0},
+	TPMinPercents:          []float64{0.005, 0.008, 0.01, 0.012, 0.015, 0.018, 0.02},
+	TPMaxPercents:          []float64{0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.12},
+	TPStrengthMultipliers:  []float64{0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2},
 }
 
 // GetDefaultOptimizationRanges returns the default optimization ranges

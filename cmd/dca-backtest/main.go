@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,11 @@ func main() {
 	flags := NewDCAFlags()
 	flag.Parse()
 	
+	// Validate flags before proceeding
+	if err := ValidateDCAFlags(flags); err != nil {
+		log.Fatalf("❌ Flag validation error: %v", err)
+	}
+	
 	// Version and help
 	if *flags.ShowVersion {
 		fmt.Printf("%s v%s\n", AppName, AppVersion)
@@ -64,10 +70,15 @@ func main() {
 	// Parse period filter
 	var selectedPeriod time.Duration
 	if *flags.Period != "" {
-		if d, ok := datamanager.ParseTrailingPeriod(*flags.Period); ok {
+		// Validate period format before parsing
+		period := strings.TrimSpace(*flags.Period)
+		if period == "" {
+			log.Fatalf("❌ Empty period specified")
+		}
+		if d, ok := datamanager.ParseTrailingPeriod(period); ok {
 			selectedPeriod = d
 		} else {
-			log.Fatalf("❌ Invalid period format: %s (use 7d, 30d, 180d, 365d)", *flags.Period)
+			log.Fatalf("❌ Invalid period format: %s (use 7d, 30d, 180d, 365d)", period)
 		}
 	}
 	
@@ -92,93 +103,16 @@ func printHeader() {
 }
 
 func printUsageHelp() {
-	fmt.Printf(`%s v%s - Enhanced DCA Strategy Backtesting
-
-USAGE:
-  %s [OPTIONS]
-
-EXAMPLES:
-  # Basic backtest
-  dca-backtest -symbol BTCUSDT -interval 1h
-  
-  # Load from config file
-  dca-backtest -config configs/bybit/btc_1h.json
-  
-  # Optimize parameters
-  dca-backtest -symbol BTCUSDT -optimize
-  
-  # Test all intervals
-  dca-backtest -symbol BTCUSDT -all-intervals
-  
-  # Walk-forward validation
-  dca-backtest -symbol BTCUSDT -optimize -wf-enable
-  
-  # Custom indicators with parameters  
-  dca-backtest -symbol BTCUSDT -rsi -supertrend -mfi -base-amount 50 -max-multiplier 2.5
-  
-  # Progressive DCA spacing (1%->1.1%->1.21%->1.33%...)
-  dca-backtest -symbol BTCUSDT -price-threshold 0.01 -price-threshold-multiplier 1.1
-  
-  # Custom indicator combinations
-  dca-backtest -symbol BTCUSDT -supertrend -mfi
-  dca-backtest -symbol BTCUSDT -indicators "rsi,supertrend,ema"
-
-CONFIGURATION:
-  -config FILE          Load configuration from JSON file
-  -symbol SYMBOL        Trading symbol (default: BTCUSDT)
-  -interval INTERVAL    Time interval: 5m, 15m, 1h, 4h, 1d (default: 1h)
-  -exchange EXCHANGE    Exchange: bybit, binance (default: bybit)
-
-ACCOUNT SETTINGS:
-  -balance AMOUNT       Initial balance (default: 500)
-  -commission RATE      Trading commission (default: 0.0005)
-
-DCA STRATEGY:
-  -base-amount AMOUNT           Base DCA amount (default: 40)
-  -max-multiplier MULT          Maximum position multiplier (default: 3.0)
-  -price-threshold PCT          Price drop %% for next DCA (default: 0.02)
-  -price-threshold-multiplier X Progressive multiplier for DCA spacing (default: 1.0)
-
-INDICATOR SELECTION (flexible):
-  -indicators LIST              Comma-separated indicators (e.g., rsi,macd,supertrend)
-  
-INDIVIDUAL INDICATORS:
-  -rsi                          Include RSI indicator
-  -macd                         Include MACD indicator  
-  -bb                           Include Bollinger Bands indicator
-  -ema                          Include EMA indicator
-  -hullma                       Include Hull MA indicator
-  -supertrend                   Include SuperTrend indicator
-  -mfi                          Include MFI indicator
-  -keltner                      Include Keltner Channels indicator
-  -wavetrend                    Include WaveTrend indicator
-  -obv                          Include OBV (On-Balance Volume) indicator
-
-ANALYSIS:
-  -optimize             Run genetic algorithm optimization
-  -all-intervals        Test all available intervals for symbol
-  -period PERIOD        Limit data to period (7d, 30d, 180d, 365d)
-
-WALK-FORWARD VALIDATION:
-  -wf-enable            Enable walk-forward validation
-  -wf-split-ratio RATIO Train/test split ratio (default: 0.7)
-  -wf-rolling           Use rolling window instead of simple split
-  -wf-train-days DAYS   Training window size (default: 180)
-  -wf-test-days DAYS    Test window size (default: 60)
-  -wf-roll-days DAYS    Roll forward step (default: 30)
-
-OUTPUT:
-  -data-root DIR        Data root directory (default: data)
-  -console-only         Console output only, no file output
-  -window SIZE          Analysis window size (default: 100)
-
-OTHER:
-  -env FILE             Environment file path (default: .env)
-  -version              Show version information
-  -help                 Show this help message
-
-For more information, see the README or documentation.
-`, AppName, AppVersion, filepath.Base(flag.CommandLine.Name()))
+	fmt.Printf("%s v%s - Enhanced DCA Strategy Backtesting\n\n", AppName, AppVersion)
+	fmt.Printf("USAGE:\n  %s [OPTIONS]\n\n", filepath.Base(flag.CommandLine.Name()))
+	
+	// Print examples using the DCA examples function
+	PrintDCAUsageExamples()
+	
+	// Print flag groups to show all available flags including dynamic TP
+	PrintDCAFlagGroups()
+	
+	fmt.Printf("\nFor more information, see the README or documentation.\n")
 }
 
 func loadEnvironment(envFile string) {
@@ -208,7 +142,11 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		return nil, err
 	}
 	
-	cfg := cfgInterface.(*config.DCAConfig)
+	// Safe type assertion with error handling
+	cfg, ok := cfgInterface.(*config.DCAConfig)
+	if !ok {
+		return nil, fmt.Errorf("invalid configuration type: expected *config.DCAConfig, got %T", cfgInterface)
+	}
 	
 	// DCA-specific defaults
 	cfg.Cycle = true        // Always use cycle mode for DCA
@@ -222,7 +160,7 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	// Priority: Config file indicators > Command line indicators > ERROR (no defaults)
 	if configFile != "" && len(cfg.Indicators) > 0 {
 		// Config file has indicators - use them (highest priority)
-		log.Printf("📋 Using indicators from config file: %s", strings.Join(cfg.Indicators, ", "))
+		// log.Printf("📋 Using indicators from config file: %s", strings.Join(cfg.Indicators, ", "))
 	} else {
 		// No config file indicators - check command line
 		indicators, err := ResolveIndicators(flags)
@@ -233,7 +171,7 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		if len(indicators) > 0 {
 			// Use command line specified indicators
 			cfg.Indicators = indicators
-			log.Printf("📋 Using indicators from command line: %s", strings.Join(indicators, ", "))
+			// log.Printf("📋 Using indicators from command line: %s", strings.Join(indicators, ", "))
 		} else {
 			// No indicators specified - require explicit specification
 			return nil, fmt.Errorf("no indicators specified. Please use one of:\n" +
@@ -252,15 +190,35 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 			return nil, fmt.Errorf("failed to create DCA spacing configuration: %w", err)
 		}
 		cfg.DCASpacing = dcaSpacingConfig
-		log.Printf("📊 Using DCA spacing from command line: %s strategy", cfg.DCASpacing.Strategy)
-	} else {
-		log.Printf("📊 Using DCA spacing from config file: %s strategy", cfg.DCASpacing.Strategy)
 	}
 	
 	// Validate that DCA spacing is now present
 	if cfg.DCASpacing == nil {
 		return nil, fmt.Errorf("DCA spacing configuration is required - please specify dca_spacing in config file or use DCA spacing flags")
 	}
+	
+	if *flags.DynamicTPStrategy != "fixed" {
+		// Validate dynamic TP parameters first
+		if err := validateDynamicTPFlags(flags); err != nil {
+			return nil, fmt.Errorf("dynamic TP validation error: %w", err)
+		}
+	}
+	
+	// Configure Dynamic TP from command line flags if not present in config
+	if cfg.DynamicTP == nil && *flags.DynamicTPStrategy != "fixed" {
+		// Create Dynamic TP configuration from flags
+		dynamicTPConfig, err := createDynamicTPFromFlags(flags)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Dynamic TP configuration: %w", err)
+		}
+		cfg.DynamicTP = dynamicTPConfig
+	}
+	
+	// Set TP parameters from flags if not in config
+	if cfg.TPPercent == 0 {
+		cfg.TPPercent = *flags.TPPercent
+	}
+	cfg.UseTPLevels = *flags.UseTPLevels
 	
 	// Preserve interval from config file, or use command line value if no config file
 	effectiveInterval := interval
@@ -286,6 +244,29 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 	// Log configuration summary with sources
 	printConfigSummary(cfg)
 	
+	// Comprehensive business logic validation to prevent trading disasters
+	if err := validateBusinessLogicBounds(cfg); err != nil {
+		return nil, fmt.Errorf("business logic validation failed: %w", err)
+	}
+	
+	// Ensure no invalid dynamic TP configs can slip through
+	if cfg.DynamicTP != nil {
+		if cfg.DynamicTP.VolatilityConfig != nil {
+			min := cfg.DynamicTP.VolatilityConfig.MinTPPercent
+			max := cfg.DynamicTP.VolatilityConfig.MaxTPPercent
+			if min >= max {
+				return nil, fmt.Errorf("CRITICAL VALIDATION ERROR: Dynamic TP min (%.3f) >= max (%.3f) - this should never happen", min, max)
+			}
+		}
+		if cfg.DynamicTP.IndicatorConfig != nil {
+			min := cfg.DynamicTP.IndicatorConfig.MinTPPercent
+			max := cfg.DynamicTP.IndicatorConfig.MaxTPPercent
+			if min >= max {
+				return nil, fmt.Errorf("CRITICAL VALIDATION ERROR: Dynamic TP min (%.3f) >= max (%.3f) - this should never happen", min, max)
+			}
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -324,7 +305,36 @@ func printConfigSummary(cfg *config.DCAConfig) {
 		fmt.Printf("   DCA Spacing: Not configured\n")
 	}
 	
-	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", cfg.TPPercent*100)
+	// Display TP system information
+	if cfg.UseTPLevels && cfg.DynamicTP != nil {
+		fmt.Printf("   TP System: Multi-level Dynamic %s (5 levels, base: %.2f%%", cfg.DynamicTP.Strategy, cfg.TPPercent*100)
+		if cfg.DynamicTP.VolatilityConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				cfg.DynamicTP.VolatilityConfig.MinTPPercent*100,
+				cfg.DynamicTP.VolatilityConfig.MaxTPPercent*100)
+		} else if cfg.DynamicTP.IndicatorConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				cfg.DynamicTP.IndicatorConfig.MinTPPercent*100,
+				cfg.DynamicTP.IndicatorConfig.MaxTPPercent*100)
+		}
+		fmt.Printf(")\n")
+	} else if cfg.UseTPLevels {
+		fmt.Printf("   TP System: Multi-level Fixed (5 levels, %.2f%% max)\n", cfg.TPPercent*100)
+	} else if cfg.DynamicTP != nil {
+		fmt.Printf("   TP System: Single-level Dynamic %s (base: %.2f%%", cfg.DynamicTP.Strategy, cfg.TPPercent*100)
+		if cfg.DynamicTP.VolatilityConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				cfg.DynamicTP.VolatilityConfig.MinTPPercent*100,
+				cfg.DynamicTP.VolatilityConfig.MaxTPPercent*100)
+		} else if cfg.DynamicTP.IndicatorConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				cfg.DynamicTP.IndicatorConfig.MinTPPercent*100,
+				cfg.DynamicTP.IndicatorConfig.MaxTPPercent*100)
+		}
+		fmt.Printf(")\n")
+	} else {
+		fmt.Printf("   TP System: Single-level Fixed (%.2f%%)\n", cfg.TPPercent*100)
+	}
 	
 	indicatorDescription := GetIndicatorDescription(cfg.Indicators)
 	fmt.Printf("   Indicators: %s\n", indicatorDescription)
@@ -562,7 +572,24 @@ func printOptimizationResults(bestConfig *config.DCAConfig, bestResults *backtes
 		fmt.Printf("   DCA Spacing: Not configured\n")
 	}
 	
-	fmt.Printf("   TP System: 5-level (%.2f%% max)\n", bestConfig.TPPercent*100)
+	// Display TP system information
+	if bestConfig.UseTPLevels {
+		fmt.Printf("   TP System: Multi-level (5 levels, %.2f%% max)\n", bestConfig.TPPercent*100)
+	} else if bestConfig.DynamicTP != nil {
+		fmt.Printf("   TP System: Dynamic %s (base: %.2f%%", bestConfig.DynamicTP.Strategy, bestConfig.TPPercent*100)
+		if bestConfig.DynamicTP.VolatilityConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				bestConfig.DynamicTP.VolatilityConfig.MinTPPercent*100,
+				bestConfig.DynamicTP.VolatilityConfig.MaxTPPercent*100)
+		} else if bestConfig.DynamicTP.IndicatorConfig != nil {
+			fmt.Printf(", range: %.2f%%-%.2f%%", 
+				bestConfig.DynamicTP.IndicatorConfig.MinTPPercent*100,
+				bestConfig.DynamicTP.IndicatorConfig.MaxTPPercent*100)
+		}
+		fmt.Printf(")\n")
+	} else {
+		fmt.Printf("   TP System: Fixed single-level (%.2f%%)\n", bestConfig.TPPercent*100)
+	}
 	
 	indicatorDescription := GetIndicatorDescription(bestConfig.Indicators)
 	fmt.Printf("   Indicators: %s\n", indicatorDescription)
@@ -615,7 +642,23 @@ func guessIntervalFromPath(path string) string {
 	if path == "" {
 		return "unknown"
 	}
-	return filepath.Base(filepath.Dir(path))
+	
+	// Clean the path first
+	path = filepath.Clean(path)
+	dir := filepath.Dir(path)
+	
+	// Handle edge cases
+	if dir == "." || dir == "/" || dir == "\\" {
+		return "unknown"
+	}
+	
+	interval := filepath.Base(dir)
+	// Validate that it looks like a time interval
+	if interval == "" || interval == "." {
+		return "unknown"
+	}
+	
+	return interval
 }
 
 func saveResults(results *backtest.BacktestResults, symbol, interval, filename string) {
@@ -680,6 +723,7 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		TPPercent:           cfg.TPPercent,
 		UseTPLevels:         cfg.UseTPLevels,
 		Cycle:               cfg.Cycle,
+		DynamicTP:           cfg.DynamicTP,
 		MinOrderQty:         cfg.MinOrderQty,
 		DCASpacing:          cfg.DCASpacing,
 	}
@@ -717,4 +761,285 @@ func createDCASpacingFromFlags(flags *DCAFlags) (*config.DCASpacingConfig, error
 	default:
 		return nil, fmt.Errorf("unsupported DCA spacing strategy: %s (supported: fixed, volatility_adaptive)", strategy)
 	}
+}
+
+// createDynamicTPFromFlags creates Dynamic TP configuration from command line flags
+func createDynamicTPFromFlags(flags *DCAFlags) (*config.DynamicTPConfig, error) {
+	strategy := strings.ToLower(strings.TrimSpace(*flags.DynamicTPStrategy))
+	
+	switch strategy {
+	case "volatility_adaptive", "volatility", "atr":
+		return &config.DynamicTPConfig{
+			Strategy:      "volatility_adaptive",
+			BaseTPPercent: *flags.TPPercent,
+			VolatilityConfig: &config.DynamicTPVolatilityConfig{
+				Multiplier:   *flags.TPVolatilityMult,
+				MinTPPercent: *flags.TPMinPercent,
+				MaxTPPercent: *flags.TPMaxPercent,
+				ATRPeriod:    14, // Default ATR period
+			},
+		}, nil
+		
+	case "indicator_based", "indicator", "signals":
+		indicatorConfig := &config.DynamicTPIndicatorConfig{
+			Weights:          make(map[string]float64),
+			StrengthMultiplier: *flags.TPStrengthMult,
+			MinTPPercent:     *flags.TPMinPercent,
+			MaxTPPercent:     *flags.TPMaxPercent,
+		}
+		
+		// Parse indicator weights if provided
+		if *flags.TPIndicatorWeights != "" {
+			weights, err := parseIndicatorWeights(*flags.TPIndicatorWeights)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse TP indicator weights: %w", err)
+			}
+			indicatorConfig.Weights = weights
+		} else {
+			// Default equal weights for common indicators
+			indicatorConfig.Weights = map[string]float64{
+				"rsi":  0.25,
+				"macd": 0.25,
+				"bb":   0.25,
+				"ema":  0.25,
+			}
+		}
+		
+		return &config.DynamicTPConfig{
+			Strategy:        "indicator_based",
+			BaseTPPercent:   *flags.TPPercent,
+			IndicatorConfig: indicatorConfig,
+		}, nil
+		
+	case "fixed":
+		// Fixed TP mode - no dynamic TP config needed
+		return nil, nil
+		
+	default:
+		return nil, fmt.Errorf("unsupported Dynamic TP strategy: %s (supported: fixed, volatility_adaptive, indicator_based)", strategy)
+	}
+}
+
+// parseIndicatorWeights parses comma-separated indicator:weight pairs
+func parseIndicatorWeights(weightsStr string) (map[string]float64, error) {
+	// Validate input
+	weightsStr = strings.TrimSpace(weightsStr)
+	if weightsStr == "" {
+		return nil, fmt.Errorf("empty weights string provided")
+	}
+	
+	weights := make(map[string]float64)
+	pairs := strings.Split(weightsStr, ",")
+	
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue // Skip empty pairs
+		}
+		
+		parts := strings.Split(pair, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid weight format: %s (expected indicator:weight)", pair)
+		}
+		
+		indicator := strings.TrimSpace(parts[0])
+		weightStr := strings.TrimSpace(parts[1])
+		
+		// Validate indicator name
+		if indicator == "" {
+			return nil, fmt.Errorf("empty indicator name in pair: %s", pair)
+		}
+		
+		// Validate weight string
+		if weightStr == "" {
+			return nil, fmt.Errorf("empty weight value for indicator %s", indicator)
+		}
+		
+		weight, err := strconv.ParseFloat(weightStr, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid weight value for %s: %s", indicator, weightStr)
+		}
+		
+		// Allow weight of 0 but warn about it in validation
+		if weight < 0 || weight > 1 {
+			return nil, fmt.Errorf("weight for %s must be between 0 and 1, got %f", indicator, weight)
+		}
+		
+		// Check for duplicate indicators
+		if _, exists := weights[indicator]; exists {
+			return nil, fmt.Errorf("duplicate indicator: %s", indicator)
+		}
+		
+		weights[indicator] = weight
+	}
+	
+	return weights, nil
+}
+
+// validateDynamicTPFlags validates dynamic TP command line flag parameters
+func validateDynamicTPFlags(flags *DCAFlags) error {
+	// Validate TP percentages are within valid range (0 < value <= 1.0)
+	if *flags.TPPercent <= 0 || *flags.TPPercent > 1.0 {
+		return fmt.Errorf("base TP percentage must be between 0 and 1.0, got %.3f", *flags.TPPercent)
+	}
+	
+	if *flags.TPMinPercent <= 0 || *flags.TPMinPercent > 1.0 {
+		return fmt.Errorf("minimum TP percentage must be between 0 and 1.0, got %.3f", *flags.TPMinPercent)
+	}
+	
+	if *flags.TPMaxPercent <= 0 || *flags.TPMaxPercent > 1.0 {
+		return fmt.Errorf("maximum TP percentage must be between 0 and 1.0, got %.3f", *flags.TPMaxPercent)
+	}
+	
+	if *flags.TPMinPercent >= *flags.TPMaxPercent {
+		return fmt.Errorf("minimum TP percentage (%.3f) must be less than maximum TP percentage (%.3f)", 
+			*flags.TPMinPercent, *flags.TPMaxPercent)
+	}
+	
+	if *flags.TPPercent < *flags.TPMinPercent || *flags.TPPercent > *flags.TPMaxPercent {
+		return fmt.Errorf("base TP percentage (%f) must be between min (%f) and max (%f)", 
+			*flags.TPPercent, *flags.TPMinPercent, *flags.TPMaxPercent)
+	}
+	
+	// Strategy-specific validation
+	strategy := strings.ToLower(strings.TrimSpace(*flags.DynamicTPStrategy))
+	switch strategy {
+	case "volatility_adaptive", "volatility", "atr":
+		if *flags.TPVolatilityMult <= 0 || *flags.TPVolatilityMult > 5.0 {
+			return fmt.Errorf("volatility multiplier must be between 0 and 5.0, got %f", *flags.TPVolatilityMult)
+		}
+		
+	case "indicator_based", "indicator", "signals":
+		if *flags.TPStrengthMult <= 0 || *flags.TPStrengthMult > 2.0 {
+			return fmt.Errorf("strength multiplier must be between 0 and 2.0, got %f", *flags.TPStrengthMult)
+		}
+		
+		// Validate indicator weights if provided
+		if *flags.TPIndicatorWeights != "" {
+			weights, err := parseIndicatorWeights(*flags.TPIndicatorWeights)
+			if err != nil {
+				return fmt.Errorf("invalid indicator weights: %w", err)
+			}
+			
+			// Check that total weight doesn't exceed reasonable bounds
+			totalWeight := 0.0
+			for _, weight := range weights {
+				totalWeight += weight
+			}
+			if totalWeight > 2.0 {
+				return fmt.Errorf("total indicator weights (%f) should not exceed 2.0 for reasonable results", totalWeight)
+			}
+		}
+		
+	case "fixed":
+		// No additional validation needed for fixed mode
+		
+	default:
+		return fmt.Errorf("unsupported Dynamic TP strategy: %s (supported: fixed, volatility_adaptive, indicator_based)", strategy)
+	}
+	
+	return nil
+}
+
+// validateBusinessLogicBounds performs comprehensive validation of parameter combinations
+// to prevent trading disasters and unreasonable configurations
+func validateBusinessLogicBounds(cfg *config.DCAConfig) error {
+	// 1. Validate position sizing bounds to prevent balance exhaustion
+	if cfg.MaxMultiplier > 5.0 {
+		return fmt.Errorf("max multiplier %.2f is dangerously high (>5.0x) - risk of rapid balance depletion", cfg.MaxMultiplier)
+	}
+	
+	// 2. Validate base amount vs balance ratio
+	if cfg.BaseAmount > cfg.InitialBalance*0.3 {
+		return fmt.Errorf("base amount $%.2f exceeds 30%% of balance $%.2f - insufficient reserves for DCA strategy", 
+			cfg.BaseAmount, cfg.InitialBalance)
+	}
+	
+	// 3. Validate DCA spacing parameters to ensure entries are possible
+	if cfg.DCASpacing != nil {
+		if err := validateDCASpacingBounds(cfg.DCASpacing); err != nil {
+			return fmt.Errorf("DCA spacing validation: %w", err)
+		}
+	}
+	
+	// 4. Validate take profit bounds
+	if cfg.TPPercent > 0.15 { // 15%
+		return fmt.Errorf("take profit %.2f%% is unrealistically high (>15%%) - may never be reached", cfg.TPPercent*100)
+	}
+	if cfg.TPPercent < 0.005 { // 0.5%
+		return fmt.Errorf("take profit %.2f%% is too low (<0.5%%) - insufficient profit margin after fees", cfg.TPPercent*100)
+	}
+	
+	// 5. Validate commission doesn't negate small profits
+	minProfitAfterFees := cfg.Commission * 4 // Need 4x commission to be profitable
+	if cfg.TPPercent < minProfitAfterFees {
+		return fmt.Errorf("take profit %.3f%% insufficient for commission %.3f%% - need at least %.3f%% to be profitable", 
+			cfg.TPPercent*100, cfg.Commission*100, minProfitAfterFees*100)
+	}
+	
+	// 6. Validate indicator parameters are reasonable
+	if err := validateIndicatorBounds(cfg); err != nil {
+		return fmt.Errorf("indicator validation: %w", err)
+	}
+	
+	// 7. Validate combined risk exposure
+	// maxPossiblePosition := cfg.BaseAmount * cfg.MaxMultiplier * 5 // Assume max 5 DCA levels
+	// if maxPossiblePosition > cfg.InitialBalance*0.8 {
+	// 	return fmt.Errorf("maximum possible position $%.2f exceeds 80%% of balance $%.2f - excessive risk exposure", 
+	// 		maxPossiblePosition, cfg.InitialBalance)
+	// }
+	
+	return nil
+}
+
+// validateDCASpacingBounds validates DCA spacing strategy parameters
+func validateDCASpacingBounds(spacing *config.DCASpacingConfig) error {
+	if spacing == nil {
+		return nil
+	}
+	
+	switch spacing.Strategy {
+	case "fixed":
+		if baseThresh, ok := spacing.Parameters["base_threshold"].(float64); ok {
+			if baseThresh > 0.08 { // 8%
+				return fmt.Errorf("fixed base threshold %.2f%% is too high (>8%%) - DCA entries may never trigger", baseThresh*100)
+			}
+			if mult, ok := spacing.Parameters["threshold_multiplier"].(float64); ok && mult > 2.0 {
+				return fmt.Errorf("threshold multiplier %.2fx is too aggressive (>2.0x) - later DCA levels unreachable", mult)
+			}
+		}
+		
+	case "volatility_adaptive":
+		if sens, ok := spacing.Parameters["volatility_sensitivity"].(float64); ok && sens > 5.0 {
+			return fmt.Errorf("volatility sensitivity %.1fx is too high (>5.0x) - may create unreachable thresholds", sens)
+		}
+	}
+	
+	return nil
+}
+
+// validateIndicatorBounds validates indicator parameter ranges
+func validateIndicatorBounds(cfg *config.DCAConfig) error {
+	// Validate RSI parameters
+	if cfg.RSIOversold >= cfg.RSIOverbought {
+		return fmt.Errorf("RSI oversold %.0f >= overbought %.0f - invalid range", cfg.RSIOversold, cfg.RSIOverbought)
+	}
+	if cfg.RSIOversold > 40 || cfg.RSIOverbought < 60 {
+		return fmt.Errorf("RSI thresholds (%.0f/%.0f) too narrow - may generate excessive signals", cfg.RSIOversold, cfg.RSIOverbought)
+	}
+	
+	// Validate MACD parameters
+	if cfg.MACDFast >= cfg.MACDSlow {
+		return fmt.Errorf("MACD fast %d >= slow %d - invalid configuration", cfg.MACDFast, cfg.MACDSlow)
+	}
+	
+	// Validate Bollinger Bands
+	if cfg.BBStdDev > 4.0 {
+		return fmt.Errorf("Bollinger Bands standard deviation %.1f is too high (>4.0) - bands too wide", cfg.BBStdDev)
+	}
+	if cfg.BBStdDev < 1.0 {
+		return fmt.Errorf("Bollinger Bands standard deviation %.1f is too low (<1.0) - bands too narrow", cfg.BBStdDev)
+	}
+	
+	return nil
 }

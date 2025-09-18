@@ -197,6 +197,7 @@ func NewBacktestEngine(
 	// useTPLevels: enable 5-level TP mode using progressive tpPercent levels
 	useTPLevels bool,
 ) *BacktestEngine {
+	
 	engine := &BacktestEngine{
 		initialBalance: initialBalance,
 		commission:     commission,
@@ -395,8 +396,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 			if b.useTPLevels {
 				// Use High price to check which TP levels were hit during the candle
 				b.checkAndExecuteMultipleTPWithHigh(data[i].High, data[i].Timestamp, data, i)
-			} else if b.tpPercent > 0 {
-				// For single TP, use High price to check if target was reached
+			} else if b.tpPercent > 0 || b.dynamicTPEnabled {
+				// For single TP (fixed or dynamic), use High price to check if target was reached
 				b.checkAndExecuteSingleTPWithHigh(data[i].High, data[i].Timestamp, data, i)
 			}
 		}
@@ -786,15 +787,35 @@ func (b *BacktestEngine) checkAndExecuteSingleTP(currentPrice float64, timestamp
 	}
 }
 
-// checkAndExecuteMultipleTPWithHigh handles 5-level TP logic using High price for realistic simulation
-// Note: Multi-level TP always uses fixed TP percentages as per design constraints
+// checkAndExecuteMultipleTPWithHigh executes multi-level take profit strategy with 5 progressive levels.
+// Each level takes 20% of the position at incrementally higher prices (20%, 40%, 60%, 80%, 100% of base TP).
+// Supports both fixed and dynamic TP base percentages, with realistic execution using High price.
 func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, timestamp time.Time, data []types.OHLCV, currentIndex int) {
 	if b.cycleRemainingQty <= 0 {
 		return
 	}
 	
-	// Calculate current average entry price
+	// Calculate weighted average entry price for TP target calculation
 	avgEntry := b.calculateCurrentAvgEntry()
+	
+	// Determine base TP percentage (fixed or dynamic based on market conditions)
+	var baseTPPercent float64
+	var dynamicRecord *DynamicTPRecord
+	if b.dynamicTPEnabled && data != nil && currentIndex > 0 {
+		currentCandle := data[currentIndex]
+		historyData := data[:currentIndex+1]
+		_, dynamicRecord, err := b.calculateCurrentTPTarget(currentCandle, historyData, avgEntry)
+		if err != nil {
+			baseTPPercent = b.tpPercent // Fallback to fixed TP on calculation error
+		} else if dynamicRecord != nil {
+			baseTPPercent = dynamicRecord.CalculatedTP
+			b.addDynamicTPRecord(dynamicRecord) // Track for performance analysis
+		} else {
+			baseTPPercent = b.tpPercent
+		}
+	} else {
+		baseTPPercent = b.tpPercent // Use configured fixed TP percentage
+	}
 	
 	// Check each TP level sequentially using High price to determine if reached
 	for i, tpLevel := range b.tpLevels {
@@ -802,10 +823,17 @@ func (b *BacktestEngine) checkAndExecuteMultipleTPWithHigh(highPrice float64, ti
 			continue // Skip already hit levels
 		}
 		
-		target := avgEntry * (1.0 + tpLevel.Percent)
+		// Calculate TP target for this level using base TP percentage
+		// Level multipliers: 40%, 60%, 80%, 100%, 120% of base TP (more aggressive progression)
+		// This ensures first level is achievable while maintaining reasonable spread
+		levelMultiplier := 0.4 + float64(i)*0.2 // 0.4, 0.6, 0.8, 1.0, 1.2
+		levelTPPercent := baseTPPercent * levelMultiplier
+		target := avgEntry * (1.0 + levelTPPercent)
+		
 		if highPrice >= target {
 			// Execute at exact target price for realistic simulation
-			b.executeTPLevel(i, target, timestamp, avgEntry)
+			// Pass dynamic TP info for tracking
+			b.executeTPLevelWithDynamicInfo(i, target, timestamp, avgEntry, levelTPPercent, dynamicRecord)
 		}
 	}
 	
@@ -821,6 +849,50 @@ func (b *BacktestEngine) checkAndExecuteMultipleTP(currentPrice float64, timesta
 	// Use checkAndExecuteMultipleTPWithHigh instead
 	// Note: This legacy method doesn't support dynamic TP due to missing data context
 	b.checkAndExecuteMultipleTPWithHigh(currentPrice, timestamp, nil, 0)
+}
+
+// executeTPLevelWithDynamicInfo executes a TP level with dynamic TP information tracking
+func (b *BacktestEngine) executeTPLevelWithDynamicInfo(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64, levelTPPercent float64, dynamicRecord *DynamicTPRecord) {
+    tpLevel := &b.tpLevels[levelIndex]
+    
+    // Sell fixed absolute quantity defined at TP initialization/reset
+    sellQty := tpLevel.Quantity
+    if sellQty > b.cycleRemainingQty {
+        sellQty = b.cycleRemainingQty
+    }
+    
+    // Execute partial exit
+    proceeds := sellQty * currentPrice
+    commission := proceeds * b.commission
+    
+    // Calculate proportional cost for the quantity being sold
+    proportionalCost := 0.0
+    if b.cycleGrossQtySum > 0 {
+        proportionalCost = (b.cycleCostSum / b.cycleGrossQtySum) * sellQty
+    }
+    
+    // PnL = (exit proceeds - commission) - proportional entry cost
+    pnl := (proceeds - commission) - proportionalCost
+    
+    // Update TP level status
+    tpLevel.Hit = true
+    tpLevel.HitTime = &timestamp
+    tpLevel.HitPrice = currentPrice
+    tpLevel.PnL = pnl
+    tpLevel.SoldQty = sellQty
+    tpLevel.SellCommission = commission
+    
+    // Update cycle state
+    b.cycleRemainingQty -= sellQty
+    b.cycleTPProgress[levelIndex] = true
+    b.cycleUnrealizedPnL += pnl  // Add PnL to cycle's unrealized PnL
+    
+    // Update position and balance
+    b.position -= sellQty
+    b.balance += proceeds - commission
+    
+    // Create synthetic trade for this partial exit with dynamic TP info
+    b.updateTradeExitsForTPLevelWithDynamicInfo(sellQty, currentPrice, timestamp, commission, avgEntry, levelTPPercent, dynamicRecord)
 }
 
 func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, timestamp time.Time, avgEntry float64) {
@@ -864,25 +936,23 @@ func (b *BacktestEngine) executeTPLevel(levelIndex int, currentPrice float64, ti
     b.balance += proceeds - commission
     
     // Create synthetic trade for this partial exit using the provided avgEntry
-    b.updateTradeExitsForTPLevel(sellQty, currentPrice, timestamp, commission, avgEntry)
+    // Use the enhanced function with no dynamic TP info for backward compatibility
+    b.updateTradeExitsForTPLevelWithDynamicInfo(sellQty, currentPrice, timestamp, commission, avgEntry, b.tpPercent, nil)
 }
 
-// updateTradeExitsForTPLevel creates synthetic trades for TP level partial exits
-func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPrice float64, timestamp time.Time, totalCommission float64, avgEntry float64) {
-    // For TP levels, we create a synthetic "exit trade" that represents the partial exit
-    // This is cleaner than trying to modify existing entry trades
-    
-    // Calculate proportional cost for consistency with executeTPLevel
+// updateTradeExitsForTPLevelWithDynamicInfo creates synthetic trades for TP level partial exits with dynamic TP info
+func (b *BacktestEngine) updateTradeExitsForTPLevelWithDynamicInfo(sellQty float64, currentPrice float64, timestamp time.Time, totalCommission float64, avgEntry float64, levelTPPercent float64, dynamicRecord *DynamicTPRecord) {
+    // Calculate proportional cost for consistency
     proportionalCost := 0.0
     if b.cycleGrossQtySum > 0 {
         proportionalCost = (b.cycleCostSum / b.cycleGrossQtySum) * sellQty
     }
     
-    // Calculate PnL using the same method as executeTPLevel
+    // Calculate PnL
     proceeds := sellQty * currentPrice
     pnl := (proceeds - totalCommission) - proportionalCost
     
-    // Create a synthetic trade representing this partial exit
+    // Create a synthetic trade representing this partial exit with dynamic TP info
     partialExitTrade := Trade{
         EntryTime:  timestamp, // Use TP hit time as "entry" for the exit trade
         ExitTime:   timestamp, // Same time for exit
@@ -892,11 +962,25 @@ func (b *BacktestEngine) updateTradeExitsForTPLevel(sellQty float64, currentPric
         PnL:        pnl,       // PnL calculated using proportional cost basis
         Commission: totalCommission, // Commission for this partial exit
         Cycle:      b.currentCycleNumber, // Current cycle
+        
+        // Dynamic TP information
+        TPTarget:        levelTPPercent, // The specific level TP percentage used
+        TPStrategy:      "fixed", // Default fallback
+        MarketVolatility: 0,
+        SignalStrength:   0,
+    }
+    
+    // Fill in dynamic TP details if available
+    if dynamicRecord != nil {
+        partialExitTrade.TPStrategy = dynamicRecord.Strategy
+        partialExitTrade.MarketVolatility = dynamicRecord.MarketVolatility
+        partialExitTrade.SignalStrength = dynamicRecord.SignalStrength
     }
     
     // Add this synthetic trade to represent the partial exit
     b.results.Trades = append(b.results.Trades, partialExitTrade)
 }
+
 
 // calculateCurrentAvgEntry calculates the current weighted average entry price
 func (b *BacktestEngine) calculateCurrentAvgEntry() float64 {
@@ -975,20 +1059,23 @@ func (b *BacktestEngine) completeCycle(timestamp time.Time) {
 	b.resetCycle()
 }
 
-// resetTPLevelsForNewEntry resets TP levels when new DCA entry is added to existing cycle
+// resetTPLevelsForNewEntry recalculates take profit levels when a new DCA entry is added.
+// This enables dynamic TP recalculation: when market conditions change and new DCA entries occur,
+// TP targets are recalculated based on the new average entry price and current market conditions.
+// 
+// Key behaviors:
+// - Preserves all previous TP profits (they remain as unrealized PnL)
+// - Maintains partial position exits that already occurred
+// - Recalculates TP targets from level 1 based on new average price
+// - Adjusts TP quantities based on remaining position size
 func (b *BacktestEngine) resetTPLevelsForNewEntry() {
     if !b.useTPLevels {
         return
     }
     
-    // NOTE: We do NOT reverse position/balance changes from previous TP hits
-    // The profits remain as unrealized PnL and the partial exits stay in effect
-    // The synthetic trades for partial exits remain in the trades list
-    // We only reset the TP level status to start checking from TP1 again
-    
-    // Reset TP level status only (keep the profits as unrealized PnL)
+    // Reset TP level tracking to enable fresh calculation from level 1
+    // Previous TP profits are preserved in cycleUnrealizedPnL
     for i := range b.tpLevels {
-        // Reset TP level state to allow hitting them again
         b.cycleTPProgress[i] = false
         b.tpLevels[i].Hit = false
         b.tpLevels[i].HitTime = nil
@@ -997,17 +1084,14 @@ func (b *BacktestEngine) resetTPLevelsForNewEntry() {
         b.tpLevels[i].SoldQty = 0
         b.tpLevels[i].SellCommission = 0
     }
-    
-    // Do NOT restore position or balance - the partial exits remain in effect
-    // Do NOT change cycleRemainingQty - it reflects the actual remaining position
-    // The cycleUnrealizedPnL already contains the profits from previous TP hits
-    // The synthetic trades for partial exits remain in the trades list for accurate reporting
 
-    // Recompute absolute TP quantities based on the current remaining quantity
+    // Recalculate TP quantities based on current remaining position
+    // This ensures proper 20% allocation per level of the remaining position
     b.setTPLevelsQuantities(b.cycleRemainingQty)
 }
 
 // setTPLevelsQuantities sets each TP level's absolute quantity to 20% of baseQty
+// with validation to prevent over-selling
 func (b *BacktestEngine) setTPLevelsQuantities(baseQty float64) {
     if !b.useTPLevels {
         return
@@ -1016,8 +1100,34 @@ func (b *BacktestEngine) setTPLevelsQuantities(baseQty float64) {
     if baseQty < 0 {
         baseQty = 0
     }
+    
+    // Calculate individual level quantity (20% each)
+    levelQty := 0.20 * baseQty
+    
+    // Ensure total TP quantities don't exceed available position
+    totalTPQty := levelQty * 5.0 // 5 levels × 20% each = 100%
+    if totalTPQty > baseQty {
+        // Adjust to prevent over-selling: reduce each level proportionally
+        levelQty = baseQty / 5.0
+    }
+    
+    // Set quantities for each level
     for i := range b.tpLevels {
-        b.tpLevels[i].Quantity = 0.20 * baseQty
+        b.tpLevels[i].Quantity = levelQty
+    }
+    
+    // Additional safety check: verify total doesn't exceed position
+    totalAllocated := 0.0
+    for i := range b.tpLevels {
+        totalAllocated += b.tpLevels[i].Quantity
+    }
+    
+    if totalAllocated > baseQty {
+        // Emergency fix: scale down all quantities proportionally
+        scaleFactor := baseQty / totalAllocated
+        for i := range b.tpLevels {
+            b.tpLevels[i].Quantity *= scaleFactor
+        }
     }
 }
 
