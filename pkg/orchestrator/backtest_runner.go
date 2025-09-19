@@ -148,15 +148,13 @@ func (r *DefaultBacktestRunner) FetchAndSetMinOrderQty(cfg *config.DCAConfig) er
 	return nil
 }
 
-// createStrategy creates a strategy based on configuration
+// createStrategy creates and configures a DCA strategy from the provided configuration
 func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.Strategy, error) {
-	// Use optimized Enhanced DCA strategy
+	// Initialize Enhanced DCA strategy with base trading amount
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
-
-	// Set maximum position multiplier from configuration
 	dca.SetMaxMultiplier(cfg.MaxMultiplier)
 
-	// Configure spacing strategy - all configs must have one
+	// Configure DCA spacing strategy (required for all configurations)
 	if cfg.DCASpacing == nil {
 		return nil, fmt.Errorf("no DCA spacing strategy configured - please specify dca_spacing in your configuration")
 	}
@@ -171,14 +169,20 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 		return nil, fmt.Errorf("failed to create spacing strategy: %w", err)
 	}
 	
-	// Validate strategy configuration
 	if err := spacingStrategy.ValidateConfig(); err != nil {
 		return nil, fmt.Errorf("invalid spacing strategy configuration: %w", err)
 	}
 	
-	// Set the spacing strategy
 	dca.SetSpacingStrategy(spacingStrategy)
-	log.Printf("✅ Using %s spacing strategy", spacingStrategy.GetName())
+	log.Printf("Using %s spacing strategy", spacingStrategy.GetName())
+
+	// Configure dynamic take profit if specified
+	if cfg.DynamicTP != nil {
+		dca.SetDynamicTPConfig(cfg.DynamicTP)
+		log.Printf("Dynamic TP configured: %s strategy (base: %.2f%%, range: %.2f%%-%.2f%%)", 
+			cfg.DynamicTP.Strategy, cfg.DynamicTP.BaseTPPercent*100,
+			getMinTPPercent(cfg.DynamicTP)*100, getMaxTPPercent(cfg.DynamicTP)*100)
+	}
 
 	// Indicator inclusion map
 	include := make(map[string]bool)
@@ -239,6 +243,28 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 	}
 
 	return dca, nil
+}
+
+// getMinTPPercent extracts minimum TP percentage from dynamic TP config
+func getMinTPPercent(cfg *config.DynamicTPConfig) float64 {
+	if cfg.VolatilityConfig != nil {
+		return cfg.VolatilityConfig.MinTPPercent
+	}
+	if cfg.IndicatorConfig != nil {
+		return cfg.IndicatorConfig.MinTPPercent
+	}
+	return cfg.BaseTPPercent // Fallback
+}
+
+// getMaxTPPercent extracts maximum TP percentage from dynamic TP config
+func getMaxTPPercent(cfg *config.DynamicTPConfig) float64 {
+	if cfg.VolatilityConfig != nil {
+		return cfg.VolatilityConfig.MaxTPPercent
+	}
+	if cfg.IndicatorConfig != nil {
+		return cfg.IndicatorConfig.MaxTPPercent
+	}
+	return cfg.BaseTPPercent // Fallback
 }
 
 // logBacktestConfig logs the backtest configuration

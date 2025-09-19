@@ -81,17 +81,18 @@ func (s *VolatilityAdaptiveSpacing) CalculateThreshold(level int, context *Marke
 	volatilityMultiplier := 0.5 + normalizedVolatility*s.volatilitySensitivity
 	adaptiveBaseThreshold := s.baseThreshold * volatilityMultiplier
 
-	// Apply level-based progressive multiplier
-	finalThreshold := s.applyLevelMultiplier(adaptiveBaseThreshold, level)
+	// Apply level-based progressive multiplier with growth cap
+	finalThreshold := s.applyLevelMultiplierCapped(adaptiveBaseThreshold, level)
 
-	// Enforce min/max bounds
+	// Enforce min/max bounds with reasonable maximum for volatile markets
+	reasonableMax := math.Min(s.maxThreshold, 0.06) // Never exceed 6% for adaptive strategy
 	finalThreshold = math.Max(finalThreshold, s.minThreshold)
-	finalThreshold = math.Min(finalThreshold, s.maxThreshold)
+	finalThreshold = math.Min(finalThreshold, reasonableMax)
 
 	return finalThreshold
 }
 
-// applyLevelMultiplier applies the progressive multiplier based on DCA level
+// applyLevelMultiplier applies the progressive multiplier based on DCA level (legacy)
 func (s *VolatilityAdaptiveSpacing) applyLevelMultiplier(baseThreshold float64, level int) float64 {
 	if s.levelMultiplier <= 1.0 || level == 0 {
 		return baseThreshold
@@ -99,6 +100,25 @@ func (s *VolatilityAdaptiveSpacing) applyLevelMultiplier(baseThreshold float64, 
 
 	// Apply exponential multiplier: base * multiplier^level
 	return baseThreshold * math.Pow(s.levelMultiplier, float64(level))
+}
+
+// applyLevelMultiplierCapped applies progressive multiplier with growth cap to prevent unreachable thresholds
+func (s *VolatilityAdaptiveSpacing) applyLevelMultiplierCapped(baseThreshold float64, level int) float64 {
+	if s.levelMultiplier <= 1.0 || level == 0 {
+		return baseThreshold
+	}
+
+	// Use exponential growth for first few levels, then linear to prevent extreme thresholds
+	if level <= 3 {
+		// Exponential for levels 1-3: good initial spacing
+		return baseThreshold * math.Pow(s.levelMultiplier, float64(level))
+	} else {
+		// Linear growth for levels 4+: prevents unreachable thresholds
+		baseForLevel3 := baseThreshold * math.Pow(s.levelMultiplier, 3.0)
+		additionalLevels := float64(level - 3)
+		linearIncrement := baseForLevel3 * 0.15 // 15% increase per level after level 3
+		return baseForLevel3 + (additionalLevels * linearIncrement)
+	}
 }
 
 // GetName returns the strategy name

@@ -92,4 +92,10 @@ type OptimizationRanges struct {
 	VolatilitySensitivity []float64
 	ATRPeriods           []int
 	LevelMultipliers     []float64
+	
+	// Dynamic TP parameters
+	TPVolatilityMultipliers []float64 // Volatility-based TP multipliers
+	TPMinPercents          []float64 // Minimum TP percentages
+	TPMaxPercents          []float64 // Maximum TP percentages
+	TPStrengthMultipliers  []float64 // Indicator strength multipliers
 }

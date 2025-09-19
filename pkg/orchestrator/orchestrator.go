@@ -121,7 +121,7 @@ func (o *DefaultOrchestrator) RunMultiIntervalAnalysis(cfg *config.DCAConfig, da
 		return nil, fmt.Errorf("no intervals found for symbol %s on exchange %s", cfg.Symbol, exchange)
 	}
 	
-	log.Printf("🔍 Found %d intervals: %v", len(intervals), intervals)
+	log.Printf("Found %d intervals for %s: %v", len(intervals), cfg.Symbol, intervals)
 	
 	var results []IntervalResult
 	var bestResult *IntervalResult

@@ -44,16 +44,27 @@ func NewFixedProgressiveSpacing(params map[string]interface{}) (*FixedProgressiv
 
 // CalculateThreshold calculates the fixed progressive threshold for the next DCA entry
 func (s *FixedProgressiveSpacing) CalculateThreshold(level int, context *MarketContext) float64 {
-	// Classic fixed progressive formula: base * multiplier^level
+	// Modified progressive formula with exponential growth cap to prevent unreachable thresholds
 	threshold := s.baseThreshold
 	
 	if s.thresholdMultiplier > 1.0 && level > 0 {
-		threshold = s.baseThreshold * math.Pow(s.thresholdMultiplier, float64(level))
+		// Use exponential growth for first few levels, then linear for higher levels
+		if level <= 3 {
+			// Exponential for levels 1-3: provides good initial spacing
+			threshold = s.baseThreshold * math.Pow(s.thresholdMultiplier, float64(level))
+		} else {
+			// Linear growth for levels 4+: prevents unreachable thresholds
+			baseForLevel3 := s.baseThreshold * math.Pow(s.thresholdMultiplier, 3.0)
+			additionalLevels := float64(level - 3)
+			linearIncrement := baseForLevel3 * 0.2 // 20% increase per level after level 3
+			threshold = baseForLevel3 + (additionalLevels * linearIncrement)
+		}
 	}
 
-	// Apply safety bounds
+	// Apply safety bounds with reasonable maximum (8% for fixed strategy)
+	reasonableMax := math.Min(s.maxThreshold, 0.08) // Never exceed 8%
 	threshold = math.Max(threshold, s.minThreshold)
-	threshold = math.Min(threshold, s.maxThreshold)
+	threshold = math.Min(threshold, reasonableMax)
 
 	return threshold
 }

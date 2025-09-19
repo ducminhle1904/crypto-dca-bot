@@ -21,6 +21,13 @@ type Strategy interface {
 	// ResetForNewPeriod resets strategy state for walk-forward validation periods
 	// This clears all indicator state to prevent contamination between validation folds
 	ResetForNewPeriod()
+
+	// GetDynamicTPPercent calculates dynamic TP percentage based on current market conditions
+	// Returns the calculated TP percentage, or 0 if dynamic TP is not enabled
+	GetDynamicTPPercent(currentCandle types.OHLCV, data []types.OHLCV) (float64, error)
+	
+	// IsDynamicTPEnabled returns true if dynamic TP is configured and enabled
+	IsDynamicTPEnabled() bool
 }
 
 // TradeDecision represents a trading decision made by a strategy

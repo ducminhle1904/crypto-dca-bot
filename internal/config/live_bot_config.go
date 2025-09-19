@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/exchange"
+	pkgconfig "github.com/ducminhle1904/crypto-dca-bot/pkg/config"
 )
 
 // LiveBotConfig represents the complete configuration for the live trading bot
@@ -51,6 +52,9 @@ type StrategyConfig struct {
 	TPLevels     int   `json:"tp_levels"`      // Number of TP levels (default 5)
 	TPQuantity   float64 `json:"tp_quantity"`  // Quantity per TP level (default 0.20 = 20%)
 	
+	// Dynamic take profit configuration
+	DynamicTP    *pkgconfig.DynamicTPConfig `json:"dynamic_tp,omitempty"` // Dynamic TP configuration
+	
 	// Order management settings
 	CancelOrphanedOrders bool `json:"cancel_orphaned_orders"` // Cancel existing orders on startup (default false)
 	
@@ -84,6 +88,7 @@ type DCASpacingConfig struct {
 	Strategy   string                 `json:"strategy"`   // Strategy name (e.g., "fixed", "volatility_adaptive")
 	Parameters map[string]interface{} `json:"parameters"` // Strategy-specific parameters
 }
+
 
 
 // IndicatorRSIConfig holds RSI indicator configuration

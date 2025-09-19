@@ -274,6 +274,34 @@ func copyConfig(config interface{}) interface{} {
 		copied.DCASpacing = &spacingCopy
 	}
 	
+	// Deep copy Dynamic TP configuration
+	if dcaConfig.DynamicTP != nil {
+		dynamicTPCopy := *dcaConfig.DynamicTP
+		
+		// Deep copy VolatilityConfig if present
+		if dcaConfig.DynamicTP.VolatilityConfig != nil {
+			volatilityConfigCopy := *dcaConfig.DynamicTP.VolatilityConfig
+			dynamicTPCopy.VolatilityConfig = &volatilityConfigCopy
+		}
+		
+		// Deep copy IndicatorConfig if present
+		if dcaConfig.DynamicTP.IndicatorConfig != nil {
+			indicatorConfigCopy := *dcaConfig.DynamicTP.IndicatorConfig
+			
+			// Deep copy the Weights map
+			if dcaConfig.DynamicTP.IndicatorConfig.Weights != nil {
+				indicatorConfigCopy.Weights = make(map[string]float64)
+				for k, v := range dcaConfig.DynamicTP.IndicatorConfig.Weights {
+					indicatorConfigCopy.Weights[k] = v
+				}
+			}
+			
+			dynamicTPCopy.IndicatorConfig = &indicatorConfigCopy
+		}
+		
+		copied.DynamicTP = &dynamicTPCopy
+	}
+	
 	return &copied
 }
 
@@ -386,6 +414,35 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 		dcaConfig.StochasticRSIOverbought = RandomChoice(ranges.StochasticRSIOverboughts, rng)
 		dcaConfig.StochasticRSIOversold = RandomChoice(ranges.StochasticRSIOversolds, rng)
 	}
+	
+	// Randomize Dynamic TP parameters if dynamic TP is configured
+	if dcaConfig.DynamicTP != nil {
+		// Randomize BaseTPPercent - this is the core TP percentage for dynamic calculations
+		dcaConfig.DynamicTP.BaseTPPercent = RandomChoice(ranges.TPCandidates, rng)
+		
+		switch dcaConfig.DynamicTP.Strategy {
+		case "volatility_adaptive":
+			if dcaConfig.DynamicTP.VolatilityConfig != nil {
+				dcaConfig.DynamicTP.VolatilityConfig.Multiplier = RandomChoice(ranges.TPVolatilityMultipliers, rng)
+				dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent = RandomChoice(ranges.TPMinPercents, rng)
+				dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent = RandomChoice(ranges.TPMaxPercents, rng)
+				// ATRPeriod will be synchronized with DCA spacing - randomized in DCA spacing parameters
+			}
+		case "indicator_based":
+			if dcaConfig.DynamicTP.IndicatorConfig != nil {
+				dcaConfig.DynamicTP.IndicatorConfig.StrengthMultiplier = RandomChoice(ranges.TPStrengthMultipliers, rng)
+				dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent = RandomChoice(ranges.TPMinPercents, rng)
+				dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent = RandomChoice(ranges.TPMaxPercents, rng)
+				// Weights are preserved from original config for indicator-based TP
+			}
+		}
+	}
+	
+	// Fix parameter ordering constraints after randomization
+	validateAndFixParameterOrdering(dcaConfig)
+	
+	// Synchronize ATR periods between DCA spacing and Dynamic TP
+	synchronizeATRPeriodsInConfig(dcaConfig)
 }
 
 func RunBacktestWithData(config interface{}, data []types.OHLCV) *backtest.BacktestResults {
@@ -498,6 +555,47 @@ func CrossoverConfigs(child, parent1, parent2 interface{}, rng *rand.Rand) {
 		if rng.Float64() < 0.5 { childConfig.StochasticRSIOverbought = parent2Config.StochasticRSIOverbought }
 		if rng.Float64() < 0.5 { childConfig.StochasticRSIOversold = parent2Config.StochasticRSIOversold }
 	}
+	
+	// Crossover Dynamic TP parameters if both parents have dynamic TP configured
+	if childConfig.DynamicTP != nil && parent2Config.DynamicTP != nil {
+		// Crossover BaseTPPercent - critical for dynamic TP optimization
+		if rng.Float64() < 0.5 {
+			childConfig.DynamicTP.BaseTPPercent = parent2Config.DynamicTP.BaseTPPercent
+		}
+		
+		switch childConfig.DynamicTP.Strategy {
+		case "volatility_adaptive":
+			if childConfig.DynamicTP.VolatilityConfig != nil && parent2Config.DynamicTP.VolatilityConfig != nil {
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.VolatilityConfig.Multiplier = parent2Config.DynamicTP.VolatilityConfig.Multiplier
+				}
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.VolatilityConfig.MinTPPercent = parent2Config.DynamicTP.VolatilityConfig.MinTPPercent
+				}
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.VolatilityConfig.MaxTPPercent = parent2Config.DynamicTP.VolatilityConfig.MaxTPPercent
+				}
+			}
+		case "indicator_based":
+			if childConfig.DynamicTP.IndicatorConfig != nil && parent2Config.DynamicTP.IndicatorConfig != nil {
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.IndicatorConfig.StrengthMultiplier = parent2Config.DynamicTP.IndicatorConfig.StrengthMultiplier
+				}
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.IndicatorConfig.MinTPPercent = parent2Config.DynamicTP.IndicatorConfig.MinTPPercent
+				}
+				if rng.Float64() < 0.5 {
+					childConfig.DynamicTP.IndicatorConfig.MaxTPPercent = parent2Config.DynamicTP.IndicatorConfig.MaxTPPercent
+				}
+			}
+		}
+	}
+	
+	// Fix parameter ordering constraints after crossover
+	validateAndFixParameterOrdering(childConfig)
+	
+	// Synchronize ATR periods between DCA spacing and Dynamic TP
+	synchronizeATRPeriodsInConfig(childConfig)
 }
 
 func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
@@ -598,6 +696,180 @@ func MutateConfig(config, baseConfig interface{}, rng *rand.Rand) {
 		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIPeriod = RandomChoice(ranges.StochasticRSIPeriods, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIOverbought = RandomChoice(ranges.StochasticRSIOverboughts, rng) }
 		if rng.Float64() < 0.1 { dcaConfig.StochasticRSIOversold = RandomChoice(ranges.StochasticRSIOversolds, rng) }
+	}
+	
+	// Mutate Dynamic TP parameters if configured (10% chance each)
+	if dcaConfig.DynamicTP != nil {
+		// Mutate BaseTPPercent - critical for dynamic TP optimization
+		if rng.Float64() < 0.1 {
+			dcaConfig.DynamicTP.BaseTPPercent = RandomChoice(ranges.TPCandidates, rng)
+		}
+		
+		switch dcaConfig.DynamicTP.Strategy {
+		case "volatility_adaptive":
+			if dcaConfig.DynamicTP.VolatilityConfig != nil {
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.VolatilityConfig.Multiplier = RandomChoice(ranges.TPVolatilityMultipliers, rng)
+				}
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent = RandomChoice(ranges.TPMinPercents, rng)
+				}
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent = RandomChoice(ranges.TPMaxPercents, rng)
+				}
+			}
+		case "indicator_based":
+			if dcaConfig.DynamicTP.IndicatorConfig != nil {
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.IndicatorConfig.StrengthMultiplier = RandomChoice(ranges.TPStrengthMultipliers, rng)
+				}
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent = RandomChoice(ranges.TPMinPercents, rng)
+				}
+				if rng.Float64() < 0.1 {
+					dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent = RandomChoice(ranges.TPMaxPercents, rng)
+				}
+			}
+		}
+	}
+	
+	// Fix parameter ordering constraints after mutation
+	validateAndFixParameterOrdering(dcaConfig)
+	
+	// Synchronize ATR periods between DCA spacing and Dynamic TP
+	synchronizeATRPeriodsInConfig(dcaConfig)
+}
+
+// validateAndFixParameterOrdering ensures all parameter ordering constraints are satisfied
+func validateAndFixParameterOrdering(dcaConfig *configpkg.DCAConfig) {
+	// Fix WaveTrend N1 < N2 constraint
+	if dcaConfig.WaveTrendN1 >= dcaConfig.WaveTrendN2 {
+		// Swap if N1 >= N2, ensuring N1 < N2
+		if dcaConfig.WaveTrendN1 == dcaConfig.WaveTrendN2 {
+			// If equal, increment N2
+			dcaConfig.WaveTrendN2++
+		} else {
+			// If N1 > N2, swap them
+			dcaConfig.WaveTrendN1, dcaConfig.WaveTrendN2 = dcaConfig.WaveTrendN2, dcaConfig.WaveTrendN1
+		}
+	}
+	
+	// Fix MACD Fast < Slow constraint
+	if dcaConfig.MACDFast >= dcaConfig.MACDSlow {
+		// Swap if Fast >= Slow, ensuring Fast < Slow
+		if dcaConfig.MACDFast == dcaConfig.MACDSlow {
+			// If equal, increment Slow
+			dcaConfig.MACDSlow++
+		} else {
+			// If Fast > Slow, swap them
+			dcaConfig.MACDFast, dcaConfig.MACDSlow = dcaConfig.MACDSlow, dcaConfig.MACDFast
+		}
+	}
+	
+	// Fix RSI Oversold < Overbought constraint
+	if dcaConfig.RSIOversold >= dcaConfig.RSIOverbought {
+		// Swap if Oversold >= Overbought
+		if dcaConfig.RSIOversold == dcaConfig.RSIOverbought {
+			// If equal, adjust to maintain spread
+			dcaConfig.RSIOversold = dcaConfig.RSIOverbought - 10
+			if dcaConfig.RSIOversold < 10 {
+				dcaConfig.RSIOversold = 10
+				dcaConfig.RSIOverbought = 90
+			}
+		} else {
+			dcaConfig.RSIOversold, dcaConfig.RSIOverbought = dcaConfig.RSIOverbought, dcaConfig.RSIOversold
+		}
+	}
+	
+	// Fix MFI Oversold < Overbought constraint
+	if dcaConfig.MFIOversold >= dcaConfig.MFIOverbought {
+		// Swap if Oversold >= Overbought
+		if dcaConfig.MFIOversold == dcaConfig.MFIOverbought {
+			// If equal, adjust to maintain spread
+			dcaConfig.MFIOversold = dcaConfig.MFIOverbought - 10
+			if dcaConfig.MFIOversold < 10 {
+				dcaConfig.MFIOversold = 10
+				dcaConfig.MFIOverbought = 90
+			}
+		} else {
+			dcaConfig.MFIOversold, dcaConfig.MFIOverbought = dcaConfig.MFIOverbought, dcaConfig.MFIOversold
+		}
+	}
+	
+	// Fix StochasticRSI Oversold < Overbought constraint
+	if dcaConfig.StochasticRSIOversold >= dcaConfig.StochasticRSIOverbought {
+		// Swap if Oversold >= Overbought
+		if dcaConfig.StochasticRSIOversold == dcaConfig.StochasticRSIOverbought {
+			// If equal, adjust to maintain spread
+			dcaConfig.StochasticRSIOversold = dcaConfig.StochasticRSIOverbought - 10
+			if dcaConfig.StochasticRSIOversold < 10 {
+				dcaConfig.StochasticRSIOversold = 10
+				dcaConfig.StochasticRSIOverbought = 90
+			}
+		} else {
+			dcaConfig.StochasticRSIOversold, dcaConfig.StochasticRSIOverbought = dcaConfig.StochasticRSIOverbought, dcaConfig.StochasticRSIOversold
+		}
+	}
+	
+	// Fix Dynamic TP Min < Max constraints
+	if dcaConfig.DynamicTP != nil {
+		switch dcaConfig.DynamicTP.Strategy {
+		case "volatility_adaptive":
+			if dcaConfig.DynamicTP.VolatilityConfig != nil {
+				if dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent >= dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent {
+					// Swap if Min >= Max
+					if dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent == dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent {
+						// If equal, adjust Max to maintain spread
+						dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent = dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent + 0.01
+					} else {
+						dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent, dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent = 
+							dcaConfig.DynamicTP.VolatilityConfig.MaxTPPercent, dcaConfig.DynamicTP.VolatilityConfig.MinTPPercent
+					}
+				}
+			}
+		case "indicator_based":
+			if dcaConfig.DynamicTP.IndicatorConfig != nil {
+				if dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent >= dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent {
+					// Swap if Min >= Max
+					if dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent == dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent {
+						// If equal, adjust Max to maintain spread
+						dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent = dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent + 0.01
+					} else {
+						dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent, dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent = 
+							dcaConfig.DynamicTP.IndicatorConfig.MaxTPPercent, dcaConfig.DynamicTP.IndicatorConfig.MinTPPercent
+					}
+				}
+			}
+		}
+	}
+}
+
+// synchronizeATRPeriodsInConfig ensures DCA spacing and Dynamic TP use the same ATR period in the configuration
+// Priority: DCA spacing atr_period > Dynamic TP ATRPeriod > Default 14
+func synchronizeATRPeriodsInConfig(dcaConfig *configpkg.DCAConfig) {
+	var targetATRPeriod int = 14 // Default fallback
+	
+	// Priority 1: Get ATR period from DCA spacing configuration
+	if dcaConfig.DCASpacing != nil && dcaConfig.DCASpacing.Parameters != nil {
+		if atrPeriod, ok := dcaConfig.DCASpacing.Parameters["atr_period"].(int); ok && atrPeriod > 0 {
+			targetATRPeriod = atrPeriod
+		}
+	}
+	
+	// Priority 2: If no DCA spacing ATR period, use Dynamic TP ATR period
+	if targetATRPeriod == 14 && dcaConfig.DynamicTP != nil && dcaConfig.DynamicTP.VolatilityConfig != nil {
+		if dcaConfig.DynamicTP.VolatilityConfig.ATRPeriod > 0 {
+			targetATRPeriod = dcaConfig.DynamicTP.VolatilityConfig.ATRPeriod
+		}
+	}
+	
+	// Synchronize both configurations to use the same ATR period
+	if dcaConfig.DCASpacing != nil && dcaConfig.DCASpacing.Parameters != nil {
+		dcaConfig.DCASpacing.Parameters["atr_period"] = targetATRPeriod
+	}
+	
+	if dcaConfig.DynamicTP != nil && dcaConfig.DynamicTP.VolatilityConfig != nil {
+		dcaConfig.DynamicTP.VolatilityConfig.ATRPeriod = targetATRPeriod
 	}
 }
 
@@ -787,6 +1059,11 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
 		stochRSI := oscillators.NewStochasticRSI()
 		dca.AddIndicator(stochRSI)
+	}
+	
+	// CRITICAL FIX: Configure dynamic TP if present in the config
+	if cfg.DynamicTP != nil {
+		dca.SetDynamicTPConfig(cfg.DynamicTP)
 	}
 	
 	return dca

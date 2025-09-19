@@ -68,6 +68,9 @@ type MainBacktestConfig struct {
 	UseTPLevels    bool    `json:"use_tp_levels"`
 	Cycle          bool    `json:"cycle"`
 	
+	// Dynamic TP configuration
+	DynamicTP      *config.DynamicTPConfig `json:"dynamic_tp,omitempty"`
+	
 	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
@@ -91,6 +94,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		TPPercent:      cfg.TPPercent,
 		UseTPLevels:    true,
 		Cycle:          cfg.Cycle,
+		DynamicTP:      cfg.DynamicTP,
 		Indicators:     cfg.Indicators,
 	}
 	
