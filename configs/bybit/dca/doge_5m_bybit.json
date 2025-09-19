@@ -1,54 +1,52 @@
 {
   "strategy": {
-    "symbol": "HYPEUSDT",
-    "category": "linear",
-    "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
+    "symbol": "DOGEUSDT",
+    "data_file": "data\\bybit\\linear\\DOGEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 4.5,
+    "max_multiplier": 1.8,
     "dca_spacing": {
       "strategy": "volatility_adaptive",
       "parameters": {
-        "atr_period": 28,
+        "atr_period": 12,
         "base_threshold": 0.008,
-        "level_multiplier": 1.05,
+        "level_multiplier": 1.2,
         "max_threshold": 0.05,
         "min_threshold": 0.003,
-        "volatility_sensitivity": 1.2
+        "volatility_sensitivity": 1
       }
     },
     "interval": "5m",
     "window_size": 100,
-    "tp_percent": 0.03,
+    "tp_percent": 0.05,
     "use_tp_levels": true,
-    "auto_tp_orders": true,
     "cycle": true,
     "dynamic_tp": {
       "strategy": "volatility_adaptive",
-      "base_tp_percent": 0.04,
+      "base_tp_percent": 0.05,
       "volatility_config": {
-        "multiplier": 0.5,
+        "multiplier": 2,
         "min_tp_percent": 0.01,
         "max_tp_percent": 0.09,
-        "atr_period": 28
+        "atr_period": 12
       }
     },
     "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "hull_ma": {
-      "period": 22
+      "period": 25
     },
     "mfi": {
-      "period": 10,
-      "oversold": 30,
+      "period": 18,
+      "oversold": 20,
       "overbought": 70
     },
     "keltner_channels": {
-      "period": 50,
+      "period": 15,
       "multiplier": 2
     },
     "wavetrend": {
-      "n1": 8,
-      "n2": 18,
-      "overbought": 50,
+      "n1": 10,
+      "n2": 21,
+      "overbought": 80,
       "oversold": -70
     }
   },
@@ -64,7 +62,7 @@
   "risk": {
     "initial_balance": 500,
     "commission": 0.0005,
-    "min_order_qty": 0.01
+    "min_order_qty": 1
   },
   "notifications": {
     "enabled": false,
