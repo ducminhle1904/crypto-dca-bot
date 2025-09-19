@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators"
@@ -16,6 +17,7 @@ import (
 // - Dynamic DCA spacing based on market volatility or fixed thresholds
 // - Dynamic take profit targeting based on market conditions
 // - Intelligent position sizing with configurable risk management
+// - Market regime-aware signal consensus requirements
 type EnhancedDCAStrategy struct {
 	// Core indicator management and analysis
 	indicatorManager *indicators.IndicatorManager
@@ -34,6 +36,9 @@ type EnhancedDCAStrategy struct {
 	spacingStrategy  spacing.DCASpacingStrategy // Configurable DCA entry spacing logic
 	atrCalculator    *base.ATR                  // Average True Range for volatility analysis
 	dynamicTPConfig  *config.DynamicTPConfig    // Dynamic take profit configuration
+	
+	// Market regime detection for adaptive signal consensus
+	regimeDetector   *MarketRegimeDetector      // Market regime detection system
 }
 
 // NewEnhancedDCAStrategy creates a new enhanced DCA strategy instance
@@ -48,6 +53,7 @@ func NewEnhancedDCAStrategy(baseAmount float64) *EnhancedDCAStrategy {
 		spacingStrategy:  nil, // Will be set by orchestrator
 		atrCalculator:    base.NewATR(14), // Default 14-period ATR (will be updated after config)
 		dynamicTPConfig:  nil, // Will be set by orchestrator if dynamic TP is enabled
+		regimeDetector:   nil, // Will be set only when market regime is enabled
 	}
 }
 
@@ -67,6 +73,15 @@ func (s *EnhancedDCAStrategy) GetSpacingStrategy() spacing.DCASpacingStrategy {
 func (s *EnhancedDCAStrategy) SetDynamicTPConfig(dynamicTPConfig *config.DynamicTPConfig) {
 	s.dynamicTPConfig = dynamicTPConfig
 	s.synchronizeATRPeriod()
+}
+
+// SetMarketRegimeConfig sets the market regime configuration
+func (s *EnhancedDCAStrategy) SetMarketRegimeConfig(regimeConfig *MarketRegimeConfig) {
+	if regimeConfig != nil && regimeConfig.Enabled {
+		s.regimeDetector = NewMarketRegimeDetector(regimeConfig)
+	} else {
+		s.regimeDetector = nil // Disable market regime
+	}
 }
 
 // GetDynamicTPConfig returns the current dynamic TP configuration
@@ -120,7 +135,7 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	}
 
 	// Efficiently count signals using batch results
-	buySignals, sellSignals, _, _ := s.indicatorManager.CountActiveSignals(results)
+	buySignals, _, _, _ := s.indicatorManager.CountActiveSignals(results)
 	
 	// Track failed indicators for debugging
 	failedCount := 0
@@ -146,7 +161,6 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	// Get total configured indicators (always base calculations on this)
 	totalConfiguredIndicators := s.GetIndicatorCount()
 	workingIndicatorsCount := len(results) - failedCount
-	activeSignals := buySignals + sellSignals
 	
 	// If no indicators are working, hold
 	if workingIndicatorsCount == 0 || totalConfiguredIndicators == 0 {
@@ -156,61 +170,131 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		}, nil
 	}
 	
-	// Calculate confidence based on ALL configured indicators (not just active signals)
-	confidence := float64(buySignals) / float64(totalConfiguredIndicators)
-
-	if confidence >= s.minConfidence {
-	// Apply price threshold check for DCA entries with defensive checks
-	if s.spacingStrategy != nil && s.lastEntryPrice > 0 && currentPrice > 0 {
-		// Add defensive check to prevent division by zero
-		if s.lastEntryPrice <= 0 {
-			return &TradeDecision{
-				Action: ActionHold,
-				Reason: "Invalid last entry price for threshold calculation",
-			}, nil
+	// Market regime-aware signal consensus check
+	if s.regimeDetector != nil {
+		// Get current ATR for regime detection
+		currentATR, atrErr := s.atrCalculator.Calculate(data)
+		if atrErr != nil {
+			currentATR = 0 // Use 0 if ATR calculation fails
 		}
 		
-		priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
-		requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
+		// Detect current market regime
+		regime := s.regimeDetector.DetectRegime(data, currentATR)
+		requiredIndicators := s.regimeDetector.GetRequiredIndicators(regime)
 		
-		if priceDrop < requiredThreshold {
-			strategyInfo := "Fixed Progressive"
-			if s.spacingStrategy != nil {
-				strategyInfo = s.spacingStrategy.GetName()
+		log.Printf("🎯 Market Regime: %s, Required: %d, Got: %d indicators (ATR: %.4f)", 
+			string(regime), requiredIndicators, buySignals, currentATR)
+		
+		// Check if we have enough buy signals for the current market regime
+		if buySignals >= requiredIndicators {
+			// Apply price threshold check for DCA entries with defensive checks
+			if s.spacingStrategy != nil && s.lastEntryPrice > 0 && currentPrice > 0 {
+				// Add defensive check to prevent division by zero
+				if s.lastEntryPrice <= 0 {
+					return &TradeDecision{
+						Action: ActionHold,
+						Reason: "Invalid last entry price for threshold calculation",
+					}, nil
+				}
+				
+				priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
+				requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
+				
+				if priceDrop < requiredThreshold {
+					strategyInfo := "Fixed Progressive"
+					if s.spacingStrategy != nil {
+						strategyInfo = s.spacingStrategy.GetName()
+					}
+					
+					return &TradeDecision{
+						Action: ActionHold,
+						Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s, Regime: %s)", 
+							priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo, string(regime)),
+					}, nil
+				}
 			}
+
+			// Calculate confidence and net strength based on ALL configured indicators  
+			confidence := float64(buySignals) / float64(totalConfiguredIndicators)
+			netStrength := confidence // Use confidence as strength for consistency
+			
+			amount := s.calculatePositionSize(netStrength, confidence)
+			
+			// Update last entry price, time, and increment DCA level
+			s.lastEntryPrice = currentPrice
+			s.lastTradeTime = currentCandle.Timestamp
+			s.dcaLevel++ // Increment DCA level for next entry
 			
 			return &TradeDecision{
-				Action: ActionHold,
-				Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s)", 
-					priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo),
+				Action:     ActionBuy,
+				Amount:     amount,
+				Confidence: confidence,
+				Strength:   netStrength,
+				Reason:     fmt.Sprintf("Buy consensus: %d/%d required (%s regime)", buySignals, requiredIndicators, string(regime)),
 			}, nil
 		}
-	}
 
-		// Calculate net strength based on buy signals across ALL indicators  
-		netStrength := float64(buySignals) / float64(totalConfiguredIndicators)
-		
-		amount := s.calculatePositionSize(netStrength, confidence)
-		
-		// Update last entry price, time, and increment DCA level
-		s.lastEntryPrice = currentPrice
-		s.lastTradeTime = currentCandle.Timestamp
-		s.dcaLevel++ // Increment DCA level for next entry
-		
 		return &TradeDecision{
-			Action:     ActionBuy,
-			Amount:     amount,
-			Confidence: confidence,
-			Strength:   netStrength,
-			Reason:     fmt.Sprintf("Buy consensus: %d/%d active", buySignals, activeSignals),
+			Action: ActionHold,
+			Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d required (%s regime)", 
+					buySignals, requiredIndicators, string(regime)),
+		}, nil
+	} else {
+		// Fallback to normal logic when market regime is not enabled
+		confidence := float64(buySignals) / float64(totalConfiguredIndicators)
+		
+		if confidence >= s.minConfidence {
+			// Apply price threshold check for DCA entries with defensive checks
+			if s.spacingStrategy != nil && s.lastEntryPrice > 0 && currentPrice > 0 {
+				// Add defensive check to prevent division by zero
+				if s.lastEntryPrice <= 0 {
+					return &TradeDecision{
+						Action: ActionHold,
+						Reason: "Invalid last entry price for threshold calculation",
+					}, nil
+				}
+				
+				priceDrop := (s.lastEntryPrice - currentPrice) / s.lastEntryPrice
+				requiredThreshold := s.calculateCurrentThreshold(currentCandle, data)
+				
+				if priceDrop < requiredThreshold {
+					strategyInfo := "Fixed Progressive"
+					if s.spacingStrategy != nil {
+						strategyInfo = s.spacingStrategy.GetName()
+					}
+					
+					return &TradeDecision{
+						Action: ActionHold,
+						Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s)", 
+							priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo),
+					}, nil
+				}
+			}
+
+			// Calculate confidence and net strength based on ALL configured indicators  
+			netStrength := confidence // Use confidence as strength for consistency
+			
+			amount := s.calculatePositionSize(netStrength, confidence)
+			
+			// Update last entry price, time, and increment DCA level
+			s.lastEntryPrice = currentPrice
+			s.lastTradeTime = currentCandle.Timestamp
+			s.dcaLevel++ // Increment DCA level for next entry
+			
+			return &TradeDecision{
+				Action:     ActionBuy,
+				Amount:     amount,
+				Confidence: confidence,
+				Strength:   netStrength,
+				Reason:     fmt.Sprintf("Buy consensus: %.1f%% >= %.1f%%", confidence*100, s.minConfidence*100),
+			}, nil
+		}
+
+		return &TradeDecision{
+			Action: ActionHold,
+			Reason: fmt.Sprintf("Insufficient buy consensus: %.1f%% < %.1f%%", confidence*100, s.minConfidence*100),
 		}, nil
 	}
-
-	return &TradeDecision{
-		Action: ActionHold,
-		Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d active (%.1f%% < %.1f%%)", 
-				buySignals, activeSignals, confidence*100, s.minConfidence*100),
-	}, nil
 }
 
 // calculateCurrentThreshold calculates the price threshold based on DCA level using the configured spacing strategy
@@ -346,6 +430,14 @@ func (s *EnhancedDCAStrategy) GetConfiguration() map[string]interface{} {
 		config["spacing_parameters"] = s.spacingStrategy.GetParameters()
 	}
 	
+	// Add market regime info if enabled
+	if s.regimeDetector != nil && s.regimeDetector.config.Enabled {
+		config["market_regime_enabled"] = true
+		config["market_regime_config"] = s.regimeDetector.config
+	} else {
+		config["market_regime_enabled"] = false
+	}
+	
 	return config
 }
 
@@ -366,6 +458,8 @@ func (s *EnhancedDCAStrategy) ResetForNewPeriod() {
 	
 	// Reset ATR calculator with synchronized period
 	s.synchronizeATRPeriod()
+	
+	// Market regime detector doesn't need resetting as it's stateless
 }
 
 // SetDCALevel sets the current DCA level (for live bot state synchronization)

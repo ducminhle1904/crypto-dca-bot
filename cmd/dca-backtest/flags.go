@@ -59,6 +59,9 @@ type DCAFlags struct {
 	UseOBV           *bool
 	UseStochasticRSI *bool
 	
+	// Market regime flag
+	MarketRegime     *bool
+	
 	// Analysis options
 	Optimize         *bool
 	AllIntervals     *bool
@@ -135,6 +138,9 @@ func NewDCAFlags() *DCAFlags {
 		UseWaveTrend:     flag.Bool("wavetrend", false, "Include WaveTrend indicator"),
 		UseOBV:           flag.Bool("obv", false, "Include OBV (On-Balance Volume) indicator"),
 		UseStochasticRSI: flag.Bool("stochrsi", false, "Include Stochastic RSI indicator"),
+		
+		// Market regime flag
+		MarketRegime:     flag.Bool("market-regime", false, "Enable market regime-based signal consensus (2/3/4 indicators for favorable/normal/hostile conditions)"),
 		
 		// Analysis options
 		Optimize:         flag.Bool("optimize", false, "Run genetic algorithm optimization"),
@@ -272,6 +278,9 @@ func PrintDCAFlagGroups() {
   -tp-max-percent PCT           Maximum TP percentage (default: 0.05)
   -tp-strength-mult MULT        Signal strength multiplier for indicator-based TP (default: 0.3)
   -tp-indicator-weights PAIRS   Indicator weights for dynamic TP (e.g., rsi:0.3,macd:0.4)
+
+🎯 MARKET REGIME FLAGS:
+  -market-regime        Enable market regime-based signal consensus (2/3/4 indicators for favorable/normal/hostile conditions)
 
 🧬 ANALYSIS FLAGS:
   -optimize             Run genetic algorithm optimization

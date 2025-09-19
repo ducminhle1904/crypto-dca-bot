@@ -71,6 +71,9 @@ type MainBacktestConfig struct {
 	// Dynamic TP configuration
 	DynamicTP      *config.DynamicTPConfig `json:"dynamic_tp,omitempty"`
 	
+	// Market regime configuration
+	MarketRegime   *config.MarketRegimeConfig `json:"market_regime,omitempty"`
+	
 	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
@@ -95,6 +98,7 @@ func ConvertToNestedConfig(cfg MainBacktestConfig) NestedConfig {
 		UseTPLevels:    true,
 		Cycle:          cfg.Cycle,
 		DynamicTP:      cfg.DynamicTP,
+		MarketRegime:   cfg.MarketRegime,
 		Indicators:     cfg.Indicators,
 	}
 	

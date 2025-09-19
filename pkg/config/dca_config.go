@@ -111,6 +111,9 @@ type DCAConfig struct {
 	// Dynamic take profit configuration
 	DynamicTP      *DynamicTPConfig `json:"dynamic_tp,omitempty"` // Dynamic TP configuration
 	
+	// Market regime configuration
+	MarketRegime   *MarketRegimeConfig `json:"market_regime,omitempty"` // Market regime configuration
+	
 	// Minimum lot size for realistic simulation
 	MinOrderQty    float64 `json:"min_order_qty"`
 }
@@ -376,4 +379,19 @@ func (c *DCAConfig) HasDynamicTP() bool {
 // IsDynamicTPEnabled returns true if dynamic TP is configured and enabled
 func (c *DCAConfig) IsDynamicTPEnabled() bool {
 	return c.HasDynamicTP()
+}
+
+// GetMarketRegimeConfig returns the market regime configuration
+func (c *DCAConfig) GetMarketRegimeConfig() *MarketRegimeConfig {
+	return c.MarketRegime
+}
+
+// SetMarketRegimeConfig sets the market regime configuration
+func (c *DCAConfig) SetMarketRegimeConfig(regimeConfig *MarketRegimeConfig) {
+	c.MarketRegime = regimeConfig
+}
+
+// HasMarketRegime returns true if market regime is configured and enabled
+func (c *DCAConfig) HasMarketRegime() bool {
+	return c.MarketRegime != nil && c.MarketRegime.Enabled
 }

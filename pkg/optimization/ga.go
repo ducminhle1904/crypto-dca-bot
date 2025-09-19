@@ -302,6 +302,12 @@ func copyConfig(config interface{}) interface{} {
 		copied.DynamicTP = &dynamicTPCopy
 	}
 	
+	// Deep copy Market Regime configuration (preserve defaults, not optimized)
+	if dcaConfig.MarketRegime != nil {
+		marketRegimeCopy := *dcaConfig.MarketRegime
+		copied.MarketRegime = &marketRegimeCopy
+	}
+	
 	return &copied
 }
 
@@ -357,6 +363,7 @@ func RandomizeConfig(config interface{}, rng *rand.Rand) {
 	if len(dcaConfig.Indicators) == 0 {
 		dcaConfig.Indicators = []string{"rsi", "macd", "bb", "ema"}
 	}
+	
 	
 	// Randomize parameters for each indicator that's present
 	indicatorSet := make(map[string]bool)
@@ -1003,6 +1010,13 @@ func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	
 	dca.SetSpacingStrategy(spacingStrategy)
 	
+	// Configure Market Regime
+	if cfg.MarketRegime != nil {
+		// Convert config.MarketRegimeConfig to strategy.MarketRegimeConfig
+		strategyRegimeConfig := convertMarketRegimeConfigForGA(cfg.MarketRegime)
+		dca.SetMarketRegimeConfig(strategyRegimeConfig)
+	}
+	
 	// Create a set for efficient lookup
 	include := make(map[string]bool)
 	for _, name := range cfg.Indicators {
@@ -1088,6 +1102,22 @@ func ContainsIndicator(indicators []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// convertMarketRegimeConfigForGA converts config.MarketRegimeConfig to strategy.MarketRegimeConfig for optimization
+func convertMarketRegimeConfigForGA(cfg *configpkg.MarketRegimeConfig) *strategy.MarketRegimeConfig {
+	return &strategy.MarketRegimeConfig{
+		Enabled:                     cfg.Enabled,
+		TrendStrengthPeriod:         cfg.TrendStrengthPeriod,
+		TrendStrengthThreshold:      cfg.TrendStrengthThreshold,
+		ATRMultiplier:               cfg.ATRMultiplier,
+		VolatilityLookback:          cfg.VolatilityLookback,
+		LowVolatilityPercentile:     cfg.LowVolatilityPercentile,
+		HighVolatilityPercentile:    cfg.HighVolatilityPercentile,
+		FavorableIndicatorsRequired: cfg.FavorableIndicatorsRequired,
+		NormalIndicatorsRequired:    cfg.NormalIndicatorsRequired,
+		HostileIndicatorsRequired:   cfg.HostileIndicatorsRequired,
+	}
 }
 
 

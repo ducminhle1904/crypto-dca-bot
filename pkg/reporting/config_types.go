@@ -27,6 +27,7 @@ type StrategyConfig struct {
 	UseTPLevels      bool                       `json:"use_tp_levels"`
 	Cycle            bool                       `json:"cycle"`
 	DynamicTP        *config.DynamicTPConfig   `json:"dynamic_tp,omitempty"`
+	MarketRegime     *config.MarketRegimeConfig `json:"market_regime,omitempty"`
 	Indicators       []string                   `json:"indicators"`
 	RSI            *RSIConfig                 `json:"rsi,omitempty"`
 	MACD           *MACDConfig                `json:"macd,omitempty"`

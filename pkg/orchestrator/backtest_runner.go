@@ -184,6 +184,21 @@ func (r *DefaultBacktestRunner) createStrategy(cfg *config.DCAConfig) (strategy.
 			getMinTPPercent(cfg.DynamicTP)*100, getMaxTPPercent(cfg.DynamicTP)*100)
 	}
 
+	// Configure market regime if specified
+	if cfg.MarketRegime != nil {
+		// Convert config.MarketRegimeConfig to strategy.MarketRegimeConfig
+		strategyRegimeConfig := convertMarketRegimeConfig(cfg.MarketRegime)
+		dca.SetMarketRegimeConfig(strategyRegimeConfig)
+		if cfg.MarketRegime.Enabled {
+			log.Printf("Market regime enabled: Favorable=%d, Normal=%d, Hostile=%d indicators required", 
+				cfg.MarketRegime.FavorableIndicatorsRequired,
+				cfg.MarketRegime.NormalIndicatorsRequired,
+				cfg.MarketRegime.HostileIndicatorsRequired)
+		} else {
+			log.Printf("Market regime configured but disabled")
+		}
+	}
+
 	// Indicator inclusion map
 	include := make(map[string]bool)
 	for _, name := range cfg.Indicators {
@@ -343,4 +358,20 @@ func validateDataFile(dataFile string) error {
 	}
 	
 	return nil
+}
+
+// convertMarketRegimeConfig converts config.MarketRegimeConfig to strategy.MarketRegimeConfig
+func convertMarketRegimeConfig(cfg *config.MarketRegimeConfig) *strategy.MarketRegimeConfig {
+	return &strategy.MarketRegimeConfig{
+		Enabled:                     cfg.Enabled,
+		TrendStrengthPeriod:         cfg.TrendStrengthPeriod,
+		TrendStrengthThreshold:      cfg.TrendStrengthThreshold,
+		ATRMultiplier:               cfg.ATRMultiplier,
+		VolatilityLookback:          cfg.VolatilityLookback,
+		LowVolatilityPercentile:     cfg.LowVolatilityPercentile,
+		HighVolatilityPercentile:    cfg.HighVolatilityPercentile,
+		FavorableIndicatorsRequired: cfg.FavorableIndicatorsRequired,
+		NormalIndicatorsRequired:    cfg.NormalIndicatorsRequired,
+		HostileIndicatorsRequired:   cfg.HostileIndicatorsRequired,
+	}
 }

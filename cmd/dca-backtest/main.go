@@ -214,6 +214,13 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		cfg.DynamicTP = dynamicTPConfig
 	}
 	
+	// Configure Market Regime from command line flag if not present in config
+	if cfg.MarketRegime == nil && *flags.MarketRegime {
+		// Create Market Regime configuration with default values
+		cfg.MarketRegime = config.NewDefaultMarketRegimeConfig()
+		cfg.MarketRegime.Enabled = true // Enable it since flag was specified
+	}
+	
 	// Set TP parameters from flags if not in config
 	if cfg.TPPercent == 0 {
 		cfg.TPPercent = *flags.TPPercent
@@ -724,6 +731,7 @@ func convertDCAConfig(cfg *config.DCAConfig) reporting.MainBacktestConfig {
 		UseTPLevels:         cfg.UseTPLevels,
 		Cycle:               cfg.Cycle,
 		DynamicTP:           cfg.DynamicTP,
+		MarketRegime:        cfg.MarketRegime,
 		MinOrderQty:         cfg.MinOrderQty,
 		DCASpacing:          cfg.DCASpacing,
 	}
