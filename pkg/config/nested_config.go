@@ -23,6 +23,9 @@ type StrategyConfig struct {
 	// DCA Spacing Strategy
 	DCASpacing     *DCASpacingConfig  `json:"dca_spacing,omitempty"`
 	
+	// Dynamic TP Strategy
+	DynamicTP      *DynamicTPConfig   `json:"dynamic_tp,omitempty"`
+	
 	RSI            *RSIConfig         `json:"rsi,omitempty"`
 	MACD           *MACDConfig        `json:"macd,omitempty"`
 	BollingerBands *BollingerBandsConfig `json:"bollinger_bands,omitempty"`

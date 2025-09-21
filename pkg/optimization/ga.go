@@ -1,6 +1,7 @@
 package optimization
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"sort"
@@ -110,6 +111,7 @@ func OptimizeWithGA(baseConfig interface{}, dataFile string, selectedPeriod time
 	
 	// Re-run the best configuration to ensure consistency with standalone runs
 	// The GA cached results may have strategy state contamination from parallel execution
+	// This ensures the final result matches exactly what would be produced by a regular backtest
 	finalResults := RunBacktestWithData(bestIndividual.Config, data)
 	return finalResults, bestIndividual.Config, nil
 }
@@ -453,8 +455,13 @@ func RunBacktestWithData(config interface{}, data []types.OHLCV) *backtest.Backt
 		return &backtest.BacktestResults{TotalReturn: 0.0}
 	}
 	
-	// CRITICAL FIX: Use SHARED strategy creation logic to ensure 100% consistency
-	strat := createDCAStrategy(dcaConfig)
+	// CRITICAL FIX: Use the SAME strategy creation logic as regular backtest
+	// This ensures 100% consistency between optimization and regular backtest runs
+	strat, err := createDCAStrategyFromConfig(dcaConfig)
+	if err != nil {
+		log.Printf("⚠️ GA: Failed to create strategy: %v", err)
+		return &backtest.BacktestResults{TotalReturn: 0.0}
+	}
 	
 	// Reset strategy state to prevent contamination from previous runs
 	strat.ResetForNewPeriod()
@@ -925,37 +932,133 @@ func getConfigField(config interface{}, field string) float64 {
 	}
 }
 
-// runDCABacktestWithData runs a backtest with DCAConfig and data
+// runDCABacktestWithData runs a backtest with DCAConfig and data (DEPRECATED - use RunBacktestWithData instead)
 func runDCABacktestWithData(cfg *configpkg.DCAConfig, data []types.OHLCV) *backtest.BacktestResults {
-	start := time.Now()
-	
-		// CRITICAL FIX: Use consistent strategy creation with proper error handling
-		strat := createDCAStrategy(cfg)
-		
-		// FIXED: Reset strategy state to prevent contamination between optimization runs
-		// This ensures each backtest evaluation starts with clean indicator state
-		strat.ResetForNewPeriod()
-		
-		// IMPORTANT: Log spacing strategy being used for debugging consistency
-		log.Printf("✅ Using %s spacing strategy", cfg.DCASpacing.Strategy)
-	
-	// Create and run backtest engine
-	tp := cfg.TPPercent
-	if !cfg.Cycle { 
-		tp = 0 
-	}
-	engine := backtest.NewBacktestEngine(cfg.InitialBalance, cfg.Commission, strat, tp, cfg.MinOrderQty, cfg.UseTPLevels)
-	results := engine.Run(data, cfg.WindowSize)
-	
-	// Update all metrics
-	results.UpdateMetrics()
-	
-	_ = time.Since(start) // Suppress unused variable warning
-	
-	return results
+	// Use the consistent strategy creation function
+	return RunBacktestWithData(cfg, data)
 }
 
-// createDCAStrategy creates a strategy from DCAConfig (optimized version)
+// createDCAStrategyFromConfig creates a strategy from DCAConfig using the SAME logic as backtest runner
+// This ensures 100% consistency between optimization and regular backtest runs
+func createDCAStrategyFromConfig(cfg *configpkg.DCAConfig) (strategy.Strategy, error) {
+	// Initialize Enhanced DCA strategy with base trading amount
+	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)
+	dca.SetMaxMultiplier(cfg.MaxMultiplier)
+
+	// Configure DCA spacing strategy (required for all configurations)
+	if cfg.DCASpacing == nil {
+		return nil, fmt.Errorf("no DCA spacing strategy configured - please specify dca_spacing in your configuration")
+	}
+
+	spacingConfig := spacing.SpacingConfig{
+		Strategy:   cfg.DCASpacing.Strategy,
+		Parameters: cfg.DCASpacing.Parameters,
+	}
+	
+	spacingStrategy, err := spacing.CreateSpacingStrategy(spacingConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create spacing strategy: %w", err)
+	}
+	
+	if err := spacingStrategy.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("invalid spacing strategy configuration: %w", err)
+	}
+	
+	dca.SetSpacingStrategy(spacingStrategy)
+	log.Printf("Using %s spacing strategy", spacingStrategy.GetName())
+
+	// Configure dynamic take profit if specified
+	if cfg.DynamicTP != nil {
+		dca.SetDynamicTPConfig(cfg.DynamicTP)
+		log.Printf("Dynamic TP configured: %s strategy (base: %.2f%%, range: %.2f%%-%.2f%%)", 
+			cfg.DynamicTP.Strategy, cfg.DynamicTP.BaseTPPercent*100,
+			getMinTPPercent(cfg.DynamicTP)*100, getMaxTPPercent(cfg.DynamicTP)*100)
+	}
+
+	// Indicator inclusion map
+	include := make(map[string]bool)
+	for _, name := range cfg.Indicators {
+		include[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+
+	// Instantiate indicators based on what's actually in the indicators list
+	if include["rsi"] {
+		rsi := oscillators.NewRSI(cfg.RSIPeriod)
+		rsi.SetOversold(cfg.RSIOversold)
+		rsi.SetOverbought(cfg.RSIOverbought)
+		dca.AddIndicator(rsi)
+	}
+	if include["macd"] {
+		macd := oscillators.NewMACD(cfg.MACDFast, cfg.MACDSlow, cfg.MACDSignal)
+		dca.AddIndicator(macd)
+	}
+	if include["bb"] || include["bollinger"] {
+		bb := bands.NewBollingerBandsEMA(cfg.BBPeriod, cfg.BBStdDev)
+		dca.AddIndicator(bb)
+	}
+	if include["ema"] {
+		ema := common.NewEMA(cfg.EMAPeriod)
+		dca.AddIndicator(ema)
+	}
+	if include["hullma"] || include["hull_ma"] {
+		hullMA := trend.NewHullMA(cfg.HullMAPeriod)
+		dca.AddIndicator(hullMA)
+	}
+	if include["supertrend"] || include["st"] {
+		supertrend := trend.NewSuperTrendWithParams(cfg.SuperTrendPeriod, cfg.SuperTrendMultiplier)
+		dca.AddIndicator(supertrend)
+	}
+	if include["mfi"] {
+		mfi := oscillators.NewMFIWithPeriod(cfg.MFIPeriod)
+		mfi.SetOversold(cfg.MFIOversold)
+		mfi.SetOverbought(cfg.MFIOverbought)
+		dca.AddIndicator(mfi)
+	}
+	if include["keltner"] || include["kc"] {
+		keltner := bands.NewKeltnerChannelsCustom(cfg.KeltnerPeriod, cfg.KeltnerMultiplier)
+		dca.AddIndicator(keltner)
+	}
+	if include["wavetrend"] || include["wt"] {
+		wavetrend := oscillators.NewWaveTrendCustom(cfg.WaveTrendN1, cfg.WaveTrendN2)
+		wavetrend.SetOverbought(cfg.WaveTrendOverbought)
+		wavetrend.SetOversold(cfg.WaveTrendOversold)
+		dca.AddIndicator(wavetrend)
+	}
+	if include["obv"] {
+		obv := volume.NewOBV()
+		dca.AddIndicator(obv)
+	}
+	if include["stochrsi"] || include["stochastic_rsi"] || include["stoch_rsi"] {
+		stochRSI := oscillators.NewStochasticRSI()
+		dca.AddIndicator(stochRSI)
+	}
+
+	return dca, nil
+}
+
+// getMinTPPercent extracts minimum TP percentage from dynamic TP config
+func getMinTPPercent(cfg *configpkg.DynamicTPConfig) float64 {
+	if cfg.VolatilityConfig != nil {
+		return cfg.VolatilityConfig.MinTPPercent
+	}
+	if cfg.IndicatorConfig != nil {
+		return cfg.IndicatorConfig.MinTPPercent
+	}
+	return cfg.BaseTPPercent // Fallback
+}
+
+// getMaxTPPercent extracts maximum TP percentage from dynamic TP config
+func getMaxTPPercent(cfg *configpkg.DynamicTPConfig) float64 {
+	if cfg.VolatilityConfig != nil {
+		return cfg.VolatilityConfig.MaxTPPercent
+	}
+	if cfg.IndicatorConfig != nil {
+		return cfg.IndicatorConfig.MaxTPPercent
+	}
+	return cfg.BaseTPPercent // Fallback
+}
+
+// createDCAStrategy creates a strategy from DCAConfig (DEPRECATED - use createDCAStrategyFromConfig instead)
 func createDCAStrategy(cfg *configpkg.DCAConfig) strategy.Strategy {
 	// Use optimized Enhanced DCA strategy
 	dca := strategy.NewEnhancedDCAStrategy(cfg.BaseAmount)

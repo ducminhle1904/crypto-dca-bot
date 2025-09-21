@@ -104,6 +104,9 @@ func (m *DCAConfigManager) loadFromNestedConfig(data []byte, cfg *DCAConfig) err
 	// Map DCA spacing strategy
 	cfg.DCASpacing = strategy.DCASpacing
 	
+	// Map Dynamic TP strategy
+	cfg.DynamicTP = strategy.DynamicTP
+	
 	// Map indicator-specific configurations - no artificial separation needed
 	// Load config for any indicator that's present (allows flexible mixing)
 	if strategy.RSI != nil {
@@ -199,6 +202,7 @@ func (m *DCAConfigManager) ConvertToNested(cfg Config) (NestedConfig, error) {
 		Cycle:          dcaCfg.Cycle,
 		Indicators:     dcaCfg.Indicators,
 		DCASpacing:     dcaCfg.DCASpacing,
+		DynamicTP:      dcaCfg.DynamicTP,
 	}
 	
 	// Add configurations for indicators that are actually present
