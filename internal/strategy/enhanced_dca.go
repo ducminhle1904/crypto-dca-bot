@@ -175,15 +175,23 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 		// Get current ATR for regime detection
 		currentATR, atrErr := s.atrCalculator.Calculate(data)
 		if atrErr != nil {
+			// Log ATR calculation error but continue with fallback
+			log.Printf("⚠️ ATR calculation failed: %v, using fallback", atrErr)
 			currentATR = 0 // Use 0 if ATR calculation fails
 		}
 		
-		// Detect current market regime
+		// Detect current market regime with error handling
 		regime := s.regimeDetector.DetectRegime(data, currentATR)
 		requiredIndicators := s.regimeDetector.GetRequiredIndicators(regime)
 		
+		// Validate required indicators is reasonable
+		if requiredIndicators <= 0 || requiredIndicators > totalConfiguredIndicators {
+			log.Printf("⚠️ Invalid required indicators: %d (total: %d), using fallback", requiredIndicators, totalConfiguredIndicators)
+			requiredIndicators = totalConfiguredIndicators // Fallback to requiring all indicators
+		}
+		
 		log.Printf("🎯 Market Regime: %s, Required: %d, Got: %d indicators (ATR: %.4f)", 
-			string(regime), requiredIndicators, buySignals, currentATR)
+			regime.String(), requiredIndicators, buySignals, currentATR)
 		
 		// Check if we have enough buy signals for the current market regime
 		if buySignals >= requiredIndicators {
@@ -209,7 +217,7 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 					return &TradeDecision{
 						Action: ActionHold,
 						Reason: fmt.Sprintf("Price threshold not met: %.2f%% < %.2f%% (DCA Level %d, Strategy: %s, Regime: %s)", 
-							priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo, string(regime)),
+							priceDrop*100, requiredThreshold*100, s.dcaLevel, strategyInfo, regime.String()),
 					}, nil
 				}
 			}
@@ -230,14 +238,14 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 				Amount:     amount,
 				Confidence: confidence,
 				Strength:   netStrength,
-				Reason:     fmt.Sprintf("Buy consensus: %d/%d required (%s regime)", buySignals, requiredIndicators, string(regime)),
+				Reason:     fmt.Sprintf("Buy consensus: %d/%d required (%s regime)", buySignals, requiredIndicators, regime.String()),
 			}, nil
 		}
 
 		return &TradeDecision{
 			Action: ActionHold,
 			Reason: fmt.Sprintf("Insufficient buy consensus: %d/%d required (%s regime)", 
-					buySignals, requiredIndicators, string(regime)),
+					buySignals, requiredIndicators, regime.String()),
 		}, nil
 	} else {
 		// Fallback to normal logic when market regime is not enabled

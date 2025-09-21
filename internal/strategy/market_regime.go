@@ -48,7 +48,7 @@ func NewDefaultMarketRegimeConfig() *MarketRegimeConfig {
 	return &MarketRegimeConfig{
 		Enabled:                     false, // Disabled by default for backward compatibility
 		TrendStrengthPeriod:         20,
-		TrendStrengthThreshold:      0.45, // Reduced from 75% to 65% for crypto markets
+		TrendStrengthThreshold:      0.45, // Reduced from 75% to 45% for crypto markets
 		ATRMultiplier:               1.5,  // Dynamic price change threshold (1.5x ATR)
 		VolatilityLookback:          50,
 		LowVolatilityPercentile:     0.3,
@@ -84,6 +84,17 @@ func (d *MarketRegimeDetector) DetectRegime(data []types.OHLCV, currentATR float
 		return RegimeNormal // Not enough data, default to normal
 	}
 
+	// Validate data integrity
+	if len(data) == 0 {
+		return RegimeNormal
+	}
+
+	// Check for invalid price data
+	currentCandle := data[len(data)-1]
+	if currentCandle.Close <= 0 || currentCandle.High <= 0 || currentCandle.Low <= 0 {
+		return RegimeNormal // Invalid price data, default to normal
+	}
+
 	// 1. Check trend strength (now uses dynamic ATR-based threshold)
 	trendStrong := d.checkTrendStrength(data, currentATR)
 	
@@ -96,7 +107,6 @@ func (d *MarketRegimeDetector) DetectRegime(data []types.OHLCV, currentATR float
 	
 	// 4. Decision logic
 	if trendStrong || volatilityLow {
-		fmt.Println("Trend strong")
 		return RegimeFavorable // Strong bull trend or low volatility = easier conditions
 	}
 	
@@ -138,6 +148,11 @@ func (d *MarketRegimeDetector) checkTrendStrength(data []types.OHLCV, currentATR
 	endPrice := recent[len(recent)-1].Close
 	currentPrice := endPrice
 	
+	// Validate price data
+	if startPrice <= 0 || currentPrice <= 0 || currentATR < 0 {
+		return false
+	}
+	
 	// Dynamic price change threshold based on current ATR
 	// Require price change to be at least config.ATRMultiplier x the current ATR over the period
 	dynamicThreshold := (currentATR * d.config.ATRMultiplier) / currentPrice
@@ -154,11 +169,6 @@ func (d *MarketRegimeDetector) checkTrendStrength(data []types.OHLCV, currentATR
 	
 	trendStrength := float64(higherCloses) / float64(len(recent)-1)
 	
-	// DEBUG: Show dynamic threshold in action with actual threshold value
-	fmt.Printf("DYNAMIC TREND: priceChange=%.4f%% >= dynamicThreshold=%.4f%% (%.1fx ATR=%.4f), trendStrength=%.2f%% >= threshold=%.2f%%, result=%v\n", 
-		priceChange*100, dynamicThreshold*100, d.config.ATRMultiplier, currentATR, trendStrength*100, d.config.TrendStrengthThreshold*100,
-		(priceChange >= dynamicThreshold && trendStrength >= d.config.TrendStrengthThreshold))
-	
 	// Dynamic price change requirement based on current market volatility
 	if priceChange < dynamicThreshold {
 		return false
@@ -169,8 +179,8 @@ func (d *MarketRegimeDetector) checkTrendStrength(data []types.OHLCV, currentATR
 
 // isLowVolatility checks if current volatility is in the low percentile
 func (d *MarketRegimeDetector) isLowVolatility(data []types.OHLCV, currentATR float64) bool {
-	if len(data) < d.config.VolatilityLookback {
-		return false // Not enough data to determine volatility regime
+	if len(data) < d.config.VolatilityLookback || currentATR <= 0 {
+		return false // Not enough data or invalid ATR to determine volatility regime
 	}
 	
 	// Calculate ATR percentile
@@ -180,8 +190,8 @@ func (d *MarketRegimeDetector) isLowVolatility(data []types.OHLCV, currentATR fl
 
 // isHighVolatility checks if current volatility is in the high percentile
 func (d *MarketRegimeDetector) isHighVolatility(data []types.OHLCV, currentATR float64) bool {
-	if len(data) < d.config.VolatilityLookback {
-		return false // Not enough data to determine volatility regime
+	if len(data) < d.config.VolatilityLookback || currentATR <= 0 {
+		return false // Not enough data or invalid ATR to determine volatility regime
 	}
 	
 	// Calculate ATR percentile
@@ -200,6 +210,12 @@ func (d *MarketRegimeDetector) checkBearishConditions(data []types.OHLCV) bool {
 	// Check for significant price decline over the period
 	startPrice := recent[0].Close
 	endPrice := recent[len(recent)-1].Close
+	
+	// Validate price data
+	if startPrice <= 0 || endPrice <= 0 {
+		return false
+	}
+	
 	priceChange := (endPrice - startPrice) / startPrice
 	
 	// Must be at least 5% down to be considered bearish
@@ -264,8 +280,8 @@ func (c *MarketRegimeConfig) Validate() error {
 		return fmt.Errorf("trend strength period must be at least 5, got %d", c.TrendStrengthPeriod)
 	}
 	
-	if c.TrendStrengthThreshold < 0.5 || c.TrendStrengthThreshold > 1.0 {
-		return fmt.Errorf("trend strength threshold must be between 0.5 and 1.0, got %.2f", c.TrendStrengthThreshold)
+	if c.TrendStrengthThreshold < 0.1 || c.TrendStrengthThreshold > 1.0 {
+		return fmt.Errorf("trend strength threshold must be between 0.1 and 1.0, got %.2f", c.TrendStrengthThreshold)
 	}
 	
 	if c.VolatilityLookback < 10 {

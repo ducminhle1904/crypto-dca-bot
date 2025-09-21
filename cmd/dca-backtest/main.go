@@ -348,6 +348,12 @@ func printConfigSummary(cfg *config.DCAConfig) {
 	
 	// Print detailed indicator settings
 	printIndicatorSettings(cfg)
+	
+	// Print market regime configuration if enabled
+	if cfg.MarketRegime != nil && cfg.MarketRegime.Enabled {
+		printMarketRegimeSettings(cfg.MarketRegime)
+	}
+	
 	fmt.Printf("\n")
 }
 
@@ -388,6 +394,21 @@ func printIndicatorSettings(cfg *config.DCAConfig) {
 				cfg.StochasticRSIPeriod, cfg.StochasticRSIOverbought, cfg.StochasticRSIOversold)
 		}
 	}
+}
+
+func printMarketRegimeSettings(regimeConfig *config.MarketRegimeConfig) {
+	fmt.Printf("   🎯 Market Regime Settings:\n")
+	fmt.Printf("      • Enabled: %t\n", regimeConfig.Enabled)
+	fmt.Printf("      • Trend Strength Period: %d\n", regimeConfig.TrendStrengthPeriod)
+	fmt.Printf("      • Trend Strength Threshold: %.1f%%\n", regimeConfig.TrendStrengthThreshold*100)
+	fmt.Printf("      • ATR Multiplier: %.1fx\n", regimeConfig.ATRMultiplier)
+	fmt.Printf("      • Volatility Lookback: %d\n", regimeConfig.VolatilityLookback)
+	fmt.Printf("      • Low Volatility Percentile: %.1f%%\n", regimeConfig.LowVolatilityPercentile*100)
+	fmt.Printf("      • High Volatility Percentile: %.1f%%\n", regimeConfig.HighVolatilityPercentile*100)
+	fmt.Printf("      • Required Indicators:\n")
+	fmt.Printf("        - Favorable: %d\n", regimeConfig.FavorableIndicatorsRequired)
+	fmt.Printf("        - Normal: %d\n", regimeConfig.NormalIndicatorsRequired)
+	fmt.Printf("        - Hostile: %d\n", regimeConfig.HostileIndicatorsRequired)
 }
 
 func runSingleBacktest(orch orchestrator.Orchestrator, cfg *config.DCAConfig, 

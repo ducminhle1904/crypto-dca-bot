@@ -23,7 +23,7 @@ func NewDefaultMarketRegimeConfig() *MarketRegimeConfig {
 	return &MarketRegimeConfig{
 		Enabled:                     false, // Disabled by default for backward compatibility
 		TrendStrengthPeriod:         20,
-		TrendStrengthThreshold:      0.35, // Reduced from 75% to 65% for crypto markets
+		TrendStrengthThreshold:      0.45, // Reduced from 75% to 45% for crypto markets
 		ATRMultiplier:               1.5,  // Dynamic price change threshold (1.5x ATR)
 		VolatilityLookback:          50,
 		LowVolatilityPercentile:     0.3,
@@ -40,8 +40,8 @@ func (c *MarketRegimeConfig) Validate() error {
 		return fmt.Errorf("trend strength period must be at least 5, got %d", c.TrendStrengthPeriod)
 	}
 	
-	if c.TrendStrengthThreshold < 0.5 || c.TrendStrengthThreshold > 1.0 {
-		return fmt.Errorf("trend strength threshold must be between 0.5 and 1.0, got %.2f", c.TrendStrengthThreshold)
+	if c.TrendStrengthThreshold < 0.1 || c.TrendStrengthThreshold > 1.0 {
+		return fmt.Errorf("trend strength threshold must be between 0.1 and 1.0, got %.2f", c.TrendStrengthThreshold)
 	}
 	
 	if c.ATRMultiplier < 0.1 || c.ATRMultiplier > 10.0 {

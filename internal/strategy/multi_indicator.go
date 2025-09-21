@@ -119,7 +119,6 @@ func (m *MultiIndicatorStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeD
 		buyScore /= totalWeight
 		sellScore /= totalWeight
 
-
 		if buyScore > 0.6 && buyScore > sellScore {
 			action = ActionBuy
 			confidence = buyScore
