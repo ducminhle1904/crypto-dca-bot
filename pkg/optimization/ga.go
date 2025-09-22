@@ -965,14 +965,10 @@ func createDCAStrategyFromConfig(cfg *configpkg.DCAConfig) (strategy.Strategy, e
 	}
 	
 	dca.SetSpacingStrategy(spacingStrategy)
-	log.Printf("Using %s spacing strategy", spacingStrategy.GetName())
 
 	// Configure dynamic take profit if specified
 	if cfg.DynamicTP != nil {
 		dca.SetDynamicTPConfig(cfg.DynamicTP)
-		log.Printf("Dynamic TP configured: %s strategy (base: %.2f%%, range: %.2f%%-%.2f%%)", 
-			cfg.DynamicTP.Strategy, cfg.DynamicTP.BaseTPPercent*100,
-			getMinTPPercent(cfg.DynamicTP)*100, getMaxTPPercent(cfg.DynamicTP)*100)
 	}
 
 	// Indicator inclusion map

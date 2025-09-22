@@ -93,7 +93,9 @@ type BacktestEngine struct {
 	peakEquity         float64       // Peak equity for drawdown calculation
 	maxCycleExposure   float64       // Maximum exposure within current cycle
 	currentExposure    float64       // Current exposure level
-	exposureHistory    []float64     // Historical exposure levels
+	// Memory-efficient exposure tracking
+	exposureSamples    int           // Number of exposure samples taken
+	exposureSum        float64       // Sum of all exposure values for average calculation
 }
 
 type BacktestResults struct {
@@ -220,7 +222,8 @@ func NewBacktestEngine(
 		peakEquity:       initialBalance,
 		maxCycleExposure: 0,
 		currentExposure:  0,
-		exposureHistory:  make([]float64, 0),
+		exposureSamples:  0,
+		exposureSum:      0,
 		// Initialize dynamic TP tracking
 		dynamicTPEnabled: strat.IsDynamicTPEnabled(),
 		dynamicTPHistory: make([]DynamicTPRecord, 0),
@@ -264,7 +267,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	
 	// Initialize enhanced tracking
 	b.peakEquity = b.initialBalance
-	b.exposureHistory = make([]float64, 0)
+	b.exposureSamples = 0
+	b.exposureSum = 0
 	cyclePeakEquity := b.initialBalance
 
 	for i := windowSize; i < len(data); i++ {
@@ -443,9 +447,10 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 			exposure = (b.position * currentPrice) / currentValue
 		}
 		
-		// Update exposure tracking
+		// Update exposure tracking with memory-efficient running average
 		b.currentExposure = exposure
-		b.exposureHistory = append(b.exposureHistory, exposure)
+		b.exposureSamples++
+		b.exposureSum += exposure
 		
 		// Track cycle exposure
 		if b.cycleOpen && exposure > b.maxCycleExposure {
@@ -454,16 +459,25 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 		
 		runningPnL := currentValue - b.initialBalance
 		
-		equityPoint := EquityPoint{
-			Timestamp: data[i].Timestamp,
-			Balance:   b.balance,
-			Position:  b.position,
-			Price:     currentPrice,
-			Equity:    currentValue,
-			Exposure:  exposure,
-			PnL:       runningPnL,
+		// Sample equity curve every 100 data points to reduce memory usage for large datasets
+		// For smaller datasets, keep more points for precision
+		sampleInterval := 1
+		if len(data) > 10000 {
+			sampleInterval = len(data) / 5000 // Keep ~5000 points maximum
 		}
-		b.results.EquityCurve = append(b.results.EquityCurve, equityPoint)
+		
+		if i%sampleInterval == 0 || i == len(data)-1 { // Always keep the last point
+			equityPoint := EquityPoint{
+				Timestamp: data[i].Timestamp,
+				Balance:   b.balance,
+				Position:  b.position,
+				Price:     currentPrice,
+				Equity:    currentValue,
+				Exposure:  exposure,
+				PnL:       runningPnL,
+			}
+			b.results.EquityCurve = append(b.results.EquityCurve, equityPoint)
+		}
 	}
 
 	//Final calculations
@@ -581,12 +595,8 @@ func (b *BacktestEngine) Run(data []types.OHLCV, windowSize int) *BacktestResult
 	
 	// Calculate enhanced metrics from tracking data
 	b.results.MaxCycleExposure = b.maxCycleExposure
-	if len(b.exposureHistory) > 0 {
-		totalExposure := 0.0
-		for _, exp := range b.exposureHistory {
-			totalExposure += exp
-		}
-		b.results.AvgCycleExposure = totalExposure / float64(len(b.exposureHistory))
+	if b.exposureSamples > 0 {
+		b.results.AvgCycleExposure = b.exposureSum / float64(b.exposureSamples)
 	}
 
 	// Finalize dynamic TP metrics

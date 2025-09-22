@@ -157,16 +157,20 @@ func (s *EnhancedDCAStrategy) ShouldExecuteTrade(data []types.OHLCV) (*TradeDeci
 	}
 	
 	// Calculate confidence based on ALL configured indicators (not just active signals)
+	// Ensure confidence never exceeds 1.0 to prevent edge cases
 	confidence := float64(buySignals) / float64(totalConfiguredIndicators)
+	if confidence > 1.0 {
+		confidence = 1.0
+	}
 
 	if confidence >= s.minConfidence {
 	// Apply price threshold check for DCA entries with defensive checks
 	if s.spacingStrategy != nil && s.lastEntryPrice > 0 && currentPrice > 0 {
 		// Add defensive check to prevent division by zero
-		if s.lastEntryPrice <= 0 {
+		if s.lastEntryPrice == 0 {
 			return &TradeDecision{
 				Action: ActionHold,
-				Reason: "Invalid last entry price for threshold calculation",
+				Reason: "Invalid last entry price for threshold calculation (zero)",
 			}, nil
 		}
 		

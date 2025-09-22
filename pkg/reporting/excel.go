@@ -309,17 +309,16 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 	fx.SetColWidth(sheet, "D", "D", 18)  // Timestamp
 	fx.SetColWidth(sheet, "E", "E", 12)  // Price
 	fx.SetColWidth(sheet, "F", "F", 12)  // Quantity
-	fx.SetColWidth(sheet, "G", "G", 12)  // Commission
-	fx.SetColWidth(sheet, "H", "H", 14)  // PnL
-	fx.SetColWidth(sheet, "I", "I", 12)  // Price Change %
-	fx.SetColWidth(sheet, "J", "J", 14)  // Running Balance
-	fx.SetColWidth(sheet, "K", "K", 14)  // Balance Change
-	fx.SetColWidth(sheet, "L", "L", 20)  // TP Info
+	fx.SetColWidth(sheet, "G", "G", 14)  // PnL
+	fx.SetColWidth(sheet, "H", "H", 12)  // Price Change %
+	fx.SetColWidth(sheet, "I", "I", 14)  // Running Balance
+	fx.SetColWidth(sheet, "J", "J", 14)  // Balance Change
+	fx.SetColWidth(sheet, "K", "K", 20)  // TP Info
 
-	// Write Enhanced Trades headers - includes balance tracking and TP descriptions
+	// Write Enhanced Trades headers - includes balance tracking and TP descriptions (removed Commission)
 	tradeHeaders := []string{
 		"Cycle", "Type", "Sequence", "Timestamp", "Price", "Quantity", 
-		"Commission", "PnL", "Price Change %", "Running Balance", "Balance Change", "TP Info",
+		"PnL", "Price Change %", "Running Balance", "Balance Change", "TP Info",
 	}
 	for i, h := range tradeHeaders {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
@@ -470,8 +469,18 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 				
 				// Enhanced entry description with dynamic TP info if available
 				baseDescription := fmt.Sprintf("DCA Entry #%d", trade.Sequence)
-				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" {
-					dynamicInfo := fmt.Sprintf(" | %s TP: %.2f%%", trade.Trade.TPStrategy, trade.Trade.TPTarget*100)
+				
+				// Display TP info based on strategy
+				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" && trade.Trade.TPTarget > 0 {
+					// Dynamic TP strategy with calculated target
+					strategyName := trade.Trade.TPStrategy
+					if strategyName == "volatility_adaptive" {
+						strategyName = "Dynamic"
+					} else if strategyName == "indicator_based" {
+						strategyName = "Signal-based"
+					}
+					
+					dynamicInfo := fmt.Sprintf(" | %s TP: %.2f%%", strategyName, trade.Trade.TPTarget*100)
 					if trade.Trade.MarketVolatility > 0 {
 						dynamicInfo += fmt.Sprintf(" | Vol: %.1f%%", trade.Trade.MarketVolatility*100)
 					}
@@ -479,7 +488,15 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
 					}
 					trade.Description = baseDescription + dynamicInfo
+				} else if trade.Trade.TPTarget > 0 {
+					// Fixed TP or dynamic TP without strategy info
+					dynamicInfo := fmt.Sprintf(" | TP: %.2f%%", trade.Trade.TPTarget*100)
+					if trade.Trade.SignalStrength > 0 {
+						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
+					}
+					trade.Description = baseDescription + dynamicInfo
 				} else {
+					// No TP info available
 					trade.Description = baseDescription
 				}
 			} else {
@@ -498,23 +515,57 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 				// Calculate what percentage of position this exit represents
 				exitPercentage := (trade.Trade.Quantity / totalCycleQty) * 100
 				
-				// Build base description
+				// Build base description based on actual TP level progression
+				// Current TP system: each level sells 20% but targets are 40%, 60%, 80%, 100%, 120% of base TP
 				baseDescription := ""
 				if exitPercentage >= 90 {
-					baseDescription = "TP Complete (100%)"
-				} else if exitPercentage >= 70 {
-					baseDescription = "TP Levels 1-4 (80%)"
-				} else if exitPercentage >= 50 {
-					baseDescription = "TP Levels 1-3 (60%)"
-				} else if exitPercentage >= 30 {
-					baseDescription = "TP Levels 1-2 (40%)"
+					// Complete exit (all 5 levels: 20% each)
+					if trade.Trade.TPTarget > 0 {
+						baseDescription = fmt.Sprintf("TP Complete - All Levels (%.2f%% max)", trade.Trade.TPTarget*1.2*100) // 120% of base
+					} else {
+						baseDescription = "TP Complete (All Levels)"
+					}
+				} else if exitPercentage >= 75 {
+					// Levels 1-4 (80% of position)
+					if trade.Trade.TPTarget > 0 {
+						baseDescription = fmt.Sprintf("TP Levels 1-4 (up to %.2f%%)", trade.Trade.TPTarget*1.0*100) // 100% of base
+					} else {
+						baseDescription = "TP Levels 1-4 (80% position)"
+					}
+				} else if exitPercentage >= 55 {
+					// Levels 1-3 (60% of position)
+					if trade.Trade.TPTarget > 0 {
+						baseDescription = fmt.Sprintf("TP Levels 1-3 (up to %.2f%%)", trade.Trade.TPTarget*0.8*100) // 80% of base
+					} else {
+						baseDescription = "TP Levels 1-3 (60% position)"
+					}
+				} else if exitPercentage >= 35 {
+					// Levels 1-2 (40% of position)
+					if trade.Trade.TPTarget > 0 {
+						baseDescription = fmt.Sprintf("TP Levels 1-2 (up to %.2f%%)", trade.Trade.TPTarget*0.6*100) // 60% of base
+					} else {
+						baseDescription = "TP Levels 1-2 (40% position)"
+					}
 				} else {
-					baseDescription = "TP Level 1 (20%)"
+					// Level 1 only (20% of position)
+					if trade.Trade.TPTarget > 0 {
+						baseDescription = fmt.Sprintf("TP Level 1 (%.2f%%)", trade.Trade.TPTarget*0.4*100) // 40% of base
+					} else {
+						baseDescription = "TP Level 1 (20% position)"
+					}
 				}
 				
 				// Add dynamic TP information if available
-				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" {
-					dynamicInfo := fmt.Sprintf(" | %s: %.2f%%", trade.Trade.TPStrategy, trade.Trade.TPTarget*100)
+				if trade.Trade.TPStrategy != "" && trade.Trade.TPStrategy != "fixed" && trade.Trade.TPTarget > 0 {
+					// Dynamic TP strategy with calculated target
+					strategyName := trade.Trade.TPStrategy
+					if strategyName == "volatility_adaptive" {
+						strategyName = "Dynamic"
+					} else if strategyName == "indicator_based" {
+						strategyName = "Signal-based"
+					}
+					
+					dynamicInfo := fmt.Sprintf(" | %s: %.2f%%", strategyName, trade.Trade.TPTarget*100)
 					if trade.Trade.MarketVolatility > 0 {
 						dynamicInfo += fmt.Sprintf(" | Vol: %.1f%%", trade.Trade.MarketVolatility*100)
 					}
@@ -522,7 +573,15 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
 					}
 					trade.Description = baseDescription + dynamicInfo
+				} else if trade.Trade.TPTarget > 0 {
+					// Fixed TP or TP without strategy info
+					dynamicInfo := fmt.Sprintf(" | TP: %.2f%%", trade.Trade.TPTarget*100)
+					if trade.Trade.SignalStrength > 0 {
+						dynamicInfo += fmt.Sprintf(" | Str: %.2f", trade.Trade.SignalStrength)
+					}
+					trade.Description = baseDescription + dynamicInfo
 				} else {
+					// No TP info available
 					trade.Description = baseDescription
 				}
 			}
@@ -570,9 +629,28 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 			
 			// Calculate price change
 			priceChange := 0.0
-			if enhancedTrade.IsEntry && cycleData.StartPrice > 0 {
-				// For entries, show drop from cycle start
-				priceChange = ((cycleData.StartPrice - trade.EntryPrice) / cycleData.StartPrice) * 100
+			if enhancedTrade.IsEntry {
+				if enhancedTrade.Sequence == 1 {
+					// First entry: show as 0% (starting point)
+					priceChange = 0.0
+				} else {
+					// Subsequent DCA entries: show drop from previous entry (more relevant for DCA spacing)
+					var prevEntryPrice float64 = 0.0
+					// Find the previous entry price in this cycle
+					for j := 0; j < len(cycleData.ChronologicalTrades); j++ {
+						if cycleData.ChronologicalTrades[j].IsEntry && cycleData.ChronologicalTrades[j].Sequence == enhancedTrade.Sequence-1 {
+							prevEntryPrice = cycleData.ChronologicalTrades[j].Trade.EntryPrice
+							break
+						}
+					}
+					if prevEntryPrice > 0 {
+						// Show price change from previous DCA entry (negative for drops)
+						priceChange = ((trade.EntryPrice - prevEntryPrice) / prevEntryPrice) * 100
+					} else if cycleData.StartPrice > 0 {
+						// Fallback to cycle start if prev entry not found
+						priceChange = ((trade.EntryPrice - cycleData.StartPrice) / cycleData.StartPrice) * 100
+					}
+				}
 			} else if !enhancedTrade.IsEntry && trade.EntryPrice > 0 {
 				// For exits, show profit relative to average entry price
 				priceChange = ((trade.ExitPrice - trade.EntryPrice) / trade.EntryPrice) * 100
@@ -600,7 +678,6 @@ func (r *DefaultExcelReporter) writeTradesSheet(fx *excelize.File, sheet string,
 				tradeTime.Format("2006-01-02 15:04:05"),
 				tradePrice,
 				trade.Quantity,
-				trade.Commission,
 				tradePnL,
 				priceChange / 100,
 				enhancedTrade.BalanceAfter,
@@ -1185,18 +1262,18 @@ func (r *DefaultExcelReporter) WriteEnhancedTradeRow(fx *excelize.File, sheet st
 		cell, _ := excelize.CoordinatesToCellName(i+1, row)
 		fx.SetCellValue(sheet, cell, v)
 		
-		// Apply specific formatting based on enhanced column layout
+		// Apply specific formatting based on enhanced column layout (updated for removed Commission column)
 		if i == 4 { // Price column
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
-		} else if i == 6 || i == 7 { // Commission and PnL columns
+		} else if i == 6 { // PnL column
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
-		} else if i == 8 { // Price Change % column - color coded
+		} else if i == 7 { // Price Change % column - color coded
 			if isEntry {
 				fx.SetCellStyle(sheet, cell, cell, styles.RedPercentStyle) // Red for DCA entries
 			} else {
 				fx.SetCellStyle(sheet, cell, cell, styles.GreenPercentStyle) // Green for TP exits
 			}
-		} else if i == 9 || i == 10 { // Running Balance and Balance Change columns
+		} else if i == 8 || i == 9 { // Running Balance and Balance Change columns
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
 		} else {
 			fx.SetCellStyle(sheet, cell, cell, styles.BaseStyle)
@@ -1210,18 +1287,18 @@ func (r *DefaultExcelReporter) writeEnhancedTradeRow(fx *excelize.File, sheet st
 		cell, _ := excelize.CoordinatesToCellName(i+1, row)
 		fx.SetCellValue(sheet, cell, v)
 		
-		// Apply specific formatting based on column type
+		// Apply specific formatting based on column type (updated for removed Commission column)
 		if i == 4 { // Price column
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
-		} else if i == 6 || i == 7 { // Commission and PnL columns
+		} else if i == 6 { // PnL column
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
-		} else if i == 8 { // Price Change % column - color coded
+		} else if i == 7 { // Price Change % column - color coded
 			if isEntry {
 				fx.SetCellStyle(sheet, cell, cell, styles.RedPercentStyle) // Red for DCA entries
 			} else {
 				fx.SetCellStyle(sheet, cell, cell, styles.GreenPercentStyle) // Green for TP exits
 			}
-		} else if i == 9 || i == 10 { // Running Balance and Balance Change columns
+		} else if i == 8 || i == 9 { // Running Balance and Balance Change columns
 			fx.SetCellStyle(sheet, cell, cell, styles.CurrencyStyle)
 		} else {
 			// Apply the trade style (entry/exit background color) for other columns

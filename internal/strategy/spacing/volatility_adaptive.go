@@ -62,6 +62,11 @@ func NewVolatilityAdaptiveSpacing(params map[string]interface{}) (*VolatilityAda
 
 // CalculateThreshold calculates the volatility-adaptive threshold for the next DCA entry
 func (s *VolatilityAdaptiveSpacing) CalculateThreshold(level int, context *MarketContext) float64 {
+	// Check for nil context to prevent panic
+	if context == nil {
+		return s.applyLevelMultiplier(s.baseThreshold, level)
+	}
+	
 	// Use ATR provided in context (calculated by strategy's ATR calculator)
 	atr := context.ATR
 	

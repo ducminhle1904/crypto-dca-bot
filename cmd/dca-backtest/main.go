@@ -142,7 +142,11 @@ func loadDCAConfiguration(configFile, dataFile, symbol, interval string,
 		return nil, err
 	}
 	
-	// Safe type assertion with error handling
+	// Safe type assertion with nil check and error handling
+	if cfgInterface == nil {
+		return nil, fmt.Errorf("configuration manager returned nil config")
+	}
+	
 	cfg, ok := cfgInterface.(*config.DCAConfig)
 	if !ok {
 		return nil, fmt.Errorf("invalid configuration type: expected *config.DCAConfig, got %T", cfgInterface)
@@ -949,9 +953,9 @@ func validateBusinessLogicBounds(cfg *config.DCAConfig) error {
 		return fmt.Errorf("max multiplier %.2f is dangerously high (>5.0x) - risk of rapid balance depletion", cfg.MaxMultiplier)
 	}
 	
-	// 2. Validate base amount vs balance ratio
-	if cfg.BaseAmount > cfg.InitialBalance*0.3 {
-		return fmt.Errorf("base amount $%.2f exceeds 30%% of balance $%.2f - insufficient reserves for DCA strategy", 
+	// 2. Validate base amount vs balance ratio - allow up to 50% for aggressive strategies
+	if cfg.BaseAmount > cfg.InitialBalance*0.5 {
+		return fmt.Errorf("base amount $%.2f exceeds 50%% of balance $%.2f - insufficient reserves for DCA strategy", 
 			cfg.BaseAmount, cfg.InitialBalance)
 	}
 	
@@ -962,18 +966,18 @@ func validateBusinessLogicBounds(cfg *config.DCAConfig) error {
 		}
 	}
 	
-	// 4. Validate take profit bounds
-	if cfg.TPPercent > 0.15 { // 15%
-		return fmt.Errorf("take profit %.2f%% is unrealistically high (>15%%) - may never be reached", cfg.TPPercent*100)
+	// 4. Validate take profit bounds - allow wider range for different market conditions
+	if cfg.TPPercent > 0.25 { // 25%
+		return fmt.Errorf("take profit %.2f%% is unrealistically high (>25%%) - may never be reached", cfg.TPPercent*100)
 	}
-	if cfg.TPPercent < 0.005 { // 0.5%
-		return fmt.Errorf("take profit %.2f%% is too low (<0.5%%) - insufficient profit margin after fees", cfg.TPPercent*100)
+	if cfg.TPPercent < 0.002 { // 0.2%
+		return fmt.Errorf("take profit %.2f%% is too low (<0.2%%) - insufficient profit margin after fees", cfg.TPPercent*100)
 	}
 	
-	// 5. Validate commission doesn't negate small profits
-	minProfitAfterFees := cfg.Commission * 4 // Need 4x commission to be profitable
+	// 5. Validate commission doesn't negate small profits - use more flexible multiplier
+	minProfitAfterFees := cfg.Commission * 2.5 // Need 2.5x commission to be reasonably profitable
 	if cfg.TPPercent < minProfitAfterFees {
-		return fmt.Errorf("take profit %.3f%% insufficient for commission %.3f%% - need at least %.3f%% to be profitable", 
+		return fmt.Errorf("take profit %.3f%% insufficient for commission %.3f%% - need at least %.3f%% to be reasonably profitable", 
 			cfg.TPPercent*100, cfg.Commission*100, minProfitAfterFees*100)
 	}
 	
@@ -982,10 +986,10 @@ func validateBusinessLogicBounds(cfg *config.DCAConfig) error {
 		return fmt.Errorf("indicator validation: %w", err)
 	}
 	
-	// 7. Validate combined risk exposure
-	// maxPossiblePosition := cfg.BaseAmount * cfg.MaxMultiplier * 5 // Assume max 5 DCA levels
-	// if maxPossiblePosition > cfg.InitialBalance*0.8 {
-	// 	return fmt.Errorf("maximum possible position $%.2f exceeds 80%% of balance $%.2f - excessive risk exposure", 
+	// 7. Validate combined risk exposure to prevent total balance exhaustion
+	// maxPossiblePosition := cfg.BaseAmount * cfg.MaxMultiplier * 6 // Assume max 6 DCA levels in extreme cases
+	// if maxPossiblePosition > cfg.InitialBalance*0.9 {
+	// 	return fmt.Errorf("maximum possible position $%.2f exceeds 90%% of balance $%.2f - excessive risk exposure", 
 	// 		maxPossiblePosition, cfg.InitialBalance)
 	// }
 	

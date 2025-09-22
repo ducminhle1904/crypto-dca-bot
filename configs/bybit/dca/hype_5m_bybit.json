@@ -4,16 +4,16 @@
     "category": "linear",
     "data_file": "data\\bybit\\linear\\HYPEUSDT\\5\\candles.csv",
     "base_amount": 40,
-    "max_multiplier": 4.5,
+    "max_multiplier": 3.5,
     "dca_spacing": {
       "strategy": "volatility_adaptive",
       "parameters": {
-        "atr_period": 28,
+        "atr_period": 16,
         "base_threshold": 0.008,
-        "level_multiplier": 1.05,
+        "level_multiplier": 1.1,
         "max_threshold": 0.05,
         "min_threshold": 0.003,
-        "volatility_sensitivity": 1.2
+        "volatility_sensitivity": 2
       }
     },
     "interval": "5m",
@@ -24,32 +24,32 @@
     "cycle": true,
     "dynamic_tp": {
       "strategy": "volatility_adaptive",
-      "base_tp_percent": 0.04,
+      "base_tp_percent": 0.03,
       "volatility_config": {
-        "multiplier": 0.5,
-        "min_tp_percent": 0.01,
-        "max_tp_percent": 0.09,
-        "atr_period": 28
+        "multiplier": 1.2,
+        "min_tp_percent": 0.02,
+        "max_tp_percent": 0.05,
+        "atr_period": 16
       }
     },
     "indicators": ["hull_ma", "mfi", "wavetrend", "keltner"],
     "hull_ma": {
-      "period": 22
+      "period": 8
     },
     "mfi": {
-      "period": 10,
+      "period": 12,
       "oversold": 30,
-      "overbought": 70
+      "overbought": 75
     },
     "keltner_channels": {
       "period": 50,
-      "multiplier": 2
+      "multiplier": 1.5
     },
     "wavetrend": {
-      "n1": 8,
+      "n1": 12,
       "n2": 18,
-      "overbought": 50,
-      "oversold": -70
+      "overbought": 60,
+      "oversold": -60
     }
   },
   "exchange": {
