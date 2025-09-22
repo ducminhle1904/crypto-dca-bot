@@ -20,6 +20,8 @@ import (
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/trend"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/indicators/volume"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/logger"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/recovery"
+	"github.com/ducminhle1904/crypto-dca-bot/internal/safety"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy"
 	"github.com/ducminhle1904/crypto-dca-bot/internal/strategy/spacing"
 	"github.com/ducminhle1904/crypto-dca-bot/pkg/types"
@@ -70,6 +72,12 @@ type LiveBot struct {
 	
 	// Debugging counters
 	holdLogCounter int               // Counter for HOLD decision logging
+	
+	// Safety infrastructure
+	validator          *safety.Validator                  // Input validation
+	recoveryHandler    *recovery.RecoveryHandler         // Error recovery with backoff
+	circuitBreakers    *safety.CircuitBreakerManager     // Circuit breakers for resilience
+	rateLimiters       *safety.RateLimiterManager        // Rate limiting for API calls
 }
 
 // NewLiveBot creates a new live trading bot instance
@@ -112,6 +120,12 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		activeTPOrders: make(map[string]*TPOrderInfo),
 		filledTPOrders: make(map[string]*TPOrderInfo),
 		tpOrderMutex: sync.RWMutex{},
+		
+		// Initialize safety infrastructure
+		validator:       safety.NewValidator(),
+		recoveryHandler: recovery.NewRecoveryHandler(fileLogger),
+		circuitBreakers: safety.NewCircuitBreakerManager(),
+		rateLimiters:    safety.NewRateLimiterManager(),
 	}
 
 	// Initialize strategy
@@ -120,7 +134,146 @@ func NewLiveBot(config *config.LiveBotConfig) (*LiveBot, error) {
 		return nil, fmt.Errorf("failed to initialize strategy: %w", err)
 	}
 
+	// Initialize circuit breakers and rate limiters for different exchange operations
+	bot.initializeCircuitBreakers()
+	bot.initializeRateLimiters()
+
 	return bot, nil
+}
+
+// initializeCircuitBreakers sets up circuit breakers for different exchange operations
+func (bot *LiveBot) initializeCircuitBreakers() {
+	// Circuit breaker for trading operations (stricter)
+	tradingConfig := safety.CircuitBreakerConfig{
+		FailureThreshold: 3,
+		SuccessThreshold: 2,
+		Timeout:          2 * time.Minute,
+		MaxFailures:      5,
+		ResetTimeout:     5 * time.Minute,
+	}
+	
+	// Circuit breaker for data operations (more lenient)
+	dataConfig := safety.CircuitBreakerConfig{
+		FailureThreshold: 5,
+		SuccessThreshold: 3,
+		Timeout:          1 * time.Minute,
+		MaxFailures:      10,
+		ResetTimeout:     3 * time.Minute,
+	}
+	
+	// Create circuit breakers
+	bot.circuitBreakers.GetOrCreate("trading", tradingConfig)
+	bot.circuitBreakers.GetOrCreate("market_data", dataConfig)
+	bot.circuitBreakers.GetOrCreate("account_data", dataConfig)
+	
+	// Set up state change callbacks for monitoring
+	if tradingCB, exists := bot.circuitBreakers.Get("trading"); exists {
+		tradingCB.SetStateChangeCallback(func(from, to safety.CircuitBreakerState) {
+			bot.logger.LogWarning("Circuit Breaker", "Trading circuit breaker state changed: %s -> %s", from, to)
+		})
+	}
+}
+
+// initializeRateLimiters sets up rate limiters for different exchange operations
+func (bot *LiveBot) initializeRateLimiters() {
+	// Rate limiter for trading operations (more restrictive)
+	// Most exchanges allow 10-20 orders per second
+	bot.rateLimiters.GetOrCreate("trading", 10, 10) // 10 capacity, 10 per second refill
+	
+	// Rate limiter for market data (more lenient)
+	// Market data usually has higher limits
+	bot.rateLimiters.GetOrCreate("market_data", 50, 50) // 50 capacity, 50 per second refill
+	
+	// Rate limiter for account data (moderate)
+	bot.rateLimiters.GetOrCreate("account_data", 20, 20) // 20 capacity, 20 per second refill
+	
+	bot.logger.Info("🚦 Rate limiters initialized for trading, market data, and account operations")
+}
+
+// Protected exchange operations with circuit breakers and rate limiting
+
+// protectedPlaceMarketOrder places a market order with rate limiting and circuit breaker protection
+func (bot *LiveBot) protectedPlaceMarketOrder(ctx context.Context, params exchange.OrderParams) (*exchange.Order, error) {
+	// Apply rate limiting first
+	tradingRL, _ := bot.rateLimiters.Get("trading")
+	if err := tradingRL.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiting failed: %w", err)
+	}
+	
+	// Then apply circuit breaker protection
+	tradingCB, _ := bot.circuitBreakers.Get("trading")
+	
+	var result *exchange.Order
+	err := tradingCB.Call(func() error {
+		var orderErr error
+		result, orderErr = bot.exchange.PlaceMarketOrder(ctx, params)
+		return orderErr
+	})
+	
+	return result, err
+}
+
+// protectedPlaceLimitOrder places a limit order with rate limiting and circuit breaker protection
+func (bot *LiveBot) protectedPlaceLimitOrder(ctx context.Context, params exchange.OrderParams) (*exchange.Order, error) {
+	// Apply rate limiting first
+	tradingRL, _ := bot.rateLimiters.Get("trading")
+	if err := tradingRL.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiting failed: %w", err)
+	}
+	
+	// Then apply circuit breaker protection
+	tradingCB, _ := bot.circuitBreakers.Get("trading")
+	
+	var result *exchange.Order
+	err := tradingCB.Call(func() error {
+		var orderErr error
+		result, orderErr = bot.exchange.PlaceLimitOrder(ctx, params)
+		return orderErr
+	})
+	
+	return result, err
+}
+
+// protectedGetLatestPrice gets latest price with rate limiting and circuit breaker protection
+func (bot *LiveBot) protectedGetLatestPrice(ctx context.Context, symbol string) (float64, error) {
+	// Apply rate limiting first
+	marketDataRL, _ := bot.rateLimiters.Get("market_data")
+	if err := marketDataRL.Wait(ctx); err != nil {
+		return 0, fmt.Errorf("rate limiting failed: %w", err)
+	}
+	
+	// Then apply circuit breaker protection
+	marketDataCB, _ := bot.circuitBreakers.Get("market_data")
+	
+	var result float64
+	err := marketDataCB.Call(func() error {
+		var priceErr error
+		result, priceErr = bot.exchange.GetLatestPrice(ctx, symbol)
+		return priceErr
+	})
+	
+	return result, err
+}
+
+// protectedGetPositions gets positions with rate limiting and circuit breaker protection
+func (bot *LiveBot) protectedGetPositions(ctx context.Context, category, symbol string) ([]exchange.Position, error) {
+	// Apply rate limiting first
+	accountDataRL, _ := bot.rateLimiters.Get("account_data")
+	if err := accountDataRL.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiting failed: %w", err)
+	}
+	
+	// Then apply circuit breaker protection
+	accountDataCB, _ := bot.circuitBreakers.Get("account_data")
+	
+	var result []exchange.Position
+	err := accountDataCB.Call(func() error {
+		var posErr error
+		result, posErr = bot.exchange.GetPositions(ctx, category, symbol)
+		return posErr
+	})
+	
+	return result, err
 }
 
 // calculateRequiredThreshold calculates the price drop threshold required for the current DCA level using spacing strategy
@@ -650,7 +803,12 @@ func (bot *LiveBot) checkAndTrade() {
 
 	// Sync position data
 	if err := bot.syncPositionData(); err != nil {
-		bot.logger.LogWarning("Could not sync position data", "%v", err)
+		if err.Error() == "STRATEGY_SYNC_REQUIRED" {
+			// Position was reset, strategy sync is needed
+			bot.syncStrategyState()
+		} else {
+			bot.logger.LogWarning("Could not sync position data", "%v", err)
+		}
 		// Continue despite position sync failure
 	}
 
@@ -867,6 +1025,12 @@ func (bot *LiveBot) executeTrade(decision *strategy.TradeDecision, action string
 func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) {
 	ctx := context.Background()
 
+	// Safety validation before executing any trades
+	if result := bot.validator.ValidatePrice(price, bot.symbol); !result.Valid {
+		bot.logger.LogWarning("Trade Validation", "Invalid price for buy order: %s", result.Message)
+		return
+	}
+
 	// Additional safety check: Validate price threshold for DCA trades at bot level
 	// Get current state safely with mutex protection
 	bot.positionMutex.RLock()
@@ -955,6 +1119,18 @@ func (bot *LiveBot) executeBuy(decision *strategy.TradeDecision, price float64) 
 	}
 	
 	quantity := amount / price
+	
+	// Validate calculated quantity
+	if result := bot.validator.ValidateQuantity(quantity, bot.symbol); !result.Valid {
+		bot.logger.LogWarning("Trade Validation", "Invalid quantity for buy order: %s", result.Message)
+		return
+	}
+	
+	// Validate order value
+	if result := bot.validator.ValidateOrderValue(price, quantity, bot.symbol); !result.Valid {
+		bot.logger.LogWarning("Trade Validation", "Invalid order value: %s", result.Message)
+		return
+	}
 	
 	// Log detailed order placement information
 	constraintsMap := map[string]interface{}{
@@ -1188,6 +1364,11 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 	// Pre-calculate quantities for all TP levels to ensure proper distribution
 	levelQuantities := bot.calculateTPLevelQuantities(totalQty, constraints)
 	
+	// Validate TP levels configuration before the loop
+	if bot.config.Strategy.TPLevels <= 0 {
+		return fmt.Errorf("invalid TP levels configuration: %d", bot.config.Strategy.TPLevels)
+	}
+	
 	bot.logger.Info("🎯 Placing %d-level TP orders from avg entry $%.4f: %.6f %s total", 
 		bot.config.Strategy.TPLevels, avgEntryPrice, totalQty, bot.symbol)
 	
@@ -1232,12 +1413,6 @@ func (bot *LiveBot) placeMultiLevelTPOrdersInternal(ctx context.Context, totalQu
 		}
 		
 		// Calculate TP price for this level based on actual average entry
-		// Add zero-value check to prevent division by zero
-		if bot.config.Strategy.TPLevels <= 0 {
-			bot.logger.LogWarning("TP Level %d", "Invalid TP levels configuration: %d", level, bot.config.Strategy.TPLevels)
-			skippedLevels++
-			continue
-		}
 		
 		// Calculate level percentage using dynamic TP if enabled, otherwise use fixed TP
 		var levelPercent float64
@@ -1587,7 +1762,12 @@ func (bot *LiveBot) syncAfterTrade(order *exchange.Order, tradeType string) {
 	
 	// Sync position data with exchange
 	if err := bot.syncPositionData(); err != nil {
-		bot.logger.LogWarning("Could not sync position after trade", "%v", err)
+		if err.Error() == "STRATEGY_SYNC_REQUIRED" {
+			// Position was reset, strategy sync is needed
+			bot.syncStrategyState()
+		} else {
+			bot.logger.LogWarning("Could not sync position after trade", "%v", err)
+		}
 		// Don't return here - continue with the rest of the function
 	}
 	
@@ -1819,7 +1999,7 @@ func (bot *LiveBot) calculateTPLevelQuantities(totalQty float64, constraints *ex
 		
 		// Distribute any remaining quantity to the last level
 		remaining := totalQty - totalNeeded
-		if remaining > 0 {
+		if remaining > 0 && numLevels > 0 && len(quantities) >= numLevels {
 			quantities[numLevels-1] += remaining
 		}
 	} else {
@@ -1866,7 +2046,7 @@ func (bot *LiveBot) calculateTPLevelQuantities(totalQty float64, constraints *ex
 				}
 				
 				// Add any final remaining to the last level
-				if remaining > 0 && quantities[numLevels-1] > 0 {
+				if remaining > 0 && numLevels > 0 && len(quantities) >= numLevels && quantities[numLevels-1] > 0 {
 					quantities[numLevels-1] += remaining
 				}
 			}
@@ -2406,96 +2586,40 @@ func (bot *LiveBot) interpretIndicatorBias(name string, value float64, currentPr
 
 // placeOrderWithRetry places an order with timeout and retry logic
 func (bot *LiveBot) placeOrderWithRetry(params exchange.OrderParams, isMarket bool) (*exchange.Order, error) {
-	maxRetries := 3
-	baseDelay := 1 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Use a shorter timeout per attempt to prevent hanging
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	var result *exchange.Order
+	
+	// Use recovery handler for intelligent retry with backoff and circuit breaker protection
+	err := bot.recoveryHandler.ExecuteWithRecovery(ctx, "OrderPlacement", "PlaceOrder", func() error {
+		var orderErr error
 		
-		// Create a channel to handle the order placement with timeout
-		orderChan := make(chan *exchange.Order, 1)
-		errChan := make(chan error, 1)
-		
-		go func() {
-			var order *exchange.Order
-			var err error
-			
-			if isMarket {
-				order, err = bot.exchange.PlaceMarketOrder(ctx, params)
-			} else {
-				order, err = bot.exchange.PlaceLimitOrder(ctx, params)
-			}
-			
-			if err != nil {
-				errChan <- err
-			} else {
-				orderChan <- order
-			}
-		}()
-		
-		// Wait for either success, error, or timeout
-		select {
-		case order := <-orderChan:
-			cancel()
-			return order, nil
-		case err := <-errChan:
-			cancel()
-			
-			// Check if error is retryable
-			if exchangeErr, ok := err.(*exchange.ExchangeError); ok && !exchangeErr.IsRetryable {
-				return nil, fmt.Errorf("non-retryable error: %w", err)
-			}
-			
-			if attempt < maxRetries {
-				delay := time.Duration(attempt) * baseDelay
-				bot.logger.LogWarning("Order Retry", "Attempt %d/%d failed: %v. Retrying in %v", attempt, maxRetries, err, delay)
-				time.Sleep(delay)
-			} else {
-				return nil, fmt.Errorf("failed after %d attempts, last error: %w", maxRetries, err)
-			}
-		case <-ctx.Done():
-			cancel()
-			if attempt < maxRetries {
-				delay := time.Duration(attempt) * baseDelay
-				bot.logger.LogWarning("Order Retry", "Attempt %d/%d timed out. Retrying in %v", attempt, maxRetries, delay)
-				time.Sleep(delay)
-			} else {
-				return nil, fmt.Errorf("order placement timed out after %d attempts", maxRetries)
-			}
+		if isMarket {
+			result, orderErr = bot.protectedPlaceMarketOrder(ctx, params)
+		} else {
+			result, orderErr = bot.protectedPlaceLimitOrder(ctx, params)
 		}
+		
+		return orderErr
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("order placement failed after retries: %w", err)
 	}
 	
-	return nil, fmt.Errorf("failed after %d attempts", maxRetries)
+	return result, nil
 }
 
-// cancelOrderWithRetry cancels an order with timeout and retry logic
+// cancelOrderWithRetry cancels an order with timeout and retry logic using recovery handler
 func (bot *LiveBot) cancelOrderWithRetry(category, symbol, orderID string) error {
-	maxRetries := 3
-	baseDelay := 500 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := bot.exchange.CancelOrder(ctx, category, symbol, orderID)
-		cancel()
-		
-		if err == nil {
-			return nil
-		}
-		
-		// Check if error is retryable
-		if exchangeErr, ok := err.(*exchange.ExchangeError); ok && !exchangeErr.IsRetryable {
-			return fmt.Errorf("non-retryable error: %w", err)
-		}
-		
-		if attempt < maxRetries {
-			delay := time.Duration(attempt) * baseDelay
-			bot.logger.LogWarning("Cancel Retry", "Attempt %d/%d failed: %v. Retrying in %v", attempt, maxRetries, err, delay)
-			time.Sleep(delay)
-		}
-	}
-	
-	return fmt.Errorf("failed to cancel order after %d attempts", maxRetries)
+	// Use recovery handler for intelligent retry with backoff
+	return bot.recoveryHandler.ExecuteWithRecovery(ctx, "OrderCancellation", "CancelOrder", func() error {
+		return bot.exchange.CancelOrder(ctx, category, symbol, orderID)
+	})
 }
 
 // placeFallbackTPOrder places a single TP order for leftover quantity at level 5

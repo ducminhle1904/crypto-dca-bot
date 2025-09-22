@@ -154,13 +154,11 @@ func (bot *LiveBot) syncPositionData() error {
 		needsStrategySync = true
 	}
 	
-	// Sync strategy state after releasing mutex to avoid deadlock
+	// Return the sync requirement so caller can handle it after mutex is released
 	if needsStrategySync {
-		// Release mutex before calling syncStrategyState
-		bot.positionMutex.Unlock()
-		bot.syncStrategyState()
-		// Re-acquire mutex for proper cleanup
-		bot.positionMutex.Lock()
+		// Don't call syncStrategyState here - let the caller handle it
+		// to avoid mutex complications
+		return fmt.Errorf("STRATEGY_SYNC_REQUIRED") // Special error to indicate sync needed
 	}
 	
 	return nil

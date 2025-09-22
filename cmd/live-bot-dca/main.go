@@ -18,7 +18,7 @@ func main() {
 	var (
 		configFile   = flag.String("config", "", "Configuration file (e.g., btc_5m_bybit.json)")
 		exchangeName = flag.String("exchange", "", "Exchange name (bybit, binance) - overrides config")
-		demo         = flag.Bool("demo", true, "Use demo trading environment - paper trading (default: true)")
+		demo         = flag.Bool("demo", true, "Use demo/paper trading (default: true). Set to false for LIVE TRADING with real money!")
 		envFile      = flag.String("env", ".env", "Environment file path (default: .env)")
 	)
 	flag.Parse()
@@ -46,8 +46,9 @@ func main() {
 		fmt.Printf("🔧 Exchange overridden to: %s\n", *exchangeName)
 	}
 	
-	// Apply demo mode override if specified
+	// Apply demo mode override with clear warnings
 	if *demo {
+		fmt.Println("🧪 DEMO MODE: Running in paper trading mode")
 		switch strings.ToLower(botConfig.Exchange.Name) {
 		case "bybit":
 			if botConfig.Exchange.Bybit != nil {
@@ -59,6 +60,16 @@ func main() {
 				botConfig.Exchange.Binance.Demo = false // Binance doesn't have demo
 				botConfig.Exchange.Binance.Testnet = true
 			}
+		}
+	} else {
+		fmt.Println("⚠️  LIVE TRADING MODE: Using real money! Double-check your settings.")
+		fmt.Printf("💰 Exchange: %s | Symbol: %s | Base Amount: $%.2f\n", 
+			botConfig.Exchange.Name, botConfig.Strategy.Symbol, botConfig.Strategy.BaseAmount)
+		fmt.Print("   Continue? (type 'yes' to confirm): ")
+		var confirmation string
+		fmt.Scanln(&confirmation)
+		if strings.ToLower(confirmation) != "yes" {
+			log.Fatal("🛑 Live trading cancelled by user")
 		}
 	}
 
@@ -119,17 +130,31 @@ func ensureAPICredentials(config *config.LiveBotConfig) error {
 			config.Exchange.Bybit.APISecret = os.Getenv("BYBIT_API_SECRET")
 		}
 		
-		// Validate credentials
-		if config.Exchange.Bybit.APIKey == "" {
-			return fmt.Errorf("BYBIT_API_KEY is required (set in environment or config)")
+		// Validate credentials with enhanced checks
+		if config.Exchange.Bybit.APIKey == "" || strings.TrimSpace(config.Exchange.Bybit.APIKey) == "" {
+			return fmt.Errorf("bybit API key is required (set in environment or config)")
 		}
-		if config.Exchange.Bybit.APISecret == "" {
-			return fmt.Errorf("BYBIT_API_SECRET is required (set in environment or config)")
+		if config.Exchange.Bybit.APISecret == "" || strings.TrimSpace(config.Exchange.Bybit.APISecret) == "" {
+			return fmt.Errorf("bybit API secret is required (set in environment or config)")
+		}
+		
+		// Check for placeholder values that weren't replaced
+		if strings.Contains(config.Exchange.Bybit.APIKey, "${") || 
+		   strings.Contains(config.Exchange.Bybit.APISecret, "${") {
+			return fmt.Errorf("api credentials contain placeholder values - check environment variables")
+		}
+		
+		// Minimum length validation for API credentials (reasonable assumption)
+		if len(strings.TrimSpace(config.Exchange.Bybit.APIKey)) < 10 {
+			return fmt.Errorf("bybit API key appears to be invalid (too short)")
+		}
+		if len(strings.TrimSpace(config.Exchange.Bybit.APISecret)) < 10 {
+			return fmt.Errorf("bybit API secret appears to be invalid (too short)")
 		}
 		
 	case "binance":
 		if config.Exchange.Binance == nil {
-			return fmt.Errorf("Binance configuration is missing")
+			return fmt.Errorf("binance configuration is missing")
 		}
 		
 		// Set from environment if not already set
@@ -140,12 +165,26 @@ func ensureAPICredentials(config *config.LiveBotConfig) error {
 			config.Exchange.Binance.APISecret = os.Getenv("BINANCE_API_SECRET")
 		}
 		
-		// Validate credentials
-		if config.Exchange.Binance.APIKey == "" {
-			return fmt.Errorf("BINANCE_API_KEY is required (set in environment or config)")
+		// Validate credentials with enhanced checks
+		if config.Exchange.Binance.APIKey == "" || strings.TrimSpace(config.Exchange.Binance.APIKey) == "" {
+			return fmt.Errorf("binance API key is required (set in environment or config)")
 		}
-		if config.Exchange.Binance.APISecret == "" {
-			return fmt.Errorf("BINANCE_API_SECRET is required (set in environment or config)")
+		if config.Exchange.Binance.APISecret == "" || strings.TrimSpace(config.Exchange.Binance.APISecret) == "" {
+			return fmt.Errorf("binance API secret is required (set in environment or config)")
+		}
+		
+		// Check for placeholder values that weren't replaced
+		if strings.Contains(config.Exchange.Binance.APIKey, "${") || 
+		   strings.Contains(config.Exchange.Binance.APISecret, "${") {
+			return fmt.Errorf("api credentials contain placeholder values - check environment variables")
+		}
+		
+		// Minimum length validation for API credentials (reasonable assumption)
+		if len(strings.TrimSpace(config.Exchange.Binance.APIKey)) < 10 {
+			return fmt.Errorf("binance API key appears to be invalid (too short)")
+		}
+		if len(strings.TrimSpace(config.Exchange.Binance.APISecret)) < 10 {
+			return fmt.Errorf("binance API secret appears to be invalid (too short)")
 		}
 		
 	default:
