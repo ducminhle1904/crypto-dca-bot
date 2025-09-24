@@ -258,33 +258,17 @@ func (s *EnhancedDCAStrategy) calculatePositionSize(strength, confidence float64
 	// Calculate signal-based multiplier (0.5x to 2.0x based on confidence and strength)
 	signalMultiplier := 0.5 + (confidence * strength * 1.5)
 	
-	// Calculate DCA level-based multiplier with LINEAR progression (not exponential)
-	// Level 0: 1.0x, Level 1: 1.2x, Level 2: 1.4x, Level 3: 1.7x, Level 4: 2.0x
-	dcaLevelMultiplier := 1.0
-	if s.dcaLevel > 0 {
-		// Linear progression: 1.0 + (level * 0.2) capped at reasonable levels
-		if s.dcaLevel <= 3 {
-			dcaLevelMultiplier = 1.0 + float64(s.dcaLevel)*0.2
-		} else {
-			// Slower growth for higher levels to prevent balance exhaustion
-			dcaLevelMultiplier = 1.6 + float64(s.dcaLevel-3)*0.1
-		}
-	}
-	
-	// Combine multipliers
-	combinedMultiplier := signalMultiplier * dcaLevelMultiplier
-	
 	// Apply maximum multiplier constraint
-	if combinedMultiplier > s.maxMultiplier {
-		combinedMultiplier = s.maxMultiplier
+	if signalMultiplier > s.maxMultiplier {
+		signalMultiplier = s.maxMultiplier
 	}
 	
 	// Ensure minimum reasonable size
-	if combinedMultiplier < 0.5 {
-		combinedMultiplier = 0.5
+	if signalMultiplier < 0.5 {
+		signalMultiplier = 0.5
 	}
 
-	return s.baseAmount * combinedMultiplier
+	return s.baseAmount * signalMultiplier
 }
 
 func (s *EnhancedDCAStrategy) GetName() string {
